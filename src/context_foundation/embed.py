@@ -10,7 +10,6 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -342,10 +341,3 @@ def make_embedder(cfg: EmbeddingConfig) -> Embedder:
         raise
     except Exception as e:   # onnxruntime が入っていない・モデルが壊れている など
         raise ModelUnavailable(f"埋め込みモデルを読み込めません({type(e).__name__}: {e})") from e
-
-
-def _main_selftest() -> None:   # pragma: no cover - 手で確かめるためのもの
-    from .config import EmbeddingConfig as EC
-    e = make_embedder(EC())
-    v = e.embed_passages(["hello world", "こんにちは 世界"])
-    print(e.info(), v.shape, float(v[0] @ v[1]), file=sys.stderr)

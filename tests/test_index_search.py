@@ -28,6 +28,11 @@ def locs(resp):
     return [(p["source_id"], p["path"], p["start_line"], p["end_line"]) for p in resp.passages]
 
 
+def test_index_folder_is_kept_out_of_git(indexed_workspace):
+    assert (indexed_workspace / ".cf" / ".gitignore").read_text(encoding="utf-8") == "*\n"
+    assert not list((indexed_workspace / ".cf").glob("index.db.tmp-*"))     # 途中のファイルを残さない
+
+
 def test_index_records_stats_and_timings(searcher):
     st = searcher.status()
     assert st["stats"]["files"] == 13 and st["stats"]["chunks"] > 13

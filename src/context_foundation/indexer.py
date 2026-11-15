@@ -15,7 +15,7 @@ from pathlib import Path
 
 from . import __version__
 from .chunking import chunk_file
-from .config import Config
+from .config import CONFIG_DIR_NAME, Config
 from .embed import EmbedPool, Embedder, HashEmbedder, ModelUnavailable, make_embedder
 from .ingest import IngestStats, iter_source_files
 from .store import IndexWriter, open_readonly, unpack_text
@@ -253,6 +253,13 @@ def build_index(cfg: Config, *, use_embedding: bool | None = None, embedder: Emb
     except BaseException:
         writer.abort()
         raise
+    # .cf の中身(設定と索引)を git に入れないように、全部を無視する .gitignore を置く
+    ignore = cfg.cf_dir / ".gitignore"
+    if cfg.cf_dir.name == CONFIG_DIR_NAME and not ignore.exists():
+        try:
+            ignore.write_text("*\n", encoding="utf-8")
+        except OSError:
+            pass
     result = {"index_path": str(dest), "index_bytes": dest.stat().st_size, "stats": stats, "timings": timings,
               "embedding": embedding_meta, "sources": list(per_source.values())}
     log(f"索引ができました: {dest}({result['index_bytes'] / 1e6:.1f} MB、合計 {timings['total_seconds']:.1f} 秒)")
