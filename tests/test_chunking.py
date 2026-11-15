@@ -112,10 +112,12 @@ def test_error_in_a_class_header_does_not_lose_the_members():
             "        , ICloneable\n#endif\n    {\n" + methods + "    }\n}\n")
     chunks, stats = chunk_file(text, "csharp", CFG)
     assert stats.fallback_lines == 0 and stats.inner_error_units >= 1
-    m7 = next(c for c in chunks if "Method7" in c.symbols)
-    assert m7.kind == "method" and m7.scope == "Demo.Linq.Token"
+    later = next(c for c in chunks if "Method25" in c.symbols)     # 小さなメソッドは、隣どうしでまとまる
+    assert later.kind == "method" and later.method == "syntax" and later.scope == "Demo.Linq.Token"
     head = next(c for c in chunks if c.kind == "class")
     assert head.signature == "public abstract class Token : IEnumerable<Token>"
+    assert head.scope == "Demo.Linq.Token" and "Method0" in head.symbols
+    assert len(chunks) >= 4 and all(c.method == "syntax" for c in chunks)
 
 
 def test_cpp_test_macro_with_body_stays_a_function():
