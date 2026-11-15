@@ -115,8 +115,11 @@ def test_every_method_gets_the_same_tools_and_permissions(bench, tmp_path, metho
     roots = [s.root for s in cfg.sources]
     args = Namespace(method=method, model="anthropic/claude-haiku-5-5", workspace=cfg.workspace, cxxref=None,
                      max_ai_credits=0, trust_folder=False, provider="anthropic",
-                     providers_config="~/.copilot/providers.json")
+                     providers_config="~/.copilot/providers.json", no_custom_instructions=False)
     cmd, env = bench.command_for(args, "copilot", "PROMPT", tmp_path / "u.json", tmp_path / "s.md", roots)
+    assert "--no-custom-instructions" not in cmd
+    args.no_custom_instructions = True
+    assert "--no-custom-instructions" in bench.command_for(args, "copilot", "P", tmp_path / "u", tmp_path / "s", roots)[0]
     tools = cmd[cmd.index("--available-tools") + 1].split(",")
     assert tools[:5] == bench.BASE_TOOLS and (tools[5:] == [bench.MCP_NAME]) == (method == "agent_cf_mcp")
     allowed = [cmd[i + 1] for i, c in enumerate(cmd) if c == "--allow-tool"]
@@ -126,3 +129,39 @@ def test_every_method_gets_the_same_tools_and_permissions(bench, tmp_path, metho
     assert "--allow-all-tools" not in cmd and "--allow-all" not in cmd
     # コーパスが作業フォルダの外にあるので、読めるように渡す
     assert [cmd[i + 1] for i, c in enumerate(cmd) if c == "--add-dir"][:3] == [str(r) for r in roots]
+
+
+def test_instruction_files_are_reported_by_place_not_by_path(bench, tmp_path):
+    """Copilot CLI が指示として読むファイルを、置き場の種類と名前で挙げる。版管理のルートより上は見ない。"""
+    repo = tmp_path / "repo"
+    ws = repo / "sub" / "ws"
+    (ws / ".github").mkdir(parents=True)
+    (repo / ".git").mkdir()
+    (repo / "AGENTS.md").write_text("rules for every agent", encoding="utf-8")
+    (ws / ".github" / "copilot-instructions.md").write_text("rules for this folder", encoding="utf-8")
+    (tmp_path / "AGENTS.md").write_text("above the repository root: not read", encoding="utf-8")
+    tool = tmp_path / "tool"
+    (tool / ".claude" / "rules").mkdir(parents=True)
+    (tool / ".git").write_text("gitdir: elsewhere", encoding="utf-8")       # 作業ツリーでは .git がファイル
+    (tool / "CLAUDE.md").write_text("rules of the tool's repository", encoding="utf-8")
+    (tool / ".claude" / "rules" / "style.md").write_text("a rule", encoding="utf-8")
+    plain = tmp_path / "plain"
+    (plain / ".git").mkdir(parents=True)
+
+    found = bench.instruction_files(ws, [("tool", tool), ("source", plain)])
+    assert found == ["workspace:.github/copilot-instructions.md", "repository:AGENTS.md",
+                     "tool:CLAUDE.md", "tool:.claude/rules/**/*.md"]
+    assert not any(str(tmp_path) in x for x in found)
+    assert bench.instruction_files(plain, []) == []
+
+
+def test_only_the_skill_method_adds_the_tool_folder(bench, tmp_path):
+    """この道具を置いたフォルダを渡すのは agent_cf だけ。そこに指示のファイルがあると、条件が手法で変わる。"""
+    cfg = load_config(write_config(tmp_path))
+    roots = [s.root for s in cfg.sources]
+    labels = {}
+    for method in ("agent_grep", "agent_cf", "agent_cf_mcp"):
+        args = Namespace(method=method, workspace=cfg.workspace, cxxref=None)
+        labels[method] = [label for label, _ in bench.added_dirs(args, roots)]
+    assert labels["agent_grep"] == labels["agent_cf_mcp"] == ["source"] * len(roots)
+    assert labels["agent_cf"] == ["source"] * len(roots) + ["tool"]

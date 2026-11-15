@@ -36,6 +36,11 @@ Rules:
 - The agent host for this proof of concept is GitHub Copilot CLI.
 - `agent_grep` is the baseline. It is the candidate with the search tool
   removed and nothing else changed.
+- Instruction files that the agent host loads from the workspace
+  (`AGENTS.md`, `CLAUDE.md`, `.github/copilot-instructions.md` and similar)
+  are part of the input of every model call. Decide before the run whether
+  they are loaded, apply the same choice to every agent method, and record
+  the choice and the files found in the configuration of each method.
 - Choose the candidate methods before the run and record them in the run
   metadata as `candidate_methods`. The decision thresholds apply to the
   candidates only. Other methods are reported for comparison. Picking the
@@ -249,7 +254,7 @@ Record one JSON object per `run_id` in a `runs.jsonl` file.
 | `run_id`, `created_at` | Identifier and start time of the run |
 | `corpus_revision` | Revision the line numbers refer to (commit, changelist number or dated label) |
 | `candidate_methods` | Methods the thresholds apply to, chosen before the run |
-| `methods` | Configuration of each method |
+| `methods` | Configuration of each method. For an agent method: the tool set, the permissions, whether instruction files were loaded (`custom_instructions`) and which were found (`instruction_files`, as place and file name, no absolute paths) |
 | `corpus` | Size: files, lines and chunks, in total and per source alias |
 | `index` | Size in bytes, build time, peak memory, update cost, share of code the parser could not split by syntax, and the revision indexed when it differs from `corpus_revision` |
 | `embedding` | Model name, model revision, dimensions and stored precision |

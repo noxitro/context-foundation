@@ -157,6 +157,10 @@ Copilot CLI 1.0.112 を、確認のできない実行(`copilot -p`)で 5 回動�
 - 回 3 と 5 で、MCP の `search` が呼ばれ、結果が回答に使われました【実測】
 - 回 3 は、渡した道具の一式がほかの回より少ないので、入力トークンは
   比べられません。回 2・4・5 は、同じ一式です
+- 5 回とも、作業フォルダは、合成のコーパスを写した、版管理の外のフォルダ
+  です。Copilot CLI が指示として読むファイル(`AGENTS.md` など)は、そこに
+  置いていません。セッションの記録でも、モデルに渡った指示に、そうした
+  ファイルの中身が入っていないことを確かめました【実測】
 - 各 1 回だけの結果で、コーパスも 13 ファイルと小さいので、どの形が
   安いかは、ここからは言えません。確かめたのは、仕組みが通ることです
 - 登録と解除のコマンドは、空の設定フォルダ(`COPILOT_HOME`)に向けて動かし、
@@ -199,5 +203,7 @@ Copilot の側に意味検索があるなら、それを使えば済みます。
   <https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/plugins-creating>
 - 自分のキーで使うモデルの設定(BYOK)
   <https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/add-llm-models>
+- 指示のファイル(`AGENTS.md` など)が読まれる場所
+  <https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/add-custom-instructions>
 - 大きな道具の結果の扱い(既定で 20 KiB を超えるとファイルに退かせる)
   <https://docs.github.com/en/copilot/concepts/prompting-and-context/context-management>

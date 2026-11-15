@@ -36,6 +36,32 @@
   ただし、`~/.agents/skills` に置いた個人の skill は、空の設定フォルダでも
   読まれます(どの手法にも同じだけ入ります)
 
+## 指示のファイル(AGENTS.md など)
+
+Copilot CLI は、作業フォルダと、そこから版管理のルートまでのフォルダにある
+`AGENTS.md`・`CLAUDE.md`・`GEMINI.md`・`.github/copilot-instructions.md`
+などを、指示として読みます【公式】。中身は、モデルを呼ぶたびに入力に入る
+ので、トークンにも振る舞いにも混ざります。
+
+- 作業フォルダの側にあるものは、どの手法にも同じだけ入ります。実際の
+  使い方でも読まれるものなので、既定では、そのまま読ませます
+- この道具を置いたフォルダ(`agent_cf` だけが `--add-dir` で渡します)と、
+  cxxref を置いたフォルダにあるものは、手法によって条件が変わります。
+  渡したフォルダの指示のファイルが読まれるかは、確かめていません【未確認】
+- この道具は、実行の前に、見つけた指示のファイルを「置き場の種類:名前」で
+  知らせ、`runs.jsonl` の手法ごとの設定(`custom_instructions` と
+  `instruction_files`)に残します。絶対パスは残しません
+- `--no-custom-instructions` を付けると、どの手法でも読ませません(Copilot
+  CLI の同じ名前のオプションを渡します)。手法の間で条件をそろえたいときは、
+  これを付けます
+- 読ませるかどうかは、走らせる前に決めて、全部の手法で同じにします
+- この道具そのものの動作確認は、指示のファイルの無い作業フォルダ(合成の
+  コーパスを写したフォルダなど)で行います。このリポジトリの中を作業
+  フォルダにすると、リポジトリに置いた指示のファイルが混ざります
+
+出典:
+<https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/add-custom-instructions>
+
 ## 使い方
 
 ```text
@@ -58,6 +84,7 @@ python bench\agent_run.py --config <作業フォルダ> --cases cases.jsonl ^
 | `--time-limit` | 1 回の上限(秒。既定 600) |
 | `--price KIND=USD` | 100 万トークンあたりの単価(費用の見積もり用) |
 | `--no-hint` | `agent_cf` で、セッションの始めの 1 文を足さない |
+| `--no-custom-instructions` | 指示のファイル(`AGENTS.md` など)を、どの手法でも読ませない |
 | `--split` | 使う質問(既定 `eval`) |
 
 止まっても、同じコマンドで続きから流せます(`results.jsonl` にある回は
@@ -90,7 +117,7 @@ BYOK のときは AI credits が記録されないので、`--price` で単価�
 | ファイル | 中身 |
 | --- | --- |
 | `results.jsonl` | 1 回につき 1 行 |
-| `runs.jsonl` | 実行ごとの情報(Copilot CLI の版、モデル、上限、回数、単価) |
+| `runs.jsonl` | 実行ごとの情報(Copilot CLI の版、モデル、上限、回数、単価、手法ごとの道具・許可・指示のファイルの扱い) |
 | `logs\<回>.md` | やり取りの書き出し |
 | `logs\<回>.usage.json` | Copilot CLI が書く使用量 |
 | `homes\<回>\` | その回の設定フォルダ(セッションの記録が入る) |
@@ -117,4 +144,6 @@ BYOK のときは AI credits が記録されないので、`--price` で単価�
 - 1 回ごとの結果は、モデルの気まぐれで変わります。1 問 3 回でも、小さな
   差は読み取れません
 - 確かめたのは、Copilot CLI 1.0.112 と Claude Haiku 5.5(BYOK)、合成の
-  コーパスでの 5 回だけです。`agent_grep_cxxref` は、実行していません
+  コーパスでの 5 回だけです。`agent_grep_cxxref` は、実行していません。
+  `--no-custom-instructions` を付けた実行も、していません(`--dry-run` で、
+  オプションが渡ることだけを確かめました)

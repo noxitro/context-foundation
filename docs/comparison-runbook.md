@@ -20,6 +20,7 @@ README の計画の手順 4(既存の手順と PoC を、同じ質問で比べ�
 | しきい値 | 仕様の「Decision thresholds」。変えるなら、走らせる前に |
 | 回答の採点のしかた | 既定は、`expected_answer_points` のうち回答が示した割合(0〜1) |
 | エージェントのモデルと、1 件あたりの時間の上限 | 全手法で同じにする |
+| 作業フォルダの指示のファイル(`AGENTS.md` など)を読ませるか | 既定は読ませる。全手法で同じにする(手順 5) |
 | 本文を送ってよいモデルの提供元 | 下の「データの扱い」 |
 
 ### データの扱い
@@ -134,6 +135,16 @@ python bench\agent_run.py --config <作業フォルダ> --cases cases.jsonl ^
 - cxxref の索引と比べるときは、`--method agent_grep_cxxref --cxxref
   <cxxref のフォルダ>` を足す(作業フォルダに cxxref の索引が要る)
 - MCP の形と比べるときは、`--method agent_cf_mcp` を足す
+- 作業フォルダか、その版管理のルートまでに、指示のファイル(`AGENTS.md`・
+  `CLAUDE.md`・`.github/copilot-instructions.md` など)があると、Copilot
+  CLI は、それを毎回読む。中身は、どの手法の入力にも入る。道具は、見つけた
+  ものを実行の前に知らせて、記録に残す。読ませる(実際の使い方に近い)か、
+  読ませない(`--no-custom-instructions`)かを、走らせる前に決めて、全部の
+  手法で同じにする
+- この道具を置いたフォルダに指示のファイルがあると、`agent_cf` にだけ混ざる
+  おそれがある(このフォルダを渡すのは `agent_cf` だけのため)。知らせに
+  `tool:` と出たら、`--no-custom-instructions` を付けるか、そのファイルを
+  外してから流す
 
 回数の見積もり: 質問 25 件 × 3 回 × 手法 2 つで 150 回です。合成の
 コーパスでの試し(Claude Haiku 5.5、1 回あたり入力 4 万トークン前後)では、

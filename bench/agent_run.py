@@ -12,6 +12,11 @@
 (登録済みの MCP サーバーやプラグイン)を混ぜないため。記録するもの: 回答、開いたファイルと行・検索が返した
 passage・回答で根拠に挙げた場所(出現順)、時間、道具の呼び出しの数、トークン、AI credits、道具の出力の大きさ。
 
+指示のファイル(AGENTS.md・CLAUDE.md・GEMINI.md・.github/copilot-instructions.md など)
+  Copilot CLI は、作業フォルダと、その版管理のルートまでにあるこれらを、指示として毎回読む。中身は入力に混ざる。
+  この道具は、見つけたものを実行の前に知らせ、runs.jsonl に残す。--no-custom-instructions を付けると、
+  どの手法でも読ませない。
+
 注意
 - 実行のたびに、Copilot の AI credits か、BYOK の提供元の料金がかかる。--yes を付けないと実行しない
 - 質問と、エージェントが読んだ本文は、選んだモデルの提供元に送られる。非公開のコーパスでは、
@@ -45,6 +50,9 @@ METHODS = ("agent_grep", "agent_grep_cxxref", "agent_cf", "agent_cf_mcp")
 BASE_TOOLS = ["view", "grep", "glob", "skill", "powershell" if os.name == "nt" else "bash"]
 MCP_NAME = "context-foundation"
 OFFLOAD_MARK = "Output too large to read at once"
+# Copilot CLI が指示として読むファイル(公式の「Adding custom instructions for GitHub Copilot CLI」の表)
+INSTRUCTION_NAMES = ("AGENTS.md", "CLAUDE.md", "GEMINI.md", ".claude/CLAUDE.md", ".github/copilot-instructions.md")
+INSTRUCTION_GLOBS = ((".github/instructions", "*.instructions.md"), (".claude/rules", "*.md"))
 EVIDENCE_LINE = re.compile(r"^\s*[-*]\s*`?(.+?):(\d+)(?:\s*[-–]\s*(\d+))?`?\s*$")
 SEARCH_HIT = re.compile(r"^\[\d+\] ([A-Za-z0-9][A-Za-z0-9._-]*):(.+?):(\d+)-(\d+)\s", re.MULTILINE)
 
@@ -233,6 +241,62 @@ def cost_usd(rec: dict, prices: dict | None) -> float | None:
     return round(total / 1e6, 6)
 
 
+def added_dirs(args, roots: list[Path]) -> list[tuple[str, Path]]:
+    """作業フォルダのほかに Copilot に読ませるフォルダ(--add-dir で渡すもの)と、その種類。
+
+    source: 作業フォルダの外にあるコーパス(どの手法でも渡す)。tool: この道具を置いたフォルダ(agent_cf だけ。
+    skill が CLI を呼ぶため)。cxxref: cxxref を置いたフォルダ(agent_grep_cxxref だけ)。
+    """
+    dirs: dict[Path, str] = {}
+    for r in roots:
+        if args.workspace not in r.parents and r != args.workspace:
+            dirs.setdefault(r, "source")
+    if args.method == "agent_cf":
+        dirs.setdefault(REPO, "tool")
+    elif args.method == "agent_grep_cxxref" and args.cxxref:
+        dirs.setdefault(Path(args.cxxref), "cxxref")
+    return [(label, d) for d, label in dirs.items()]
+
+
+def _up_to_repository_root(start: Path, limit: int = 16) -> list[Path]:
+    """start から、版管理のルート(.git のあるフォルダ)まで。ルートが見つからなければ、start だけ。"""
+    chain: list[Path] = []
+    for d in [start, *start.parents][:limit]:
+        chain.append(d)
+        if (d / ".git").exists():
+            return chain
+    return [start]
+
+
+def instruction_files(workspace: Path, added: list[tuple[str, Path]]) -> list[str]:
+    """Copilot CLI が指示として読むファイルを探す。「置き場の種類:名前」で返す(絶対パスは記録に残さない)。
+
+    workspace(作業フォルダ)と repository(そこから版管理のルートまで)にあるものは、どの手法でも毎回読まれる。
+    source・tool・cxxref(--add-dir で渡すフォルダから、その版管理のルートまで)にあるものは、その中のファイルを
+    扱うときに読まれることがある。tool と cxxref は、手法によって渡すかどうかが違う。
+    """
+    found: list[str] = []
+    seen: set[Path] = set()
+
+    def scan(label: str, d: Path) -> None:
+        if d in seen:
+            return
+        seen.add(d)
+        for name in INSTRUCTION_NAMES:
+            if (d / name).is_file():
+                found.append(f"{label}:{name}")
+        for folder, pattern in INSTRUCTION_GLOBS:
+            if (d / folder).is_dir() and next((d / folder).rglob(pattern), None) is not None:
+                found.append(f"{label}:{folder}/**/{pattern}")
+
+    for i, d in enumerate(_up_to_repository_root(Path(workspace))):
+        scan("workspace" if i == 0 else "repository", d)
+    for label, start in added:
+        for d in _up_to_repository_root(Path(start)):
+            scan(label, d)
+    return found
+
+
 def command_for(args, exe: str, prompt: str, usage_file: Path, share: Path, roots: list[Path]) -> tuple[list, dict]:
     """手法ごとの、copilot の引数と環境変数。
 
@@ -247,23 +311,22 @@ def command_for(args, exe: str, prompt: str, usage_file: Path, share: Path, root
            "--usage-output-file", str(usage_file), "--share", str(share),
            "--allow-tool", "read", "--allow-tool", "shell(python:*)", "--deny-tool", "write"]
     env: dict[str, str] = {}
-    add_dirs = [r for r in roots if args.workspace not in r.parents and r != args.workspace]
     if args.method == "agent_cf":
         env["COPILOT_SKILLS_DIRS"] = str(REPO / "skills")
-        add_dirs.append(REPO)
     elif args.method == "agent_grep_cxxref":
         if not args.cxxref or not (Path(args.cxxref) / "skills").is_dir():
             raise SystemExit("agent_grep_cxxref には --cxxref <cxxref を置いたフォルダ> が要ります")
         env["COPILOT_SKILLS_DIRS"] = str(Path(args.cxxref) / "skills")
-        add_dirs.append(Path(args.cxxref))
     elif args.method == "agent_cf_mcp":
         mcp = {"mcpServers": {MCP_NAME: {"type": "local", "command": sys.executable,
                                          "args": ["-I", "-m", "context_foundation", "serve"], "tools": ["*"]}}}
         cmd += ["--additional-mcp-config", json.dumps(mcp), "--allow-tool", MCP_NAME]
         tools.append(MCP_NAME)
     cmd += ["--available-tools", ",".join(tools)]
-    for d in dict.fromkeys(add_dirs):
+    for _, d in added_dirs(args, roots):
         cmd += ["--add-dir", str(d)]
+    if args.no_custom_instructions:
+        cmd.append("--no-custom-instructions")
     if args.max_ai_credits:
         cmd += ["--max-ai-credits", str(args.max_ai_credits)]
     if args.trust_folder:
@@ -285,7 +348,8 @@ def run_one(args, exe: str, case: dict, trial: int, mapper: Mapper, roots: list[
     cmd, extra_env = command_for(args, exe, build_prompt(case["question"], roots), usage_file, share, roots)
     env = dict(os.environ, COPILOT_HOME=str(home), **extra_env)
     for v in ("COPILOT_PROVIDER_TYPE", "COPILOT_PROVIDER_BASE_URL", "COPILOT_PROVIDER_API_KEY",
-              "COPILOT_PROVIDER_API_KEY_COMMAND", "COPILOT_MODEL", "COPILOT_ALLOW_ALL", "CF_CONFIG"):
+              "COPILOT_PROVIDER_API_KEY_COMMAND", "COPILOT_MODEL", "COPILOT_ALLOW_ALL", "CF_CONFIG",
+              "COPILOT_CUSTOM_INSTRUCTIONS_DIRS"):
         env.pop(v, None)
     if args.provider == "copilot":
         env.pop("COPILOT_PROVIDERS_CONFIG", None)
@@ -369,6 +433,8 @@ def main() -> int:
     ap.add_argument("--trust-folder", action="store_true", help="作業フォルダの設定(hooks・MCP)を読ませる")
     ap.add_argument("--no-hint", action="store_true",
                     help="agent_cf で、セッションの始めの 1 文(hook)を置かない(skill の説明文だけにする)")
+    ap.add_argument("--no-custom-instructions", action="store_true",
+                    help="指示のファイル(AGENTS.md・CLAUDE.md・.github/copilot-instructions.md など)を、どの手法でも読ませない")
     ap.add_argument("--run-id")
     ap.add_argument("--dry-run", action="store_true", help="実行せずに、コマンドだけを出す")
     ap.add_argument("--yes", action="store_true", help="費用がかかることを了解して、実行する")
@@ -408,6 +474,16 @@ def main() -> int:
             if (args.run_id, c["case_id"], args.method, t) not in done]
     print(f"{args.method}: {len(cases)} 件 × {args.trials} 回 = {len(cases) * args.trials} 回(残り {len(todo)} 回)、"
           f"モデル {model}、1 回の上限 {args.time_limit} 秒")
+    instructions = instruction_files(args.workspace, added_dirs(args, roots))
+    if instructions and args.no_custom_instructions:
+        print(f"指示のファイルが {len(instructions)} 個ありますが、読ませません(--no-custom-instructions): "
+              + "、".join(instructions))
+    elif instructions:
+        print("注意: Copilot CLI が指示として読むファイルがあります。中身が、質問と一緒にモデルへの入力に入ります。\n"
+              + "".join(f"  - {x}\n" for x in instructions)
+              + "  workspace と repository のものは、どの手法でも毎回読まれます。source・tool・cxxref のものは、その中の\n"
+                "  ファイルを扱うときに読まれることがあり、tool と cxxref は手法によって条件が変わります。\n"
+                "  どの手法でも読ませないなら、--no-custom-instructions を付けてください。どちらで回したかは runs.jsonl に残ります。")
     if not args.dry_run and not args.yes:
         print("実行のたびに、AI credits か BYOK の料金がかかります。質問と、エージェントが読んだ本文は、モデルの提供元に"
               "送られます。了解したら --yes を付けて実行してください(--dry-run で、コマンドだけを確かめられます)")
@@ -432,7 +508,9 @@ def main() -> int:
                 "agent_grep_cxxref": ["skill:cxxref"]}[args.method],
             "permissions": "read allowed, write denied, shell limited to python",
             "session_hint": args.method == "agent_grep_cxxref" or (args.method == "agent_cf" and not args.no_hint),
-            "isolated_config": True, "trust_folder": args.trust_folder}
+            "isolated_config": True, "trust_folder": args.trust_folder,
+            "custom_instructions": "disabled" if args.no_custom_instructions else "enabled",
+            "instruction_files": instructions}
         known[args.run_id] = meta
         runs.write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in known.values()), encoding="utf-8")
 
