@@ -68,6 +68,13 @@ git は要りません。Perforce の作業フォルダや、ただのフォル�
 | Python のパッケージ(tree-sitter と C・C++・C# の文法、numpy、onnxruntime、tokenizers、huggingface_hub、jsonschema、pytest と、その依存) | PyPI | 仮想環境で約 190 MB | MIT・BSD・Apache-2.0 など |
 | 埋め込みモデル `intfloat/multilingual-e5-small`(ONNX と tokenizer) | Hugging Face | 約 490 MB | MIT |
 
+時間の目安(16 コアの CPU で測ったもの。GPU は使いません):
+
+- 索引づくりは、約 1,300 ファイル(16 万行)で 3 分、約 8,000 ファイル
+  (143 万行)で 30 分ほどです。ほとんどが、埋め込みの計算です
+- 索引の大きさは、ソースの 2〜3 倍です(143 万行で 135 MB)
+- 検索は、1 回 2 秒ほどです(コマンドの起動と、モデルの読み込みを含む)
+
 埋め込みモデルは、取得しなくても使えます。そのときは、keyword(BM25)だけの
 検索になります。モデルの置き場は `%LOCALAPPDATA%\context-foundation\models`
 です。インターネットに出られない PC では、ほかの PC で取得したこのフォルダを
@@ -98,7 +105,7 @@ git は要りません。Perforce の作業フォルダや、ただのフォル�
 | --- | --- |
 | `index` | 索引を作り直す。`--no-embed` で keyword だけ、`--download` でモデルを先に取得、`--revision <版>` でコーパスの版を記録 |
 | `search "<質問>"` | 検索する。`--mode`、`--top-k`、`--source <id>`、`--format agent\|human\|json` |
-| `status` | 索引の版・件数・作成日時・作成にかかった時間 |
+| `status` | 索引の版・件数・作成日時・作成にかかった時間、構文で分けられなかった割合と、その多いファイル |
 | `eval --cases <cases.jsonl> --out <フォルダ>` | 評価を回して、要約を書く |
 | `validate --cases <cases.jsonl>` | 評価データの形式を検査する |
 | `serve` | 読み取り専用の MCP サーバー(stdio) |

@@ -12,7 +12,7 @@ import pytest
 
 from context_foundation.config import load_config
 from context_foundation.indexer import build_index, embedding_text, strip_license_header
-from context_foundation.render import HARD_MAX_BYTES, status_agent, to_agent, to_human
+from context_foundation.render import HARD_MAX_BYTES, status_agent, status_human, to_agent, to_human
 from context_foundation.search import Searcher, rrf
 from context_foundation.store import IndexError_
 
@@ -138,6 +138,23 @@ def test_stale_flag_after_edit(tmp_path, corpus_copy):
     assert resp.passages[0].get("stale") is True
     assert "[changed since index]" in to_agent(resp)
     assert not any(p.get("stale") for p in resp.passages if p["path"] != "Core/JobScheduler.cpp")
+
+
+def test_status_names_the_files_that_fell_back_to_lines(tmp_path, corpus_copy, searcher):
+    """マクロで文法が崩れたファイルは、status に名前が出る(伏せる名前を探す手がかり)。"""
+    entries = "\n".join(f"    (Entry{i}, {i}, \"entry number {i} of the table\")," for i in range(40))
+    (corpus_copy / "engine" / "Core" / "Table.cpp").write_text(
+        "namespace kes {\nint Before() { return 1; }\n\n"
+        f"KES_TABLE_WITH_NAMES(Kind, unsigned,\n{entries}\n    (Count, 40))\n\n"
+        "int After(int value)\n{\n    return value + 1;\n}\n}\n", encoding="utf-8")
+    cfg = load_config(write_config(tmp_path, corpus_copy))
+    build_index(cfg, use_embedding=False, progress=False, log=lambda s: None)
+    st = Searcher.from_config(cfg).status()
+    assert [(f["source_id"], f["path"]) for f in st["fallback_files"]] == [("engine", "Core/Table.cpp")]
+    assert st["fallback_files"][0]["fallback_lines"] >= 40
+    assert "engine:Core/Table.cpp" in status_human(st) and "attribute_macros" in status_human(st)
+    assert searcher.status()["fallback_files"] == []          # 元のコーパスには、行で分けたファイルが無い
+    assert "attribute_macros" not in status_human(searcher.status())
 
 
 def test_reranker_hook(indexed_workspace):

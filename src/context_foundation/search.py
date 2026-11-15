@@ -284,9 +284,17 @@ class Searcher:
             if cache[fid]:
                 p["stale"] = True
 
+    def fallback_files(self, limit: int = 5) -> list[dict]:
+        """構文で分けられずに行で分けた行が多いファイル(マクロで文法が崩れている場所を探す手がかり)。"""
+        with closing(open_readonly(self.index_path)) as db:
+            rows = db.execute("SELECT source_id, path, lines, fallback_lines FROM files WHERE fallback_lines > 0 "
+                              "ORDER BY fallback_lines DESC, source_id, path LIMIT ?", (limit,)).fetchall()
+        return [{"source_id": s, "path": p, "lines": n, "fallback_lines": fb} for s, p, n, fb in rows]
+
     def status(self) -> dict:
         m = self.meta()
         return {
+            "fallback_files": self.fallback_files(),
             "index_path": str(self.index_path), "index_bytes": self.index_path.stat().st_size,
             "schema_version": m.get("schema_version"), "tool_version": m.get("tool_version"),
             "created_at": m.get("created_at"), "revision": m.get("revision", ""),

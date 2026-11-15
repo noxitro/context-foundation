@@ -159,6 +159,11 @@ def status_human(st: dict) -> str:
                 if b.get("fallback_lines") and b.get("lines") else ""
             out.append(f"    {lang:<9} {b['files']:>7,} ファイル  {b['lines']:>10,} 行  {b['chunks']:>8,} passage{fb}")
         out.append(f"  構文で分ける言語のうち、解析できず行で分けた割合: {stats.get('syntax_fallback_ratio', 0) * 100:.1f}%")
+    if st.get("fallback_files"):
+        out.append("  行で分けた行が多いファイル(マクロで文法が崩れていることが多い。設定の [chunk] attribute_macros に"
+                   "名前を足すと、下がることがある):")
+        for f in st["fallback_files"]:
+            out.append(f"    {f['source_id']}:{f['path']}  {f['fallback_lines']:,} / {f['lines']:,} 行")
     if stats.get("skipped"):
         out.append("  除いたファイル: " + "、".join(f"{k} {v:,}" for k, v in sorted(stats["skipped"].items())))
     return "\n".join(out) + "\n"
