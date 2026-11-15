@@ -140,7 +140,8 @@ def status_agent(st: dict) -> str:
 def status_human(st: dict) -> str:
     stats, emb, tm = st.get("stats", {}), st.get("embedding") or {}, st.get("timings", {})
     out = [f"索引: {st.get('index_path')}",
-           f"  作成: {st.get('created_at')}  形式の版: {st.get('schema_version')}  道具の版: {st.get('tool_version')}",
+           f"  作成: {st.get('created_at')}  形式の版: {st.get('schema_version')}  道具の版: {st.get('tool_version')}"
+           + (f"  コーパスの版: {st['revision']}" if st.get("revision") else ""),
            f"  大きさ: {st.get('index_bytes', 0) / 1e6:.1f} MB",
            f"  ファイル: {stats.get('files', 0):,}  行: {stats.get('lines', 0):,}  passage: {stats.get('chunks', 0):,}",
            f"  使える検索: {' / '.join(st.get('modes', []))}",

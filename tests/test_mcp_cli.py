@@ -127,7 +127,7 @@ def test_mcp_does_not_write_to_the_workspace(indexed_workspace):
 # --- コマンドライン ---
 def test_cli_index_search_status_eval_validate(tmp_path):
     write_config(tmp_path)
-    r = run_cli("index", "--quiet", "--json", cwd=tmp_path)
+    r = run_cli("index", "--quiet", "--json", "--revision", "rev-42", cwd=tmp_path)
     assert r.returncode == 0, r.stderr
     built = json.loads(r.stdout)
     assert built["stats"]["files"] == 13 and built["embedding"]["model"] == "hash-256-test-only"
@@ -146,7 +146,8 @@ def test_cli_index_search_status_eval_validate(tmp_path):
     assert "docs:save-data.md:" in r.stdout
 
     r = run_cli("status", "--format", "json", cwd=tmp_path)
-    assert json.loads(r.stdout)["stats"]["chunks"] == built["stats"]["chunks"]
+    status = json.loads(r.stdout)
+    assert status["stats"]["chunks"] == built["stats"]["chunks"] and status["revision"] == "rev-42"
 
     r = run_cli("validate", "--cases", str(CASES), "--check-corpus", cwd=tmp_path)
     assert r.returncode == 0 and "誤り 0 件" in r.stdout
@@ -155,6 +156,8 @@ def test_cli_index_search_status_eval_validate(tmp_path):
     r = run_cli("eval", "--cases", str(CASES), "--out", str(out), "--run-id", "cli-run", cwd=tmp_path)
     assert r.returncode == 0, r.stderr
     assert "# 評価の要約" in r.stdout and (out / "results.jsonl").is_file() and (out / "summary.json").is_file()
+    run = json.loads((out / "runs.jsonl").read_text(encoding="utf-8").splitlines()[0])
+    assert run["index"]["indexed_revision"] == "rev-42"          # 索引を作ったときの版が、評価の記録に残る
     r = run_cli("validate", "--cases", str(CASES), "--results", str(out / "results.jsonl"),
                 "--runs", str(out / "runs.jsonl"), cwd=tmp_path)
     assert r.returncode == 0, r.stdout

@@ -102,7 +102,7 @@ def _replace(tmp: Path, dest: Path) -> None:
 
 
 def build_index(cfg: Config, *, use_embedding: bool | None = None, embedder: Embedder | None = None,
-                require_embedding: bool = False, progress: bool = True, log=None) -> dict:
+                require_embedding: bool = False, progress: bool = True, log=None, revision: str = "") -> dict:
     """索引を作り直し、統計(meta に入れたものと同じ)を返す。
 
     use_embedding: None なら設定([embedding] enabled)に従う。
@@ -235,6 +235,7 @@ def build_index(cfg: Config, *, use_embedding: bool | None = None, embedder: Emb
                                          "line_window": cfg.chunk.line_window, "macro_hints": cfg.chunk.macro_hints})
         writer.set_meta("tool_version", __version__)
         writer.set_meta("created_at", time.strftime("%Y-%m-%dT%H:%M:%S%z"))
+        writer.set_meta("revision", revision)     # コーパスの版(コミットやチェンジリストの番号。利用者が渡す)
         timings = {"ingest_chunk_seconds": round(t_chunk - t_start, 2),
                    "embed_seconds": round(t_embed - t_embed0, 2) if embedding_meta else 0.0}
         writer.set_meta("timings", timings)        # finalize と total は、下で書き足す

@@ -48,7 +48,9 @@ def run_metadata(run_id: str, searcher, methods: list[str], top_k: int, corpus_r
                   "update_seconds": tm.get("total_seconds", 0.0), "update_mode": "full_rebuild",
                   "peak_memory_bytes": tm.get("peak_memory_bytes"),
                   "syntax_fallback_ratio": stats.get("syntax_fallback_ratio", 0.0),
-                  "created_at": st["created_at"]},
+                  "created_at": st["created_at"],
+                  # 索引を作ったときの版(index --revision で渡したもの)。評価の版と違えば、鮮度の影響が出る
+                  "indexed_revision": st.get("revision", "")},
         "embedding": {"model": emb["model"], "revision": emb.get("revision", ""), "dimensions": emb["dim"],
                       "vector_dtype": emb.get("vector_dtype", "")} if emb else None,
         "chunking": st.get("chunk_config"),

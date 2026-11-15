@@ -64,7 +64,7 @@ def cmd_index(args) -> int:
         download_model(resolve_model(cfg.embedding), log=lambda s: print(s, file=sys.stderr))
     try:
         result = build_index(cfg, use_embedding=use_embedding, require_embedding=args.require_embedding,
-                             progress=not args.quiet)
+                             progress=not args.quiet, revision=args.revision)
     except ModelUnavailable as e:
         sys.stderr.write(f"{e}\n")
         return EXIT_USAGE
@@ -202,6 +202,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-embed", action="store_true", help="埋め込みを作らない(keyword だけの索引)")
     p.add_argument("--download", action="store_true", help="埋め込みモデルが無ければ、先に取得する")
     p.add_argument("--require-embedding", action="store_true", help="モデルが無いとき、keyword だけで作らずに止まる")
+    p.add_argument("--revision", default="", help="コーパスの版(コミットやチェンジリストの番号)。索引に記録する")
     p.add_argument("--quiet", action="store_true", help="途中の進み具合を出さない")
     p.add_argument("--json", action="store_true", help="結果(統計と所要時間)を JSON で出す")
     p.set_defaults(func=cmd_index)

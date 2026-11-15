@@ -289,7 +289,8 @@ class Searcher:
         return {
             "index_path": str(self.index_path), "index_bytes": self.index_path.stat().st_size,
             "schema_version": m.get("schema_version"), "tool_version": m.get("tool_version"),
-            "created_at": m.get("created_at"), "sources": m.get("sources", []), "stats": m.get("stats", {}),
+            "created_at": m.get("created_at"), "revision": m.get("revision", ""),
+            "sources": m.get("sources", []), "stats": m.get("stats", {}),
             "embedding": m.get("embedding"), "timings": m.get("timings", {}),
             "chunk_config": m.get("chunk_config", {}),
             "modes": list(MODES) if m.get("embedding") else ["keyword"],
