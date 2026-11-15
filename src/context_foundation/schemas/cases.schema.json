@@ -1,0 +1,100 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/noxitro/context-foundation/schemas/cases.schema.json",
+  "title": "Evaluation case (one line of cases.jsonl)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "case_id",
+    "question",
+    "question_language",
+    "category",
+    "expected_evidence",
+    "expected_answer_points"
+  ],
+  "properties": {
+    "case_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+      "description": "Stable, unique case identifier."
+    },
+    "question": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The natural-language question given to every method, unchanged."
+    },
+    "question_language": {
+      "type": "string",
+      "pattern": "^([a-z]{2,3}(-[A-Za-z0-9]+)*|mixed)$",
+      "description": "Language of the question: an ISO 639 code such as ja or en, or mixed."
+    },
+    "category": {
+      "enum": [
+        "identifier_known",
+        "natural_language_only",
+        "doc_to_code",
+        "code_to_doc",
+        "similar_implementation",
+        "unanswerable"
+      ],
+      "description": "What kind of search the question needs."
+    },
+    "expected_evidence": {
+      "type": "array",
+      "description": "Relevant passages, annotated before any method is run. Empty only for unanswerable cases.",
+      "items": { "$ref": "#/$defs/evidence" }
+    },
+    "expected_answer_points": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "minLength": 1 },
+      "description": "Facts a correct answer must establish. For unanswerable cases: that the corpus has no answer."
+    },
+    "split": {
+      "enum": ["eval", "tune"],
+      "description": "eval (default): held out, used for the decision. tune: may be looked at while adjusting exclusions, weights and instructions."
+    },
+    "notes": {
+      "type": "string",
+      "description": "Free-form remarks for the annotators. Not given to any method."
+    },
+    "tags": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Optional labels for private analysis."
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "category": { "const": "unanswerable" } } },
+      "then": { "properties": { "expected_evidence": { "maxItems": 0 } } },
+      "else": { "properties": { "expected_evidence": { "minItems": 1 } } }
+    }
+  ],
+  "$defs": {
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_id", "path", "start_line", "end_line", "rationale"],
+      "properties": {
+        "source_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+          "description": "Non-identifying alias for the corpus source."
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Path relative to the source root, with forward slashes."
+        },
+        "start_line": { "type": "integer", "minimum": 1 },
+        "end_line": { "type": "integer", "minimum": 1 },
+        "rationale": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Why the passage is relevant to the question."
+        }
+      }
+    }
+  }
+}

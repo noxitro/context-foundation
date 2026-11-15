@@ -1,0 +1,118 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/noxitro/context-foundation/schemas/results.schema.json",
+  "title": "Comparison result (one line of results.jsonl: one case, one method, one trial)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["run_id", "case_id", "method", "trial", "status", "retrieved_evidence"],
+  "properties": {
+    "run_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+      "description": "Identifier shared by the results of one run. Matches a line of runs.jsonl."
+    },
+    "case_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
+    },
+    "method": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{0,63}$",
+      "description": "Method name. Names that start with agent_ are agent methods; all others are retrieval-only."
+    },
+    "trial": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "1-based repetition number. Agent methods: 3 trials. Retrieval-only methods: 1."
+    },
+    "status": {
+      "enum": ["completed", "timeout", "gave_up"],
+      "description": "completed: produced an answer or a result list. timeout: hit the per-case time limit. gave_up: ended without an answer."
+    },
+    "retrieved_evidence": {
+      "type": "array",
+      "description": "Retrieval-only methods: the ranked passages returned. Agent methods: files and lines the agent opened or cited, in order of first appearance.",
+      "items": { "$ref": "#/$defs/retrieved" }
+    },
+    "search_time_ms": {
+      "type": ["number", "null"],
+      "minimum": 0,
+      "description": "Retrieval-only methods: latency of the search call with the index and model already loaded. Agent methods: null."
+    },
+    "answer": {
+      "type": ["string", "null"],
+      "description": "Agent methods: the final answer. Retrieval-only methods: null."
+    },
+    "answer_correctness": {
+      "type": ["number", "string", "null"],
+      "description": "Score under the rubric fixed before the run: a number from 0 to 1, or acceptable / unacceptable. null until scored."
+    },
+    "task_time_seconds": {
+      "type": ["number", "null"],
+      "minimum": 0,
+      "description": "Agent methods: wall-clock time from sending the question to the final answer."
+    },
+    "input_tokens": { "type": ["integer", "null"], "minimum": 0 },
+    "output_tokens": { "type": ["integer", "null"], "minimum": 0 },
+    "cache_read_tokens": { "type": ["integer", "null"], "minimum": 0 },
+    "cache_write_tokens": { "type": ["integer", "null"], "minimum": 0 },
+    "ai_units": {
+      "type": ["number", "null"],
+      "minimum": 0,
+      "description": "Billing units reported by the agent host (for Copilot: AI credits), when known."
+    },
+    "cost_usd": {
+      "type": ["number", "null"],
+      "minimum": 0,
+      "description": "Estimated cost when tokens are billed by a provider directly. The price table goes in runs.jsonl."
+    },
+    "tool_calls": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "description": "Number of tool calls the agent made."
+    },
+    "model_calls": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "description": "Number of model requests the agent made."
+    },
+    "returned_bytes": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "description": "Bytes of tool output handed to the model. Retrieval-only methods: size of the agent-format output for this query. Agent methods: total over all tool results."
+    },
+    "offloaded_results": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "description": "Agent methods: tool results the host did not pass to the model because they were too large (saved to a file instead)."
+    },
+    "session_id": {
+      "type": "string",
+      "description": "Key for joining with an external session log."
+    },
+    "notes": { "type": "string" }
+  },
+  "$defs": {
+    "retrieved": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rank", "source_id", "path", "start_line", "end_line"],
+      "properties": {
+        "rank": { "type": "integer", "minimum": 1 },
+        "source_id": { "type": "string", "minLength": 1 },
+        "path": { "type": "string", "minLength": 1 },
+        "start_line": { "type": "integer", "minimum": 1 },
+        "end_line": { "type": "integer", "minimum": 1 },
+        "score": { "type": ["number", "null"] },
+        "stale": {
+          "type": "boolean",
+          "description": "true when the file changed after the index was built."
+        },
+        "origin": {
+          "enum": ["search_result", "opened", "cited"],
+          "description": "search_result: returned by a search call. opened: a file range the agent read. cited: named as evidence in the answer."
+        }
+      }
+    }
+  }
+}
