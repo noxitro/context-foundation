@@ -45,6 +45,8 @@ def ask(prompt: str, default: str = "") -> str:
     try:
         s = input(f"{prompt}{hint}: ").strip().strip('"')
     except EOFError:
+        if not default:      # 入力が閉じられた(対話でない実行)。尋ね続けないで終わる
+            raise SystemExit("\n入力が閉じられたので、終わります") from None
         s = ""
     return s or default
 
