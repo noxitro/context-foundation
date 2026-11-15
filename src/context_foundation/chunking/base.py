@@ -141,7 +141,7 @@ def _chunk_from_items(group: list[Item], li: LineIndex) -> Chunk | None:
     if not t:
         return None
     r0, r1 = t
-    # 代表(種類とシグネチャを借りる単位): 入れ物の見出しがあればそれ。無ければ、定義のうち最も大きいもの
+    # 代表(種類・スコープ・シグネチャを借りる単位): 入れ物の見出しがあればそれ。無ければ、定義のうち最も大きいもの
     heads = [i for i in group if i.head]
     defs = [i for i in group if _KIND_RANK.get(i.kind, 2) >= 2]
     primary = heads[0] if heads else max(defs or group, key=lambda i: (li.size(i.r0, i.r1), -i.r0))
@@ -150,7 +150,7 @@ def _chunk_from_items(group: list[Item], li: LineIndex) -> Chunk | None:
         if i.name:
             names.append(i.name)
         names.extend(i.symbols)
-    return Chunk(start_line=r0 + 1, end_line=r1 + 1, kind=primary.kind, method=primary.method, scope=group[0].scope,
+    return Chunk(start_line=r0 + 1, end_line=r1 + 1, kind=primary.kind, method=primary.method, scope=primary.scope,
                  signature=primary.signature or li.first_line(r0, r1), symbols=_uniq(names), text=li.text(r0, r1))
 
 
