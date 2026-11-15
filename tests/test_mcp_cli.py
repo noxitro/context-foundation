@@ -182,6 +182,32 @@ def test_launcher_runs_the_cli_with_the_given_python(indexed_workspace):
     assert r.stdout.startswith("context-foundation search: 2 passages") and "Render/BufferPool" in r.stdout
 
 
+def test_session_hint_only_where_an_index_exists(indexed_workspace, tmp_path):
+    """sessionStart の hook: 索引のある作業フォルダでだけ、skill の使いどころを 1 文で足す。"""
+    def hint(cwd) -> str:
+        r = subprocess.run([sys.executable, "-I", str(REPO / "ctxf.py"), "session-hint"], capture_output=True,
+                           input=json.dumps({"cwd": str(cwd), "source": "new"}), text=True, encoding="utf-8",
+                           cwd=tmp_path, timeout=60)
+        assert r.returncode == 0
+        return r.stdout
+
+    sub = indexed_workspace / "some" / "sub"
+    sub.mkdir(parents=True, exist_ok=True)
+    out = json.loads(hint(sub))
+    assert "context-search skill" in out["additionalContext"] and len(out["additionalContext"]) < 400
+    assert hint(tmp_path) == ""                       # 索引が無ければ、何も足さない
+    r = subprocess.run([sys.executable, "-I", str(REPO / "ctxf.py"), "session-hint"], capture_output=True,
+                       input="not json", text=True, cwd=tmp_path, timeout=60)
+    assert r.returncode == 0 and r.stdout == ""       # 入力が壊れていても、セッションを止めない
+
+
+def test_hook_config_runs_the_launcher_without_a_shell():
+    from context_foundation.copilot_reg import LAUNCHER, hook_config
+    (entry,) = hook_config()["hooks"]["sessionStart"]
+    assert entry["exec"] == "python" and entry["args"] == ["-I", str(LAUNCHER), "session-hint"]
+    assert LAUNCHER == REPO / "ctxf.py"
+
+
 def test_skill_file_points_at_the_launcher():
     skill = (REPO / "skills" / "context-search" / "SKILL.md").read_text(encoding="utf-8")
     assert skill.startswith("---\nname: context-search\ndescription: ")
