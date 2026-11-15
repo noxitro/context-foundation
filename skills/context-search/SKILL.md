@@ -14,9 +14,10 @@ python -I "<folder of this SKILL.md>\..\..\ctxf.py" search "<question>"
 
 - `<folder of this SKILL.md>`: the absolute path of the folder that holds
   this file
-- `<question>`: what you are looking for, in the user's words. Japanese is
-  fine. If you know likely English terms or identifiers, add them to the
-  same query
+- `<question>`: what you are looking for. When the code is written in
+  English and the question is not, put the English terms into the query:
+  translate the key words, add likely identifiers, and keep the user's
+  wording after them. A query in Japanese alone finds English code poorly
 - Options: `--top-k <n>` (default 8), `--mode hybrid|keyword|semantic`
   (default hybrid), `--source <id>` (search one source only)
 - One call returns the passages themselves. Run it once per distinct

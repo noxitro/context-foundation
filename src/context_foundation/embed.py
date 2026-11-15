@@ -65,7 +65,9 @@ MODEL_PRESETS: dict[str, ModelPreset] = {
         },
         note="多言語の汎用モデル。118M パラメータ・384 次元。入力は 512 トークンまで"),
 }
-DEFAULT_MODEL = "ibm-granite/granite-embedding-97m-multilingual-r2"
+# 既定は multilingual-e5-small。公開の C++ のコードで 2 つを比べると、英語の質問と、日本語に英語の語を足した
+# 質問で、こちらのほうが上位に当たった。日本語だけの質問では、どちらも弱く、差は小さかった(docs/design.md)。
+DEFAULT_MODEL = "intfloat/multilingual-e5-small"
 
 
 @dataclass

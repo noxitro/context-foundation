@@ -36,7 +36,8 @@ TOOLS = [
         "inputSchema": {
             "type": "object",
             "properties": {
-                "query": {"type": "string", "description": "Question or keywords, any language."},
+                "query": {"type": "string",
+                          "description": "Question or keywords. For code written in English, include English terms."},
                 "top_k": {"type": "integer", "minimum": 1, "maximum": 20, "description": "Passages to return (8)."},
                 "mode": {"type": "string", "enum": list(MODES), "description": "Default hybrid."},
                 "source_id": {"type": "string", "description": "Limit to one source (see status)."},

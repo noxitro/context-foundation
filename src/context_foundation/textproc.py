@@ -4,7 +4,9 @@
   (`GetBufferPool` → getbufferpool, get, buffer, pool)
 - 英語の語は小文字にし、複数形の s だけを落とす(buffers → buffer)
 - 日本語など区切りの無い文字は、2 文字ずつの組(bigram)にする(「描画処理」→ 描画, 画処, 処理)
-- 質問の側では、英語のよくある語(the, where など)と、ひらがなだけの組(助詞・語尾)を落とす
+- 質問の側では、英語のよくある語(the, where など)と、ひらがなを含む組を落とす。残るのは、漢字と
+  カタカナだけの組(「処理」「バッ」など)。ひらがなを含む組は、助詞や語尾がほとんどで、日本語の文書の
+  どこにでも当たってしまうため
 
 出す語は、英小文字・数字・_ と、区切りの無い文字だけでできている。FTS5 の索引には、語を空白で
 区切った文字列として渡す(tokenize は unicode61 に `_` を足したもの)。
@@ -13,14 +15,13 @@ from __future__ import annotations
 
 import re
 
-# 語のもと: 識別子(英数字と _)か、区切りの無い文字(CJK など)の連なり
+# 区切りの無い文字: ひらがな・カタカナ・漢字・半角カタカナ・々(コードポイントの範囲で書く)
+_CJK_RANGES = "\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uff66-\uff9f\u3005"
+# 語のもと: 識別子(英数字と _)か、区切りの無い文字の連なりか、そのほかの文字の語
 _RUN = re.compile(
-    r"[A-Za-z_][A-Za-z0-9_]*|[0-9]+(?:\.[0-9]+)?[A-Za-z0-9_]*|"
-    r"[぀-ヿ㐀-䶿一-鿿豈-﫿ｦ-ﾟ々ー]+|"
-    r"[^\W\d_]+",
-    re.UNICODE)
-_CJK = re.compile(r"[぀-ヿ㐀-䶿一-鿿豈-﫿ｦ-ﾟ々ー]")
-_HIRAGANA_ONLY = re.compile(r"^[぀-ゟー]+$")
+    r"[A-Za-z_][A-Za-z0-9_]*|[0-9]+(?:\.[0-9]+)?[A-Za-z0-9_]*|[" + _CJK_RANGES + r"]+|[^\W\d_]+")
+_CJK = re.compile("[" + _CJK_RANGES + "]")
+_HIRAGANA = re.compile("[\u3041-\u309f]")
 # 識別子を分ける: 大文字の連なり(略語)・先頭大文字の語・小文字の語・数字
 _PARTS = re.compile(r"[A-Z]+(?=[A-Z][a-z])|[A-Z]?[a-z]+|[A-Z]+|[0-9]+")
 
@@ -98,7 +99,7 @@ def query_tokens(text: str) -> list[str]:
     seen: set[str] = set()
     out: list[str] = []
     for t in tokenize(text):
-        if t in STOPWORDS or (len(t) < 2 and t.isascii()) or _HIRAGANA_ONLY.match(t):
+        if t in STOPWORDS or (len(t) < 2 and t.isascii()) or _HIRAGANA.search(t):
             continue
         if t not in seen:
             seen.add(t)
