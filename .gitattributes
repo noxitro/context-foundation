@@ -1,0 +1,4 @@
+# .bat は cmd が読むので CRLF、ほかの文字のファイルは LF で保つ
+* text=auto eol=lf
+*.bat text eol=crlf
+*.cmd text eol=crlf

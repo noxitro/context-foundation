@@ -1,0 +1,62 @@
+// Kestrel sample engine (synthetic test fixture, not a real product).
+#include "Core/JobScheduler.h"
+
+#include <random>
+
+namespace kes::core
+{
+    JobScheduler::JobScheduler(uint32_t workerCount)
+        : m_queues(workerCount)
+    {
+        for (uint32_t i = 0; i < workerCount; ++i)
+        {
+            m_workers.emplace_back([this, i] { WorkerLoop(i); });
+        }
+    }
+
+    void JobScheduler::Submit(Job job)
+    {
+        // New work goes to the submitting worker's own queue. Other
+        // workers only take it when they run out of work themselves.
+        const uint32_t self = CurrentWorkerIndex();
+        m_queues[self].PushBottom(std::move(job));
+        m_wake.notify_one();
+    }
+
+    bool JobScheduler::Steal(uint32_t thiefIndex, Job& outJob)
+    {
+        // Pick a random victim so idle workers do not all hit the same
+        // queue, and take from the opposite end to the owner.
+        thread_local std::minstd_rand rng(thiefIndex + 1);
+        const uint32_t count = static_cast<uint32_t>(m_queues.size());
+        const uint32_t start = rng() % count;
+        for (uint32_t offset = 0; offset < count; ++offset)
+        {
+            const uint32_t victim = (start + offset) % count;
+            if (victim == thiefIndex)
+            {
+                continue;
+            }
+            if (m_queues[victim].PopTop(outJob))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    void JobScheduler::WorkerLoop(uint32_t index)
+    {
+        Job job;
+        while (!m_stopping)
+        {
+            if (m_queues[index].PopBottom(job) || Steal(index, job))
+            {
+                job();
+                continue;
+            }
+            std::unique_lock<std::mutex> lock(m_sleepMutex);
+            m_wake.wait_for(lock, std::chrono::milliseconds(1));
+        }
+    }
+} // namespace kes::core

@@ -1,0 +1,15 @@
+Kestrel sample engine - build notes (synthetic test fixture)
+
+Toolchain
+  The sample engine builds with a C++20 compiler and CMake 3.28 or later.
+  The sample app builds with the .NET SDK 9.
+
+Configurations
+  debug     no optimisation, all assertions, memory tracking on
+  profile   optimised, assertions on, profiler markers on
+  release   optimised, assertions off, profiler markers off
+
+Asset packs
+  Packs are built by the pack tool and mounted read-only at start-up.
+  Each pack stores a CRC-32 per file. A pack whose checksum does not match
+  is refused, and the app falls back to loose files when they exist.
