@@ -1,24 +1,25 @@
 # 第三者の資料(コミットしない)
-docs/*.pdf
+/docs/*.pdf
 
-# 索引・設定・評価データの置き場(コーパスごとのものは、この公開リポジトリに入れない)
+# 索引と設定の置き場(コーパスごとのもの。どの階層にあっても入れない)
 .cf/
-data/
 
-# 埋め込みモデルのキャッシュ
-models/
-.model-cache/
+# 評価データとモデルの置き場(リポジトリ直下のものだけ。先頭の / を外すと、
+# src の下などに作った同じ名前のフォルダまで無視されてしまう)
+/data/
+/models/
+/.model-cache/
 
 # 計測のやり取りと、公開しない計測の問題(セッション ID や会話の全文を含む)
-bench/runs/
-bench/local/
+/bench/runs/
+/bench/local/
 
 # Python
-.venv/
-venv/
+/.venv/
+/venv/
 __pycache__/
 *.pyc
 .pytest_cache/
 *.egg-info/
-build/
-dist/
+/build/
+/dist/
