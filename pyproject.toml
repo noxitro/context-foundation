@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -7,7 +7,7 @@ name = "context-foundation"
 version = "0.1.0"
 description = "Retrieval-only proof of concept: find evidence passages in large codebases and design documents from natural-language questions."
 readme = "README.md"
-license = { text = "MIT" }
+license = "MIT"
 requires-python = ">=3.11"
 dependencies = [
     # 構文の単位で分けるための解析器(C・C++・C#)
