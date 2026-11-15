@@ -72,8 +72,9 @@ ctxf validate --cases cases.jsonl --check-corpus
 
 ## 2. 索引を作る
 
-`index.bat`(`ctxf index`)で作ります。終わったら `ctxf status` で、次を
-確かめます。
+`index.bat` か、`ctxf index --revision <版>` で作ります。版(コミットや
+チェンジリストの番号)を渡すと、索引と評価の記録に残ります。終わったら
+`ctxf status` で、次を確かめます。
 
 - 入ったファイルの数と、除いたファイルの数(理由ごと)。入るべきものが
   除かれていないか、生成物や外部のコードが入りすぎていないか

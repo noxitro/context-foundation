@@ -96,7 +96,7 @@ git は要りません。Perforce の作業フォルダや、ただのフォル�
 
 | コマンド | すること |
 | --- | --- |
-| `index` | 索引を作り直す。`--no-embed` で keyword だけ、`--download` でモデルを先に取得 |
+| `index` | 索引を作り直す。`--no-embed` で keyword だけ、`--download` でモデルを先に取得、`--revision <版>` でコーパスの版を記録 |
 | `search "<質問>"` | 検索する。`--mode`、`--top-k`、`--source <id>`、`--format agent\|human\|json` |
 | `status` | 索引の版・件数・作成日時・作成にかかった時間 |
 | `eval --cases <cases.jsonl> --out <フォルダ>` | 評価を回して、要約を書く |

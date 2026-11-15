@@ -103,6 +103,21 @@ def test_cpp_unparsable_region_falls_back_to_lines():
     assert after.method == "syntax" and after.signature == "int After(int value)"
 
 
+def test_error_in_a_class_header_does_not_lose_the_members():
+    """継承の並びの途中に #if があると、見出しの行は解析できない。本体は読めているので、メンバーは構文の単位のまま。"""
+    methods = "\n".join(
+        f"    /// <summary>Does thing {i}.</summary>\n    public int Method{i}(int value)\n    {{\n"
+        f"        return Compute(value, {i}) + Offset(value, {i}) * Scale(value, {i});\n    }}\n" for i in range(30))
+    text = ("namespace Demo.Linq\n{\n    public abstract class Token : IEnumerable<Token>\n#if HAVE_CLONE\n"
+            "        , ICloneable\n#endif\n    {\n" + methods + "    }\n}\n")
+    chunks, stats = chunk_file(text, "csharp", CFG)
+    assert stats.fallback_lines == 0 and stats.inner_error_units >= 1
+    m7 = next(c for c in chunks if "Method7" in c.symbols)
+    assert m7.kind == "method" and m7.scope == "Demo.Linq.Token"
+    head = next(c for c in chunks if c.kind == "class")
+    assert head.signature == "public abstract class Token : IEnumerable<Token>"
+
+
 def test_cpp_test_macro_with_body_stays_a_function():
     text = "TEST_F(PoolTests, ReusesBuffers)\n{\n    EXPECT_TRUE(Run());\n}\n"
     chunks, stats = chunk_file(text, "cpp", CFG)

@@ -327,16 +327,16 @@ class _Ctx:
             body = inner.child_by_field_name("body")
             kind, name = spec.containers[it], self.name_of(inner)
             sig = self.signature(node.start_byte, inner, body)
-            head_error = node.has_error and self.error_in(node.start_byte, body.start_byte)
-            if head_error:
-                out.append(Item(start, r1, "lines", scope, fallback=True))
-                return
+            if node.has_error:
+                self.stats.inner_error_units += 1
+                if self.error_in(node.start_byte, body.start_byte):
+                    # 見出しの行に解析の誤りがある(継承の並びの途中に #if がある、など)。本体は読めているので、
+                    # 行で分ける代替には落とさずに中へ下りる。シグネチャは、最初の行だけにする
+                    sig = li.first_line(r0, r1, 200)
             kids = body.named_children
             # 名前空間は、それ自体は意味のある単位ではないので、小さくても中に下りる(中の型や関数を単位にする)。
             # クラスなどの型は、上限に収まれば 1 つの単位にする
             if (size <= cfg.max_bytes and kind != "namespace") or not kids:
-                if node.has_error and self.error_in(body.start_byte, node.end_byte):
-                    self.stats.inner_error_units += 1
                 out.append(Item(start, r1, kind, scope, sig, name, symbols=self.member_names(body)))
                 return
             inner_scope = self.join(scope, name)
@@ -366,19 +366,20 @@ class _Ctx:
             prefix, _, name = full.rpartition("::") if spec.sep == "::" else ("", "", full)
             fscope = self.join(scope, prefix)
             sig = self.signature(node.start_byte, inner, body)
-            head_end = body.start_byte if body is not None else node.end_byte
-            if node.has_error and self.error_in(node.start_byte, head_end):
-                out.append(Item(start, r1, "lines", scope, fallback=True))
-                return
             if node.has_error:
+                if body is None and self.error_in(node.start_byte, node.end_byte):
+                    self.unparsed(start, r1, scope, out)     # 本体の無い宣言で、読めなかったもの
+                    return
                 self.stats.inner_error_units += 1
+                if body is not None and self.error_in(node.start_byte, body.start_byte):
+                    sig = li.first_line(r0, r1, 200)         # 頭の行に誤りがあるときは、最初の行だけを使う
             if size <= cfg.max_bytes:
                 out.append(Item(start, r1, kind, fscope, sig, name or full))
             else:
                 out.append(self.parts(inner, start, r1, kind, fscope, sig, name or full))
             return
 
-        kind = spec.kinds.get(it, "declaration")
+        kind = spec.kinds.get(it) or ("preproc" if it.startswith("preproc") else "declaration")
         if node.has_error and self.error_in(node.start_byte, node.end_byte):
             self.unparsed(start, r1, scope, out)
             return
