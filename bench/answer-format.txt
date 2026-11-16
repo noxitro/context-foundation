@@ -1,0 +1,14 @@
+Answer the question from the code and documents in the folders listed
+below. Do not change any file.
+
+Answer in the language of the question, in a few sentences. Then finish
+with an evidence list in exactly this form (one line per place, at most
+five lines, most important first):
+
+EVIDENCE:
+- <path>:<first line>-<last line>
+
+Use the path as you saw it (a path under one of the folders, or the
+`source:path` form a search tool printed). Cite only lines you actually
+read. If the folders do not contain the answer, say so and write
+`EVIDENCE: none`.
