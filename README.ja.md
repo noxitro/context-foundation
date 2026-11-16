@@ -25,17 +25,19 @@ grep や、同じ作者の cxxref(clang の索引)が向いています。この
 
 ## 状態
 
-PoC です。合成のコーパスと、公開されているコードで動かしただけで、
-実コーパスでの比較(効果があるかの判断)は、まだ行っていません。比較の
-手順は [docs/comparison-runbook.md](docs/comparison-runbook.md) にあります。
+PoC です。動かしたのは、合成のコーパスと、公開されているコードだけです。
+公開されているコード(Godot)で既存の手順と比べたところ、事前に決めた
+目安には届かず、既存の手順との差も出ていません。使う人自身のコーパスでの
+比較(効果があるかの判断)は、まだ行っていません。比較の手順は
+[docs/comparison-runbook.md](docs/comparison-runbook.md) にあります。
 これまでに測ったものと、まだ測っていないものは、
 [docs/benchmarks.md](docs/benchmarks.md) にまとめています。
 
 公開のコード(O3DE)を題材にした評価例では、検索だけの手法は、仕様の
 しきい値(上位 5 件に正解がある質問が 80% 以上)に届いていません(既定の
 hybrid で 54%)。質問と正解、結果は
-[examples/o3de](examples/o3de/README.md) にあります。エージェントがこの
-検索を使って答えるときの正しさは、まだ測っていません。
+[examples/o3de](examples/o3de/README.md) にあります。この評価例では、
+エージェントがこの検索を使って答えるときの正しさは、まだ測っていません。
 
 対象は、まず GitHub Copilot CLI と、GitHub Copilot のデスクトップアプリ
 です。Visual Studio Code は後回しで、手順も確認もまだありません。
