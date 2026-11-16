@@ -126,3 +126,5 @@ for step 4:
 
 The comparison on a real corpus (step 4) has not been run. Everything here
 has been exercised on the synthetic corpus and on a public codebase only.
+What has been measured so far, and what has not, is listed in
+[docs/benchmarks.md](docs/benchmarks.md) (in Japanese).
