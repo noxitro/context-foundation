@@ -152,6 +152,9 @@ def status_human(st: dict) -> str:
     if tm:
         out.append(f"  作成の時間: 合計 {tm.get('total_seconds', 0)} 秒(取り込みと分割 {tm.get('ingest_chunk_seconds', 0)} 秒、"
                    f"埋め込み {tm.get('embed_seconds', 0)} 秒)")
+        if tm.get("unembedded_passages"):
+            out.append(f"  中身が無く、埋め込んでいない passage: {tm['unembedded_passages']:,}"
+                       "(意味検索には出ない。keyword では引ける)")
     if stats.get("by_language"):
         out.append("  言語ごと:")
         for lang, b in sorted(stats["by_language"].items()):

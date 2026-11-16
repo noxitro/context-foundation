@@ -85,6 +85,7 @@ class Searcher:
         self._sig: tuple | None = None           # 読み込んだ索引ファイルの (更新日時, 大きさ)
         self._meta: dict = {}
         self._vectors: np.ndarray | None = None
+        self._unembedded: np.ndarray | None = None     # 埋め込みの無い passage(行がすべて 0)の位置。無ければ None
         self._reranker = load_reranker(self.search_cfg.reranker) if self.search_cfg.reranker else None
         self._glossary = glossary
 
@@ -121,6 +122,9 @@ class Searcher:
             emb = self._meta["embedding"]
             with closing(open_readonly(self.index_path)) as db:
                 self._vectors = load_vectors(db, emb["dim"], emb.get("vector_dtype", "float16"))
+            # 中身が無いので埋め込まなかった passage(indexer.has_content)は、意味検索の結果に入れない
+            unembedded = ~self._vectors.any(axis=1)
+            self._unembedded = unembedded if unembedded.any() else None
         return self._vectors
 
     def _get_embedder(self) -> Embedder:
@@ -163,6 +167,8 @@ class Searcher:
         if not len(mat):
             return []
         scores = mat @ qvec
+        if self._unembedded is not None:
+            scores[self._unembedded] = -np.inf
         if sources:
             marks = ",".join("?" * len(sources))
             ids = np.fromiter((r[0] for r in db.execute(f"SELECT id FROM chunks WHERE source_id IN ({marks})", sources)),
