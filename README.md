@@ -23,8 +23,8 @@ analysis.
    to an embedding model or vector database.
 3. **Provide a read-only agent interface.** Expose retrieval to the agent
    without giving it anything else to do. Leave answer generation and code
-   changes to the agent. Initially, rebuild the index from scratch; consider
-   incremental updates only when their value and cost are understood.
+   changes to the agent. Every build re-chunks all files; embeddings of
+   unchanged passages are reused from the previous index.
 4. **Compare and decide whether to continue.** Run the same questions against
    the existing workflow and the proof of concept. Evaluate evidence found in
    the top results, answer correctness, task time, search latency, and index
@@ -37,14 +37,25 @@ The first targets are **GitHub Copilot CLI** and the **GitHub Copilot app**
 servers configured for it). Visual Studio Code comes later: the MCP server
 is the piece meant for it, but it has not been tried there.
 
-The agent interface comes in two packagings of the same search:
+The repository is a Copilot plugin (`plugin.json`, Agent Plugins 1.0) and a
+plugin marketplace of its own (`.github/plugin/marketplace.json`):
 
-- a **skill** that runs the command-line tool once (the default), and
-- a read-only **MCP server** with two tools, `search` and `status`.
+```text
+copilot plugin marketplace add noxitro/context-foundation
+copilot plugin install context-foundation@context-foundation
+```
 
-The skill is the default because an MCP server's tool definitions are sent
-with every model request, whether or not the tools are used. How to register
-either one, and what was verified, is in [docs/copilot.md](docs/copilot.md).
+The plugin adds a **skill** (`context-search`) that runs the command-line
+tool once per question, and a **session-start hook** that points the agent to
+the skill only in workspaces that have an index. Python dependencies (about
+200 MB) and the embedding model (about 490 MB) live outside the plugin, in a
+per-user folder that `python -I ctxf.py setup` fills once. A read-only
+**MCP server** with two tools, `search` and `status`, is available as an
+extra. The skill is the default because an MCP server's tool definitions are
+sent with every model request, whether or not the tools are used.
+
+How to install either way, the first-time setup, and what was verified are in
+[docs/copilot.md](docs/copilot.md).
 
 ## Evaluation requirements
 
@@ -78,7 +89,6 @@ The first proof of concept does not include:
 - A production service shared across multiple repositories
 - Training a custom model
 - An organization-wide service with access-control management
-- Incremental index updates
 - A dependency on Git: a Perforce workspace or a plain folder is indexed the
   same way
 
@@ -88,6 +98,8 @@ The first proof of concept does not include:
 | --- | --- |
 | `src/context_foundation` | The tool: ingest, chunking, index, search, evaluation, MCP server |
 | `skills/context-search` | The skill that tells an agent when and how to search |
+| `plugin.json`, `.github/plugin`, `com.github.copilot` | The Copilot plugin, its marketplace entry, and the session-start hook |
+| `ctxf.py` | Launcher (standard library only): finds the Python environment and runs the tool; `setup` prepares it |
 | `bench` | Runs the agent methods with Copilot CLI and records the results |
 | `tests` | Tests and a small synthetic corpus (C++, C#, Markdown) |
 | `docs` | Evaluation specification, design notes, Copilot setup, comparison runbook |
@@ -102,7 +114,12 @@ for step 4:
 - ingest, syntax-aware chunking for C, C++ and C# and heading-based chunking
   for Markdown, keyword, semantic and hybrid search over a single SQLite
   file;
-- the skill, the MCP server, and registration for Copilot CLI and the app;
+- incremental index updates that reuse the embeddings of unchanged passages
+  and give the same index as a full rebuild;
+- a glossary that adds English terms to a Japanese-only question before
+  searching (a built-in one for general terms and one per workspace);
+- the Copilot plugin and marketplace (skill and hook), the MCP server, and
+  registration from a local clone;
 - an evaluation runner for the retrieval-only methods and a runner for the
   agent methods.
 

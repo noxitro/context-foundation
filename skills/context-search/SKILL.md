@@ -45,15 +45,18 @@ python -I "<folder of this SKILL.md>\..\..\ctxf.py" search "<question>"
 Each of these steps changes the user's PC or takes time. Ask the user
 before running one, say what it does, and run it only after they agree.
 
-- "is not set up on this PC": the Python packages and the embedding model
-  are missing. `python -I "<...>\ctxf.py" setup` downloads about 200 MB of
+- "is not set up on this PC", "not set up completely" or "set up for an
+  older version": the Python packages or the embedding model are missing or
+  out of date. `python -I "<...>\ctxf.py" setup` downloads about 200 MB of
   packages from PyPI and a 490 MB model from Hugging Face into the user's
-  local app data folder, and takes a few minutes
+  local app data folder, and takes a few minutes. `setup --help` only
+  prints what it does
 - "No context-foundation index": ask which folders to search (the engine
   source, reference apps, design docs). In the workspace, run
   `python -I "<...>\ctxf.py" init "<folder>" "<folder>"`, then
   `python -I "<...>\ctxf.py" index`. The first index of a large codebase
   takes tens of minutes (about 30 minutes for 8,000 files); suggest the
   user run the same command in their own terminal. Later runs reuse the
-  embeddings of unchanged passages and take a minute or two
+  embeddings of unchanged passages; when few files changed, they take a
+  minute or two
 - Meanwhile, search with grep as usual
