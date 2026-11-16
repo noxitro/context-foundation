@@ -5,8 +5,12 @@ README の計画の手順 4(既存の手順と PoC を、同じ質問で比べ�
 [evaluation-data-spec.md](evaluation-data-spec.md)(英語)が正です。
 
 この手順で作るもの(質問、正解の注釈、結果、要約)は、どれもコーパスの
-中身を含みます。作業フォルダの `.cf` の下など、手元の非公開の場所に置き、
-この公開リポジトリには入れません。
+中身を含みます。手元の非公開の場所に置き、この公開リポジトリには
+入れません。下のコマンドの例では、その場所を `<評価のフォルダ>` と
+書いています。エージェントを使う手法(手順 5)を流すなら、作業フォルダの
+外にします。エージェントは作業フォルダの中を読めるので、正解や前の回の
+記録がそこにあると、答えを見て答えるおそれがあります。検索だけの手法
+(手順 3)までなら、作業フォルダの `.cf` の下でも構いません。
 
 質問と正解の書き方の実例は、公開のコーパスを題材にした
 [examples/o3de](../examples/o3de/README.md) にあります。
@@ -79,7 +83,7 @@ README の計画の手順 4(既存の手順と PoC を、同じ質問で比べ�
 書いたら、形式と、場所が実在するかを検査します。
 
 ```text
-ctxf validate --cases cases.jsonl --check-corpus
+ctxf validate --cases <評価のフォルダ>\cases.jsonl --check-corpus
 ```
 
 ## 2. 索引を作る
@@ -104,7 +108,8 @@ ctxf validate --cases cases.jsonl --check-corpus
 費用はかかりません。`eval.bat` か、次のコマンドです。
 
 ```text
-ctxf eval --cases cases.jsonl --out .cf\eval\run-01 --corpus-revision <版>
+ctxf eval --cases <評価のフォルダ>\cases.jsonl ^
+  --out <評価のフォルダ>\run-01 --corpus-revision <版>
 ```
 
 `results.jsonl`・`runs.jsonl`・`summary.md`・`summary.json` ができます。
@@ -133,12 +138,20 @@ Copilot CLI で回すなら、次の手順 5 の道具が、これを自動で�
 手法ごとに、全部の質問を 3 回ずつ流します。
 
 ```text
-python bench\agent_run.py --config <作業フォルダ> --cases cases.jsonl ^
-  --method agent_grep --out .cf\eval\agent-01 --run-id agent-01 --yes
-python bench\agent_run.py --config <作業フォルダ> --cases cases.jsonl ^
-  --method agent_cf --out .cf\eval\agent-01 --run-id agent-01 --yes
+python bench\agent_run.py --config <作業フォルダ> ^
+  --cases <評価のフォルダ>\cases.jsonl --method agent_grep ^
+  --out <評価のフォルダ>\agent-01 --run-id agent-01 --yes
+python bench\agent_run.py --config <作業フォルダ> ^
+  --cases <評価のフォルダ>\cases.jsonl --method agent_cf ^
+  --out <評価のフォルダ>\agent-01 --run-id agent-01 --yes
 ```
 
+- `<評価のフォルダ>` は、作業フォルダの外にする(この文書の初めの段落)。
+  流したあとに、セッションの記録(`--out` の下の `homes` にある
+  `events.jsonl`)で、道具の呼び出しとその結果に、質問・正解・結果の
+  置き場が出てこないことを確かめる。公開されているコードでの計測では、
+  作業フォルダの `.cf` の下に置いていたが、245 回のどの呼び出しにも
+  出てこなかった([benchmarks.md](benchmarks.md))
 - まず `--dry-run` で、実行されるコマンドを確かめる
 - まず 1 問・1 回(`--case <id> --trials 1`)で、最後まで通るかを見る
 - 止まっても、同じコマンドで続きから流せる(終わった回は飛ばす)
@@ -180,9 +193,11 @@ python bench\agent_run.py --config <作業フォルダ> --cases cases.jsonl ^
 します。
 
 ```text
-ctxf eval --cases cases.jsonl --out .cf\eval\summary-01 ^
-  --import .cf\eval\agent-01\results.jsonl ^
-  --import-runs .cf\eval\agent-01\runs.jsonl --candidate hybrid,agent_cf
+ctxf eval --cases <評価のフォルダ>\cases.jsonl ^
+  --out <評価のフォルダ>\summary-01 ^
+  --import <評価のフォルダ>\agent-01\results.jsonl ^
+  --import-runs <評価のフォルダ>\agent-01\runs.jsonl ^
+  --candidate hybrid,agent_cf
 ```
 
 `summary.md` の「しきい値の合否」を見ます。判定に使うのは、対象の列に
