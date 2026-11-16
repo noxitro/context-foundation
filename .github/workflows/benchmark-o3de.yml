@@ -102,6 +102,7 @@ jobs:
           python -m context_foundation eval --config "$RUNNER_TEMP/o3de-eval"
           --cases examples/o3de/cases.jsonl --out "$RUNNER_TEMP/o3de-out"
           --split "$SPLIT" --run-id "actions-${{ github.run_number }}"
+          --corpus-revision "o3de-$O3DE_TAG"
 
       - name: Show the summary
         run: |
