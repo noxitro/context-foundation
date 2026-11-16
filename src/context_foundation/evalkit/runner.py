@@ -67,6 +67,7 @@ def run_metadata(run_id: str, searcher, methods: list[str], top_k: int, corpus_r
                   "update_seconds": tm.get("total_seconds", 0.0),
                   "update_mode": "incremental" if tm.get("reused_passages") else "full_rebuild",
                   "embedded_passages": tm.get("embedded_passages"), "reused_passages": tm.get("reused_passages"),
+                  "unembedded_passages": tm.get("unembedded_passages"),
                   "peak_memory_bytes": tm.get("peak_memory_bytes"),
                   "syntax_fallback_ratio": stats.get("syntax_fallback_ratio", 0.0),
                   "created_at": st["created_at"],

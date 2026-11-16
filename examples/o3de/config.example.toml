@@ -1,0 +1,15 @@
+# O3DE(Open 3D Engine)2605.0 の一部を題材にした評価例の設定。
+#
+# 使い方: <o3de> を、取得した O3DE のフォルダに置き換えて、作業フォルダの
+# .cf\config.toml に置く(README.md の「再現のしかた」)。
+# source の id は、cases.jsonl の source_id とそろえてある。変えないこと。
+
+[[source]]
+id = "atom"
+root = '<o3de>\Gems\Atom'
+exclude = ['**/External/**', '**/3rdParty/**']
+
+[[source]]
+id = "framework"
+root = '<o3de>\Code\Framework'
+exclude = ['**/External/**', '**/3rdParty/**']
