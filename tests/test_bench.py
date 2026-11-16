@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import sqlite3
 import sys
 from argparse import Namespace
@@ -35,7 +36,8 @@ def test_paths_are_mapped_to_source_and_relative_path(bench, mapper):
     engine = CORPUS / "engine"
     assert mapper.resolve("engine:Audio/VoiceMixer.cpp")[:2] == ("engine", "Audio/VoiceMixer.cpp")
     assert mapper.resolve(str(engine / "Audio" / "VoiceMixer.cpp"))[:2] == ("engine", "Audio/VoiceMixer.cpp")
-    assert mapper.resolve(str(engine).upper() + "\\Core\\Hash.cpp")[:2] == ("engine", "Core/Hash.cpp")
+    if os.name == "nt":      # 大文字と小文字を区別しない・区切りが \ の書き方は、Windows のパスだけ
+        assert mapper.resolve(str(engine).upper() + "\\Core\\Hash.cpp")[:2] == ("engine", "Core/Hash.cpp")
     assert mapper.resolve("`" + str(CORPUS / "docs" / "jobs.md") + "`")[:2] == ("docs", "jobs.md")
     assert mapper.resolve("C:/somewhere/else/file.cpp") is None
 

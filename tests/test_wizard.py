@@ -17,6 +17,8 @@ from conftest import CORPUS
 @pytest.fixture
 def answers(monkeypatch, tmp_path):
     """input() に、用意した答えを順に返させる。状態ファイルとモデルの置き場は、一時フォルダに向ける。"""
+    # 覚え書きの置き場は、OS によって決め方が違う。CF_HOME で、どの OS でも一時フォルダに向ける
+    monkeypatch.setenv("CF_HOME", str(tmp_path / "cf-home"))
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "appdata"))
     monkeypatch.setenv("CF_MODEL_CACHE", str(tmp_path / "no-models"))
     monkeypatch.delenv("CF_TEST_EMBEDDER")
@@ -71,3 +73,22 @@ def test_search_wizard_loops_until_an_empty_line(answers, indexed_workspace, cap
 def test_wizard_stops_when_input_is_closed(answers):
     with pytest.raises(SystemExit):
         wizard_main(Namespace(action="index"))
+
+
+def test_closed_input_never_downloads_the_model(answers, tmp_path, monkeypatch, capsys):
+    """入力が閉じられていたら、モデルを取得しない(尋ねずに数百 MB を取得しない)。keyword だけで索引を作る。"""
+    import context_foundation.embed as embed
+    from context_foundation.wizard import _save_state
+
+    from conftest import write_config
+
+    ws = tmp_path / "work"
+    ws.mkdir()
+    write_config(ws)
+    _save_state(workspace=str(ws))       # 前回の作業フォルダを覚えている(尋ねられずに進む)
+    called = []
+    monkeypatch.setattr(embed, "download_model", lambda *a, **k: called.append(a))
+    assert wizard_main(Namespace(action="index")) == 0
+    out = capsys.readouterr().out
+    assert not called and "取得しませんでした" in out
+    assert Searcher.from_config(load_config(ws / ".cf" / "config.toml")).status()["modes"] == ["keyword"]
