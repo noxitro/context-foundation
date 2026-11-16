@@ -118,7 +118,7 @@ copilot plugin install context-foundation@context-foundation
   など)。エージェントがすでに英語の語を足した質問には当てません
 - 作業フォルダの対応表: `.cf\glossary.tsv`。エンジンに固有の語や、別の
   エンジンの用語との対応を、チームで書きます。1 行 1 語で、`<語><タブ><足す語>`
-  です(例: `AudioMixer	mixer bus volume`)
+  です(例: `AudioMixer<タブ>mixer bus volume`)
 
 公開のゲームエンジン(O3DE)の 12 問で、日本語だけの質問の上位 5 件の
 当たりは 0.33 から 0.67 に、後から作った別の 10 問では 0.70 から 0.80 に
