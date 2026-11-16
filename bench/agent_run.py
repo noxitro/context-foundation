@@ -336,6 +336,26 @@ def command_for(args, exe: str, prompt: str, usage_file: Path, share: Path, root
     return cmd, env
 
 
+def hooks_for(args) -> dict | None:
+    """手法ごとの、この回の設定フォルダに置く hook。置かない手法では None。
+
+    agent_cf: プラグインが足すのと同じ、セッションの始めの 1 文(入口 ctxf.py の session-hint。索引のある作業
+    フォルダで、skill の使いどころを知らせる)。プラグインの hooks.json は ${PLUGIN_ROOT} からの場所で書かれて
+    いて、設定フォルダに置く hook では使えないので、shell を通さずに、入口の場所を直接渡す。
+    """
+    if args.method == "agent_cf" and not args.no_hint:
+        return {"version": 1, "hooks": {"sessionStart": [
+            {"type": "command", "exec": "python", "args": ["-I", str(REPO / "ctxf.py"), "session-hint"],
+             "timeoutSec": 10}]}}
+    if args.method == "agent_grep_cxxref":
+        script = str(Path(args.cxxref) / "scripts" / "cxxref_hook.py")
+        return {"version": 1, "hooks": {
+            "sessionStart": [{"type": "command", "exec": "python", "args": ["-I", script, "session"],
+                              "timeoutSec": 10}],
+            "preToolUse": [{"type": "command", "exec": "python", "args": ["-I", script], "timeoutSec": 10}]}}
+    return None
+
+
 def run_one(args, exe: str, case: dict, trial: int, mapper: Mapper, roots: list[Path], prices: dict | None) -> dict:
     name = f"{args.run_id}-{case['case_id']}-{args.method}-t{trial}"
     home = args.out / "homes" / name
@@ -353,17 +373,7 @@ def run_one(args, exe: str, case: dict, trial: int, mapper: Mapper, roots: list[
         env.pop(v, None)
     if args.provider == "copilot":
         env.pop("COPILOT_PROVIDERS_CONFIG", None)
-    # 登録したときと同じ hook を、この回の設定フォルダに置く(索引のある作業フォルダで、skill の使いどころを知らせる)
-    hooks: dict | None = None
-    if args.method == "agent_cf" and not args.no_hint:
-        from context_foundation.copilot_reg import hook_config
-        hooks = hook_config()
-    elif args.method == "agent_grep_cxxref":
-        script = str(Path(args.cxxref) / "scripts" / "cxxref_hook.py")
-        hooks = {"version": 1, "hooks": {
-            "sessionStart": [{"type": "command", "exec": "python", "args": ["-I", script, "session"],
-                              "timeoutSec": 10}],
-            "preToolUse": [{"type": "command", "exec": "python", "args": ["-I", script], "timeoutSec": 10}]}}
+    hooks = hooks_for(args)
     if hooks:
         (home / "hooks").mkdir()
         (home / "hooks" / "bench.json").write_text(json.dumps(hooks), encoding="utf-8")
