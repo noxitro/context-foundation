@@ -64,7 +64,7 @@ def cmd_index(args) -> int:
         download_model(resolve_model(cfg.embedding), log=lambda s: print(s, file=sys.stderr))
     try:
         result = build_index(cfg, use_embedding=use_embedding, require_embedding=args.require_embedding,
-                             progress=not args.quiet, revision=args.revision)
+                             progress=not args.quiet, revision=args.revision, reuse=not args.full)
     except ModelUnavailable as e:
         sys.stderr.write(f"{e}\n")
         return EXIT_USAGE
@@ -197,8 +197,10 @@ def build_parser() -> argparse.ArgumentParser:
     def common(p):
         p.add_argument("--config", help="設定ファイル、.cf フォルダ、またはその親フォルダ(省くと作業フォルダから親へ探す)")
 
-    p = sub.add_parser("index", help="索引を作り直す", allow_abbrev=False)
+    p = sub.add_parser("index", help="索引を作る(前の索引の埋め込みは、変わっていない passage の分を使い回す)",
+                       allow_abbrev=False)
     common(p)
+    p.add_argument("--full", action="store_true", help="前の索引の埋め込みを使い回さず、すべて埋め込み直す")
     p.add_argument("--no-embed", action="store_true", help="埋め込みを作らない(keyword だけの索引)")
     p.add_argument("--download", action="store_true", help="埋め込みモデルが無ければ、先に取得する")
     p.add_argument("--require-embedding", action="store_true", help="モデルが無いとき、keyword だけで作らずに止まる")
