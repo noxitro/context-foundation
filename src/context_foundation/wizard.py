@@ -52,11 +52,12 @@ def ask(prompt: str, default: str = "") -> str:
     return s or default
 
 
-def yes(prompt: str, default: bool = True) -> bool:
+def yes(prompt: str, default: bool = True, when_closed: bool | None = None) -> bool:
+    """はい・いいえを尋ねる。入力が閉じられていたら(対話でない実行)、when_closed(無ければ default)を返す。"""
     try:
         s = input(f"{prompt} ({'Y/n' if default else 'y/N'}) ").strip().lower()
     except EOFError:
-        s = ""
+        return default if when_closed is None else when_closed
     return default if not s else s.startswith("y")
 
 
@@ -105,7 +106,8 @@ def _offer_model(embedding_cfg) -> bool:
     print(f"  モデル: {spec.name}(ライセンス {spec.license or '不明'}、約 {size / 1e6:.0f} MB)")
     print("  入手先: https://huggingface.co/" + spec.repo)
     print("  取得のときに送るのは、ファイルの名前だけです(ソースや質問は送りません)。計算は、この PC の中で行います。")
-    if not yes("今、取得しますか"):
+    # 入力が閉じられているときは、取得しない(尋ねずに数百 MB を取得しない)
+    if not yes("今、取得しますか", when_closed=False):
         print("  取得しませんでした。keyword(BM25)だけの検索になります。後で setup.bat から取得できます")
         return False
     try:
