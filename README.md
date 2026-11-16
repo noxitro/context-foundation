@@ -143,8 +143,9 @@ threshold for acceptable answers. A review of that key, made after the
 results by reviewers who had not seen them, removed the points that the
 questions do not ask for; with the reviewed key the figures are 93.1% and
 88.5%, and the agent with this tool meets the thresholds set for it. The
-search-only method does not (50% of questions with a relevant passage in the
-top five). It has not been run on a private
+reviewed key is the one taken for the verdict on Godot. The search-only
+method does not meet its threshold (50% of questions with a relevant passage
+in the top five). It has not been run on a private
 corpus. Everything here has been exercised on the synthetic corpus and on
 public codebases only.
 What has been measured so far, and what has not, is listed in
