@@ -28,6 +28,8 @@ grep や、同じ作者の cxxref(clang の索引)が向いています。この
 PoC です。合成のコーパスと、公開されているコードで動かしただけで、
 実コーパスでの比較(効果があるかの判断)は、まだ行っていません。比較の
 手順は [docs/comparison-runbook.md](docs/comparison-runbook.md) にあります。
+これまでに測ったものと、まだ測っていないものは、
+[docs/benchmarks.md](docs/benchmarks.md) にまとめています。
 
 対象は、まず GitHub Copilot CLI と、GitHub Copilot のデスクトップアプリ
 です。Visual Studio Code は後回しで、手順も確認もまだありません。
@@ -214,6 +216,8 @@ top_k = 8
   [docs/comparison-runbook.md](docs/comparison-runbook.md)
 - エージェントを使う手法を Copilot CLI で回す道具: [bench](bench/README.md)。
   こちらは、実行のたびに費用がかかります
+- 測ったものと、まだ測っていないものの一覧:
+  [docs/benchmarks.md](docs/benchmarks.md)
 
 質問・正解の注釈・検索結果は、コーパスの中身を含みます。この公開
 リポジトリには入れないでください。
@@ -245,7 +249,7 @@ top_k = 8
 | `ctxf.py` | skill と hook が呼ぶ入口 |
 | `bench` | エージェントを使う手法を Copilot CLI で回して記録する道具 |
 | `tests` | テストと、合成のコーパス |
-| `docs` | 評価の仕様、設計、Copilot の手順、比較の手順書 |
+| `docs` | 評価の仕様、設計、Copilot の手順、比較の手順書、計測の一覧 |
 
 ## ライセンス
 
