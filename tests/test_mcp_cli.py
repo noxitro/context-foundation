@@ -199,13 +199,17 @@ def test_session_hint_only_where_an_index_exists(indexed_workspace, tmp_path):
     out = json.loads(hint(sub))
     assert "context-search skill" in out["additionalContext"] and len(out["additionalContext"]) < 400
     assert hint(tmp_path) == ""                       # 索引が無ければ、何も足さない
-    # MCP サーバーも入れているとき(プラグイン): 検索の道具を先に呼ぶように促す。道具が無ければ skill、とも書く
+    # MCP サーバーも入れているとき(プラグイン): 検索の道具を先に呼ぶように促す。道具が無ければ skill、とも書く。
+    # 用意が済んでいる PC での文面を見るので、使う python を CF_PYTHON で渡す(隣に .venv が無い環境でも同じ結果)
+    ready = dict(os.environ, CF_PYTHON=sys.executable)
     r = subprocess.run([sys.executable, "-I", str(REPO / "ctxf.py"), "session-hint", "--mcp"], capture_output=True,
-                       input=json.dumps({"cwd": str(sub)}), text=True, encoding="utf-8", cwd=tmp_path, timeout=60)
+                       input=json.dumps({"cwd": str(sub)}), text=True, encoding="utf-8", cwd=tmp_path, env=ready,
+                       timeout=60)
     ctx = json.loads(r.stdout)["additionalContext"]
     assert "context-foundation-search tool first" in ctx and "context-search skill" in ctx and len(ctx) < 700
     r = subprocess.run([sys.executable, "-I", str(REPO / "ctxf.py"), "session-hint", "--mcp"], capture_output=True,
-                       input=json.dumps({"cwd": str(tmp_path)}), text=True, encoding="utf-8", cwd=tmp_path, timeout=60)
+                       input=json.dumps({"cwd": str(tmp_path)}), text=True, encoding="utf-8", cwd=tmp_path, env=ready,
+                       timeout=60)
     assert r.returncode == 0 and r.stdout == ""
     r = subprocess.run([sys.executable, "-I", str(REPO / "ctxf.py"), "session-hint"], capture_output=True,
                        input="not json", text=True, cwd=tmp_path, timeout=60)
