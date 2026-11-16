@@ -135,9 +135,11 @@ The comparison (step 4) has been run on a public codebase (Godot) only.
 Neither candidate met the thresholds set beforehand, and the agent with this
 tool did not differ from the grep-only baseline in answer quality, time or
 cost. After that, version 0.3 changed how the search reaches the agent (an
-MCP server instead of the skill); on a few tuning questions the agent then
-made fewer model calls and used fewer input tokens than the baseline, but the
-held-out questions have not been re-run. It has not been run on a private
+MCP server instead of the skill). Re-run on the same held-out questions, the
+agent with this tool answered as well as the baseline (75.9% and 74.7% of
+answers acceptable), with a median time 35% lower and a median cost 32%
+lower. Both stay below the 80% threshold for acceptable answers, so no
+method has met every threshold yet. It has not been run on a private
 corpus. Everything here has been exercised on the synthetic corpus and on
 public codebases only.
 What has been measured so far, and what has not, is listed in
