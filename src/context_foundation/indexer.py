@@ -28,7 +28,7 @@ import numpy as np
 from . import __version__
 from .chunking import chunk_file
 from .config import CONFIG_DIR_NAME, Config
-from .embed import EmbedPool, Embedder, HashEmbedder, ModelUnavailable, make_embedder
+from .embed import CPU_PROVIDER, EmbedPool, Embedder, HashEmbedder, ModelUnavailable, make_embedder
 from .ingest import IngestStats, iter_source_files
 from .store import IndexError_, IndexWriter, load_vectors, open_readonly, read_meta, unpack_text
 from .sysinfo import peak_memory_bytes
@@ -302,7 +302,7 @@ def build_index(cfg: Config, *, use_embedding: bool | None = None, embedder: Emb
         t_embed0 = time.time()
         if want:
             try:
-                emb = embedder or make_embedder(cfg.embedding)
+                emb = embedder or make_embedder(cfg.embedding, for_index=True, log=log)
             except ModelUnavailable as e:
                 if require_embedding:
                     raise
@@ -340,7 +340,10 @@ def build_index(cfg: Config, *, use_embedding: bool | None = None, embedder: Emb
                     vectors[src_rows >= 0] = old_mat[src_rows[src_rows >= 0]].astype(dtype)
                 del old_mat, old_keys
                 workers = 1
-                if len(missing) and embedder is None and not isinstance(emb, HashEmbedder):
+                provider = getattr(emb, "provider", "")
+                on_gpu = bool(provider) and provider != CPU_PROVIDER
+                # GPU では、プロセスを分けない(1 つの GPU を取り合うだけで、速くならない)
+                if len(missing) and embedder is None and not isinstance(emb, HashEmbedder) and not on_gpu:
                     workers = cfg.embedding.workers or 1
                     workers = max(1, min(workers, -(-len(missing) // EMBED_TASK)))
                 pool = EmbedPool(cfg.embedding, workers) if workers > 1 else None
@@ -375,13 +378,14 @@ def build_index(cfg: Config, *, use_embedding: bool | None = None, embedder: Emb
                 writer.add_vectors(1, vectors, dtype)
                 writer.commit()
                 del vectors
-                embedding_meta = dict(emb.info(), vector_dtype=dtype, workers=workers,
+                embedding_meta = dict(emb.info(), vector_dtype=dtype, workers=workers, provider=provider,
                                       passage_prefix=signature["passage_prefix"],
                                       embed_text_version=EMBED_TEXT_VERSION)
                 embed_counts = {"reused": reused, "embedded": int(len(missing)), "unembedded": unembedded}
                 log(f"埋め込み: {len(missing):,} passage を計算、{reused:,} passage を使い回し、"
                     f"中身の無い {unembedded:,} passage は埋め込まず"
-                    f"({time.time() - t_embed0:.1f} 秒、モデル {emb.name}、{workers} プロセス)")
+                    f"({time.time() - t_embed0:.1f} 秒、モデル {emb.name}、"
+                    + (f"GPU({provider})" if on_gpu else f"CPU、{workers} プロセス") + ")")
         t_embed = time.time()
         if embedding_meta is None and reuse and _had_embeddings(dest):
             log("注意: 前の索引には埋め込みがありましたが、今回は keyword だけの索引になります。"
