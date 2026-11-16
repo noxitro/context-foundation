@@ -9,11 +9,13 @@ Run it in PowerShell from the workspace, as a command of its own (nothing
 chained with `;`, `|` or `&&`):
 
 ```powershell
-python -I "<folder of this SKILL.md>\..\..\ctxf.py" search "<question>"
+python -I "<base directory of this skill>\ctxf.py" search "<question>"
 ```
 
-- `<folder of this SKILL.md>`: the absolute path of the folder that holds
-  this file
+- `<base directory of this skill>`: the absolute path of the folder that
+  holds this file (shown with this skill as its base directory). `ctxf.py`
+  is directly in that folder: append the file name to that path as it is,
+  and do not go up to a parent folder
 - `<question>`: what you are looking for. When the code is written in
   English and the question is not, put the English terms into the query:
   translate the key words, add likely identifiers, and keep the user's
