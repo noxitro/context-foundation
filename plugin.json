@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "context-foundation",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Local search over a large codebase and its design docs by meaning and keywords. Adds the context-search skill, used when the agent must find where something is implemented or documented without knowing its name (another engine's term, a plain-language or Japanese description), and a hook that mentions it only in workspaces with an index. Retrieval only; the code never leaves the PC.",
   "author": { "name": "nitro", "url": "https://github.com/noxitro" },
   "homepage": "https://github.com/noxitro/context-foundation",

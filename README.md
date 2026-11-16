@@ -76,10 +76,13 @@ uses the tool is a separate matter. The passages it reads, like the files it
 opens, go to the model provider the agent host is configured with. Decide
 which provider may receive a private corpus before running agents on it.
 
-Keep corpus-specific questions, annotations, paths, and search results out of
-this public repository. The specification uses generic field names and
-placeholders only. The corpus under `tests/fixtures` is synthetic and was
-written for the tests.
+Keep the questions, annotations, paths, and search results of a private
+corpus out of this public repository. The specification uses generic field
+names and placeholders only. Two sets of cases are committed here: the one
+under `tests/fixtures`, for a synthetic corpus written for the tests, and the
+worked example under [`examples/o3de`](examples/o3de/README.md), for a public
+open-source corpus. The example holds questions and the locations of their
+answers, not source text.
 
 ## Initial scope boundaries
 
@@ -102,6 +105,7 @@ The first proof of concept does not include:
 | `ctxf.py` | Launcher (standard library only): finds the Python environment and runs the tool; `setup` prepares it |
 | `bench` | Runs the agent methods with Copilot CLI and records the results |
 | `tests` | Tests and a small synthetic corpus (C++, C#, Markdown) |
+| `examples/o3de` | Worked evaluation example on a public C++ game engine: questions, answer locations, measured results |
 | `docs` | Evaluation specification, design notes, Copilot setup, comparison runbook |
 | `*.bat` | Double-click entry points for Windows |
 
@@ -119,6 +123,8 @@ for step 4:
   top-10 rankings matched too, though bit-exact vectors are not guaranteed);
 - a glossary that adds English terms to a Japanese-only question before
   searching (a built-in one for general terms and one per workspace);
+- passages without content (an include block, namespace braces, forward
+  declarations) are kept out of the semantic ranking;
 - the Copilot plugin and marketplace (skill and hook), the MCP server, and
   registration from a local clone;
 - an evaluation runner for the retrieval-only methods and a runner for the
@@ -131,3 +137,11 @@ cost. It has not been run on a private corpus. Everything here has been
 exercised on the synthetic corpus and on public codebases only.
 What has been measured so far, and what has not, is listed in
 [docs/benchmarks.md](docs/benchmarks.md) (in Japanese).
+
+On the worked example for a public C++ game engine
+([`examples/o3de`](examples/o3de/README.md)), the retrieval-only methods do
+not reach the provisional threshold: the default hybrid search has a relevant
+passage in the top five for 54% of the held-out questions, and for 22% of
+the questions that describe behaviour without naming an identifier. On this
+example, the correctness of answers written by an agent that uses the search
+has not been measured.

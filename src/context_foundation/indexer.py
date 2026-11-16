@@ -7,6 +7,7 @@
 変わったファイル・増えたファイルの passage だけが埋め込み直され、消えたファイルの passage は新しい索引に
 入らない。passage は作り直したときと同じになり、同じ文には同じ埋め込みを使う(埋め込みの計算は、まとめて
 計算する相手によって浮動小数の末尾が変わりうるので、作り直しとの厳密な一致は保証しない。実測では一致した)。
+中身の無い passage(include だけのファイルの頭など。下の has_content)は埋め込まない(意味検索に出さない)。
 所要時間と統計は、索引の meta に残す。
 """
 from __future__ import annotations
@@ -40,18 +41,14 @@ _LICENSE_WORDS = re.compile(r"copyright|licen[sc]e|spdx|著作権", re.IGNORECAS
 _DIRECTIVES = ("#include", "#pragma", "#if", "#define", "#!")
 
 
-def strip_license_header(text: str) -> str:
-    """ファイルの先頭にある、著作権やライセンスのコメントを外す(埋め込みの文だけ。passage の本文は変えない)。
-
-    どのファイルにも同じ文が付いていると、ファイルの頭の passage どうしが似てしまい、どの質問にも
-    上位に出やすくなるため。
-    """
+def _after_license_header(text: str) -> str | None:
+    """先頭の、著作権やライセンスのコメントを外した残り(空のこともある)。そういうコメントが無ければ None。"""
     lines = text.split("\n")
     i = 0
     while i < len(lines) and not lines[i].strip():
         i += 1
     if i >= len(lines):
-        return text
+        return None
     first = lines[i].lstrip()
     end = i
     if first.startswith("/*"):
@@ -64,11 +61,54 @@ def strip_license_header(text: str) -> str:
                 and not lines[end].lstrip().startswith(_DIRECTIVES):
             end += 1
     else:
-        return text
+        return None
     if end > len(lines) or not _LICENSE_WORDS.search("\n".join(lines[i:end])):
-        return text
-    rest = "\n".join(lines[end:]).lstrip("\n")
-    return rest if rest.strip() else text
+        return None
+    return "\n".join(lines[end:]).lstrip("\n")
+
+
+def strip_license_header(text: str) -> str:
+    """ファイルの先頭にある、著作権やライセンスのコメントを外す(埋め込みの文だけ。passage の本文は変えない)。
+
+    どのファイルにも同じ文が付いていると、ファイルの頭の passage どうしが似てしまい、どの質問にも
+    上位に出やすくなるため。
+    """
+    rest = _after_license_header(text)
+    return rest if rest is not None and rest.strip() else text
+
+
+# 中身の無い行(C・C++・C#): 前処理の行(値のある #define は除く)、using、名前空間の開き閉じ、extern "C"、
+# 前方宣言、括弧だけの行。後ろに付いた短いコメント(`}  // namespace Foo`)は、あってもよい
+_FORWARD_DECLARATION = r"(?:class|struct|union|enum(?:\s+class)?)\s+(?:[A-Z][A-Z0-9_]*\s+)?[\w:]+\s*;"
+_NO_CONTENT_LINE = re.compile(r"""^(?:
+      \#\s*(?:include|import|pragma|if|ifdef|ifndef|else|elif|endif|undef|region|endregion|line|error|warning
+              |nullable)\b.*
+    | \#\s*define\s+\w+                                    # 値の無い #define(include ガード)
+    | (?:global\s+)?using\s+(?:namespace\s+|static\s+)?[\w:.]+\s*;
+    | (?:inline\s+)?namespace(?:\s+[\w:.]+)?\s*[{;]?        # 開く行と、C# の `namespace Foo.Bar;`
+    | (?:inline\s+)?namespace\s+[\w:.]+\s*\{\s*(?:%(fwd)s\s*)*\}   # `namespace Foo { class Bar; }`
+    | extern\s+"C(?:\+\+)?"\s*\{?
+    | %(fwd)s                                              # 前方宣言(`class FOO_API Bar;` も)
+    | [{}()\[\];,]+
+    )\s*(?://.*|/\*.*\*/)?$""" % {"fwd": _FORWARD_DECLARATION}, re.VERBOSE)
+_SYNTAX_LANGUAGES = ("c", "cpp", "csharp")
+
+
+def has_content(text: str, language: str, start_line: int = 0) -> bool:
+    """passage に、意味で探す中身があるか。無いものは埋め込まない(keyword では引ける)。
+
+    ファイルの頭の「ライセンスのコメント + include の並び」や、名前空間の開き閉じ・前方宣言だけの passage は、
+    埋め込みに渡す文がほとんど場所(パス)だけになる。パスにはクラスの名前が入っているので、どの質問にも
+    上位に出て、答えの passage を押し出す(公開の C++ のコードで測ると、日本語の質問の意味検索の上位 10 件の
+    37% を占めていた。docs/design.md)。判定するのは、構文で分ける言語(C・C++・C#)だけ。
+    """
+    if language not in _SYNTAX_LANGUAGES:
+        return True
+    if start_line == 1:
+        rest = _after_license_header(text)
+        if rest is not None:
+            text = rest
+    return any(s and not _NO_CONTENT_LINE.match(s) for s in (line.strip() for line in text.splitlines()))
 
 
 def embedding_text(path: str, scope: str, signature: str, text: str, start_line: int = 0) -> str:
@@ -141,11 +181,13 @@ def _previous_vectors(dest: Path, signature: dict, log, ecfg=None) -> tuple[dict
             n_chunks = db.execute("SELECT count(*) FROM chunks").fetchone()[0]
             if len(mat) != n_chunks:
                 return {}, None
+            embedded = mat.any(axis=1)        # すべて 0 の行は、埋め込まなかった passage(使い回さない)
             keys: dict[bytes, int] = {}
             for cid, path, scope, signature_, text, start_line in db.execute(
                     "SELECT id, path, scope, signature, text, start_line FROM chunks ORDER BY id"):
-                keys.setdefault(text_key(embedding_text(path, scope, signature_, unpack_text(text), start_line)),
-                                cid - 1)
+                if embedded[cid - 1]:
+                    keys.setdefault(text_key(embedding_text(path, scope, signature_, unpack_text(text), start_line)),
+                                    cid - 1)
             return keys, mat
     except (IndexError_, sqlite3.Error, ValueError, KeyError, IndexError, zlib.error) as e:
         log(f"  前の索引を読めないので、すべて埋め込み直します({str(e).splitlines()[0]})")
@@ -255,7 +297,7 @@ def build_index(cfg: Config, *, use_embedding: bool | None = None, embedder: Emb
 
         # 埋め込み
         embedding_meta = None
-        embed_counts = {"reused": 0, "embedded": 0}
+        embed_counts = {"reused": 0, "embedded": 0, "unembedded": 0}
         want = cfg.embedding.enabled if use_embedding is None else use_embedding
         t_embed0 = time.time()
         if want:
@@ -271,23 +313,29 @@ def build_index(cfg: Config, *, use_embedding: bool | None = None, embedder: Emb
                 signature = embedding_signature(emb, dtype)
                 old_keys, old_mat = _previous_vectors(dest, signature, log, cfg.embedding) if reuse else ({}, None)
 
-                # 1. 新しい passage ごとに、使い回せる前の行(無ければ -1)を決める
+                # 1. 新しい passage ごとに、使い回せる前の行を決める(無ければ -1。中身が無く、埋め込まないものは -2)
                 src_rows = np.full(total_chunks, -1, dtype=np.int64)
                 with closing(open_readonly(tmp)) as rdb:
-                    for cid, path, scope, sig, text, start_line in rdb.execute(
-                            "SELECT id, path, scope, signature, text, start_line FROM chunks ORDER BY id"):
-                        row = old_keys.get(text_key(embedding_text(path, scope, sig, unpack_text(text), start_line)))
+                    for cid, path, scope, sig, text, start_line, language in rdb.execute(
+                            "SELECT c.id, c.path, c.scope, c.signature, c.text, c.start_line, f.language "
+                            "FROM chunks c JOIN files f ON f.id = c.file_id ORDER BY c.id"):
+                        body = unpack_text(text)
+                        if not has_content(body, language, start_line):
+                            src_rows[cid - 1] = -2
+                            continue
+                        row = old_keys.get(text_key(embedding_text(path, scope, sig, body, start_line)))
                         if row is not None:
                             src_rows[cid - 1] = row
-                missing = np.flatnonzero(src_rows < 0)       # 埋め込み直す passage(0 始まりの位置)
-                reused = total_chunks - len(missing)
+                missing = np.flatnonzero(src_rows == -1)     # 埋め込み直す passage(0 始まりの位置)
+                unembedded = int((src_rows == -2).sum())
+                reused = int((src_rows >= 0).sum())
                 if reused:
                     log(f"  前の索引の埋め込みを使い回します: {reused:,} passage、"
                         f"埋め込み直すのは {len(missing):,} passage")
 
                 # 2. 使い回せない passage だけを埋め込む
                 # 保存の形(既定は float16)で持つ。float16 → float32 → float16 は値が変わらない
-                vectors = np.empty((total_chunks, emb.dim), dtype=dtype)
+                vectors = np.zeros((total_chunks, emb.dim), dtype=dtype)    # 埋め込まない passage は 0 のまま
                 if reused:
                     vectors[src_rows >= 0] = old_mat[src_rows[src_rows >= 0]].astype(dtype)
                 del old_mat, old_keys
@@ -330,8 +378,9 @@ def build_index(cfg: Config, *, use_embedding: bool | None = None, embedder: Emb
                 embedding_meta = dict(emb.info(), vector_dtype=dtype, workers=workers,
                                       passage_prefix=signature["passage_prefix"],
                                       embed_text_version=EMBED_TEXT_VERSION)
-                embed_counts = {"reused": int(reused), "embedded": int(len(missing))}
-                log(f"埋め込み: {len(missing):,} passage を計算、{reused:,} passage を使い回し"
+                embed_counts = {"reused": reused, "embedded": int(len(missing)), "unembedded": unembedded}
+                log(f"埋め込み: {len(missing):,} passage を計算、{reused:,} passage を使い回し、"
+                    f"中身の無い {unembedded:,} passage は埋め込まず"
                     f"({time.time() - t_embed0:.1f} 秒、モデル {emb.name}、{workers} プロセス)")
         t_embed = time.time()
         if embedding_meta is None and reuse and _had_embeddings(dest):
@@ -363,7 +412,9 @@ def build_index(cfg: Config, *, use_embedding: bool | None = None, embedder: Emb
         writer.set_meta("revision", revision)     # コーパスの版(コミットやチェンジリストの番号。利用者が渡す)
         timings = {"ingest_chunk_seconds": round(t_chunk - t_start, 2),
                    "embed_seconds": round(t_embed - t_embed0, 2) if embedding_meta else 0.0,
-                   "embedded_passages": embed_counts["embedded"], "reused_passages": embed_counts["reused"]}
+                   "embedded_passages": embed_counts["embedded"], "reused_passages": embed_counts["reused"],
+                   # 中身が無いので埋め込まなかった passage(意味検索には出ない。keyword では引ける)
+                   "unembedded_passages": embed_counts["unembedded"]}
         writer.set_meta("timings", timings)        # finalize と total は、下で書き足す
         t_fin0 = time.time()
         writer.finish()

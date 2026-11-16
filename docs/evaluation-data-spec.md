@@ -3,11 +3,14 @@
 This specification defines a repeatable, corpus-independent format for
 comparing an existing search workflow with a retrieval proof of concept.
 
-Do not store actual corpus-specific questions, annotations, file paths, source
-content, or run results in this public repository. Keep evaluation records in
-an access-appropriate private location. The examples below are placeholders,
-not evaluation data. The only cases committed here are the ones under
-`tests/fixtures`, which describe a synthetic corpus written for the tests.
+Do not store the questions, annotations, file paths, source content, or run
+results of a private corpus in this public repository. Keep those evaluation
+records in an access-appropriate private location. The examples below are
+placeholders, not evaluation data. The cases committed here are the ones
+under `tests/fixtures`, which describe a synthetic corpus written for the
+tests, and the worked example under
+[`examples/o3de`](../examples/o3de/README.md), which describes a public
+open-source corpus and contains no source text.
 
 The formats are also defined as JSON Schema files, and a command checks data
 against them. See [Schemas and validation](#schemas-and-validation).
@@ -100,6 +103,29 @@ Example shape:
 Line ranges refer to the version of the corpus used for that evaluation. Record
 the corpus revision alongside the run metadata so annotations and results can
 be interpreted against the same source version.
+
+### Completeness of the expected evidence
+
+A result counts as a hit only when it overlaps a listed range, so an
+incomplete list scores correct results as misses. List every passage a
+reviewer would accept as answering the question, not only the most central
+one:
+
+- the declaration and the definition;
+- each platform or back-end implementation of the same thing;
+- the whole of a long function rather than one part of it;
+- the class declaration when the answer is a class.
+
+Leave out call sites, tests, and passages that are merely about a related
+topic. For the held-out questions, add the alternatives before running any
+method: adding them after looking at the results of one method favours that
+method. The tuning questions may be revised after looking at results.
+
+In the worked example under `examples/o3de`, the tuning questions were first
+annotated with three ranges each and then with up to ten (9.9 on average).
+For the same search results, the share of questions with a hit in the top
+five rose from 0.05 to 0.55. How broad the accepted evidence is changes the
+score, so compare methods on the same cases, not scores across case sets.
 
 ### Categories
 

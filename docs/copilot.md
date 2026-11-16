@@ -201,6 +201,17 @@ MCP サーバーの形では、shell の許可は要りません。ツールの�
     根拠に挙げて答えた
   - モデルの呼び出し 3 回、入力 87,485 トークン(うちキャッシュの読み
     56,087、書き 31,388)、出力 945 トークン、API の時間 5.7 秒
+- GitHub の Marketplace(`noxitro/context-foundation`)から、この
+  リポジトリ自身のプラグイン(0.2.0)を入れた。空の設定フォルダと、
+  ほかのプラグインも入っているふだんの設定の両方で確かめた。git が追跡
+  している 82 ファイルが写り、`setup` → `init` → `index` → `search` と
+  hook の 1 文が動いた【実測】
+- ふだんの設定で、公開されているコード(O3DE)の索引(約 7 万 passage)の
+  ある作業フォルダから、`copilot -p` を 1 回動かした(BYOK の Claude
+  Haiku 5.5、日本語の質問)。hook の 1 文 → skill → 検索 1 回 → 根拠の
+  場所つきの回答まで通った。モデルの呼び出し 3 回、入力 83,446 トークン
+  (うちキャッシュの読み 52,043、書き 31,393)、出力 1,078 トークン、API の
+  時間 6.5 秒【実測】
 
 ### 0.1(skill のフォルダを登録する形)
 
@@ -228,8 +239,6 @@ Haiku 5.5、合成のコーパス、毎回空の設定フォルダ)。
 - 対話のセッションでの動作(確かめたのは `copilot -p`)
 - Claude Haiku 5.5 のほかのモデルで、skill が読まれるか
 - `python` が無い PC、Microsoft Store 版の Python での動作
-- GitHub の Marketplace からこのリポジトリ自身を入れること(この変更が
-  公開されてから確かめる)
 - Visual Studio Code
 
 ## チームの Marketplace に載せる
@@ -243,7 +252,7 @@ Haiku 5.5、合成のコーパス、毎回空の設定フォルダ)。
   "name": "context-foundation",
   "source": { "source": "github", "repo": "noxitro/context-foundation" },
   "description": "Find code and design docs by meaning and keywords, locally.",
-  "version": "0.2.0"
+  "version": "0.2.1"
 }
 ```
 
