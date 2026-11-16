@@ -1,0 +1,118 @@
+# Reproduces the public worked example (examples/o3de) on a GitHub-hosted
+# runner: gets the two folders of O3DE 2605.0 the example uses, builds the
+# index on the CPU, and runs the retrieval-only evaluation. Nothing is sent to
+# a model provider. Run it by hand (Actions > Benchmark (O3DE example) > Run
+# workflow); building the index takes an hour or more on a hosted runner.
+name: Benchmark (O3DE example)
+
+on:
+  workflow_dispatch:
+    inputs:
+      split:
+        description: Which questions to run (eval is the held-out set)
+        type: choice
+        options: [eval, tune, all]
+        default: eval
+
+permissions:
+  contents: read
+
+concurrency:
+  group: benchmark-o3de-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  O3DE_TAG: "2605.0"
+  O3DE_COMMIT: 3db6943249d8bd7960b9ed7e9aee310b7668586e
+
+jobs:
+  retrieval:
+    name: Retrieval-only evaluation on O3DE
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install the tool
+        run: python -m pip install -e .
+
+      - name: Point the per-user folder at a temporary place
+        run: echo "CF_HOME=${RUNNER_TEMP}/cf-home" >> "$GITHUB_ENV"
+
+      - name: Cache the embedding model
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/cf-home/models
+          key: cf-model-${{ runner.os }}-${{ hashFiles('src/context_foundation/embed.py') }}
+
+      - name: Download the embedding model
+        run: python -m context_foundation model download
+
+      # Only the two folders of the example, without history and without the
+      # large binary assets kept in Git LFS (the index does not read them).
+      - name: Get O3DE (Gems/Atom and Code/Framework)
+        env:
+          GIT_LFS_SKIP_SMUDGE: "1"
+        run: |
+          git clone --depth 1 --branch "$O3DE_TAG" --filter=blob:none --sparse \
+            https://github.com/o3de/o3de.git "$RUNNER_TEMP/o3de"
+          git -C "$RUNNER_TEMP/o3de" sparse-checkout set Gems/Atom Code/Framework
+          test "$(git -C "$RUNNER_TEMP/o3de" rev-parse HEAD)" = "$O3DE_COMMIT"
+
+      - name: Write the configuration from the example
+        run: |
+          mkdir -p "$RUNNER_TEMP/o3de-eval/.cf"
+          python - <<'EOF'
+          import os
+          from pathlib import Path
+          text = Path("examples/o3de/config.example.toml").read_text(encoding="utf-8")
+          lines = [line.replace("<o3de>", os.environ["RUNNER_TEMP"] + "/o3de").replace("\\", "/")
+                   if line.startswith("root") else line for line in text.splitlines()]
+          Path(os.environ["RUNNER_TEMP"], "o3de-eval", ".cf", "config.toml").write_text(
+              "\n".join(lines) + "\n", encoding="utf-8")
+          EOF
+
+      - name: Build the index
+        run: >
+          python -m context_foundation index --config "$RUNNER_TEMP/o3de-eval"
+          --revision "o3de-$O3DE_TAG" --require-embedding
+
+      - name: Check that the expected line ranges exist in the corpus
+        run: >
+          python -m context_foundation validate --config "$RUNNER_TEMP/o3de-eval"
+          --cases examples/o3de/cases.jsonl --check-corpus
+
+      - name: Run the evaluation
+        run: >
+          python -m context_foundation eval --config "$RUNNER_TEMP/o3de-eval"
+          --cases examples/o3de/cases.jsonl --out "$RUNNER_TEMP/o3de-out"
+          --split "${{ inputs.split }}" --run-id "actions-${{ github.run_number }}"
+
+      - name: Show the summary
+        run: |
+          {
+            echo "Tool at commit \`${GITHUB_SHA}\`, questions: \`${{ inputs.split }}\`"
+            echo
+            python -m context_foundation status --config "$RUNNER_TEMP/o3de-eval" | head -12
+            echo
+            cat "$RUNNER_TEMP/o3de-out/summary.md"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # The per-question results list source locations, so only the summary
+      # is kept (the same rule as examples/o3de/README.md).
+      - name: Keep the summary
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: o3de-${{ inputs.split }}-summary
+          path: |
+            ${{ runner.temp }}/o3de-out/summary.md
+            ${{ runner.temp }}/o3de-out/summary.json
+          if-no-files-found: error

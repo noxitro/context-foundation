@@ -1,0 +1,64 @@
+# Walks the path of someone who installs the plugin, on a clean machine:
+# setup (virtual environment and the real embedding model), init, index,
+# search, eval, the MCP server and the session-start hint. The unit tests
+# (ci.yml) use a stand-in for the embedding model; this job uses the real one.
+name: Plugin smoke test
+
+on:
+  pull_request:
+    paths:
+      - "src/**"
+      - "skills/**"
+      - "com.github.copilot/**"
+      - "ctxf.py"
+      - "mcp.json"
+      - "plugin.json"
+      - "pyproject.toml"
+      - "tests/fixtures/**"
+      - ".github/scripts/plugin_smoke.py"
+      - ".github/workflows/smoke.yml"
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    name: Setup, index and search (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+
+      # The per-user folder of the tool (virtual environment and model) goes
+      # to the runner's temporary folder.
+      - name: Point the per-user folder at a temporary place
+        shell: bash
+        run: echo "CF_HOME=${RUNNER_TEMP}/cf-home" >> "$GITHUB_ENV"
+
+      # The model (about 490 MB from Hugging Face) is the slow part. Its
+      # revision and checksums are fixed in embed.py, so that file is the key.
+      - name: Cache the embedding model
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/cf-home/models
+          key: cf-model-${{ runner.os }}-${{ hashFiles('src/context_foundation/embed.py') }}
+
+      - name: Run the smoke test
+        run: python .github/scripts/plugin_smoke.py
