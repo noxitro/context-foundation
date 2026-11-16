@@ -138,8 +138,13 @@ cost. After that, version 0.3 changed how the search reaches the agent (an
 MCP server instead of the skill). Re-run on the same held-out questions, the
 agent with this tool answered as well as the baseline (75.9% and 74.7% of
 answers acceptable), with a median time 35% lower and a median cost 32%
-lower. Both stay below the 80% threshold for acceptable answers, so no
-method has met every threshold yet. It has not been run on a private
+lower. With the answer key as written beforehand, both stay below the 80%
+threshold for acceptable answers. A review of that key, made after the
+results by reviewers who had not seen them, removed the points that the
+questions do not ask for; with the reviewed key the figures are 93.1% and
+88.5%, and the agent with this tool meets the thresholds set for it. The
+search-only method does not (50% of questions with a relevant passage in the
+top five). It has not been run on a private
 corpus. Everything here has been exercised on the synthetic corpus and on
 public codebases only.
 What has been measured so far, and what has not, is listed in
