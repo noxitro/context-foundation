@@ -33,9 +33,27 @@ python -I "<folder of this SKILL.md>\..\..\ctxf.py" search "<question>"
   lines outside the passage
 - `[changed since index]` means the file was edited after indexing; open
   it to check the current lines
+- `note:` lines say what the tool did with the query (for example, the
+  glossary terms it added) or why it fell back to keyword search
 - `source` is an alias, not a folder name. `ctxf.py status` lists the
   sources
 - Results are candidates ranked by similarity, not proof. If none fits,
   rephrase once (other terms, English), then fall back to grep
-- "No context-foundation index": search with grep as usual. Building an
-  index takes minutes; ask the user first
+
+## When it is not ready
+
+Each of these steps changes the user's PC or takes time. Ask the user
+before running one, say what it does, and run it only after they agree.
+
+- "is not set up on this PC": the Python packages and the embedding model
+  are missing. `python -I "<...>\ctxf.py" setup` downloads about 200 MB of
+  packages from PyPI and a 490 MB model from Hugging Face into the user's
+  local app data folder, and takes a few minutes
+- "No context-foundation index": ask which folders to search (the engine
+  source, reference apps, design docs). In the workspace, run
+  `python -I "<...>\ctxf.py" init "<folder>" "<folder>"`, then
+  `python -I "<...>\ctxf.py" index`. The first index of a large codebase
+  takes tens of minutes (about 30 minutes for 8,000 files); suggest the
+  user run the same command in their own terminal. Later runs reuse the
+  embeddings of unchanged passages and take a minute or two
+- Meanwhile, search with grep as usual

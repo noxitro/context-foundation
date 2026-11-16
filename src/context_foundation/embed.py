@@ -88,13 +88,25 @@ class ModelSpec:
     cache_dir: str
 
 
+def data_home() -> Path:
+    """利用者ごとの置き場(モデル・ctxf.py setup の仮想環境・.bat の覚え書き)。環境変数 CF_HOME で変えられる。
+    ctxf.py の data_home と同じ決め方にする。"""
+    env = os.environ.get("CF_HOME")
+    if env:
+        return Path(env)
+    if os.name == "nt" and os.environ.get("LOCALAPPDATA"):
+        return Path(os.environ["LOCALAPPDATA"]) / "context-foundation"
+    base = os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local" / "share")
+    return Path(base) / "context-foundation"
+
+
 def default_cache_dir() -> Path:
     env = os.environ.get("CF_MODEL_CACHE")
     if env:
         return Path(env)
-    if os.name == "nt" and os.environ.get("LOCALAPPDATA"):
-        return Path(os.environ["LOCALAPPDATA"]) / "context-foundation" / "models"
-    return Path.home() / ".cache" / "context-foundation" / "models"
+    if os.environ.get("CF_HOME") or os.name == "nt":
+        return data_home() / "models"
+    return Path.home() / ".cache" / "context-foundation" / "models"     # 0.1 と同じ場所(Windows 以外)
 
 
 def resolve_model(cfg: EmbeddingConfig) -> ModelSpec:

@@ -264,6 +264,18 @@ def load_config(path: str | os.PathLike) -> Config:
     return cfg
 
 
+def source_id_for(path: Path, used: set[str]) -> str:
+    """フォルダの名前から、source の呼び名(英数字と . _ -)を作る。使った名前とは重ならないようにする。"""
+    base = re.sub(r"[^A-Za-z0-9._-]+", "-", path.name).strip("-._") or "source"
+    if not base[0].isalnum():
+        base = "s" + base
+    sid, n = base[:40], 2
+    while sid in used:
+        sid = f"{base[:36]}-{n}"
+        n += 1
+    return sid
+
+
 def toml_string(s: str) -> str:
     """TOML の文字列にする。Windows のパスを読みやすく書くため、使えるなら '…'(中をそのまま読む形)にする。"""
     if "'" not in s and "\n" not in s and "\r" not in s:

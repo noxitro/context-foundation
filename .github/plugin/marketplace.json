@@ -1,0 +1,15 @@
+{
+  "name": "context-foundation",
+  "owner": { "name": "nitro", "url": "https://github.com/noxitro" },
+  "metadata": {
+    "description": "context-foundation: local search over code and design docs as a Copilot plugin. A team marketplace can list it with a github source instead (see docs/copilot.md)."
+  },
+  "plugins": [
+    {
+      "name": "context-foundation",
+      "source": "./",
+      "description": "Find where something is implemented or documented without knowing its name: the context-search skill searches a local index of the code and design docs by meaning and keywords.",
+      "version": "0.2.0"
+    }
+  ]
+}
