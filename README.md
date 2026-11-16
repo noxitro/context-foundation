@@ -124,7 +124,10 @@ for step 4:
 - an evaluation runner for the retrieval-only methods and a runner for the
   agent methods.
 
-The comparison on a real corpus (step 4) has not been run. Everything here
-has been exercised on the synthetic corpus and on a public codebase only.
+The comparison (step 4) has been run on a public codebase (Godot) only.
+Neither candidate met the thresholds set beforehand, and the agent with this
+tool did not differ from the grep-only baseline in answer quality, time or
+cost. It has not been run on a private corpus. Everything here has been
+exercised on the synthetic corpus and on public codebases only.
 What has been measured so far, and what has not, is listed in
 [docs/benchmarks.md](docs/benchmarks.md) (in Japanese).

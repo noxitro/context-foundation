@@ -25,9 +25,11 @@ grep や、同じ作者の cxxref(clang の索引)が向いています。この
 
 ## 状態
 
-PoC です。合成のコーパスと、公開されているコードで動かしただけで、
-実コーパスでの比較(効果があるかの判断)は、まだ行っていません。比較の
-手順は [docs/comparison-runbook.md](docs/comparison-runbook.md) にあります。
+PoC です。動かしたのは、合成のコーパスと、公開されているコードだけです。
+公開されているコード(Godot)で既存の手順と比べたところ、事前に決めた
+目安には届かず、既存の手順との差も出ていません。使う人自身のコーパスでの
+比較(効果があるかの判断)は、まだ行っていません。比較の手順は
+[docs/comparison-runbook.md](docs/comparison-runbook.md) にあります。
 これまでに測ったものと、まだ測っていないものは、
 [docs/benchmarks.md](docs/benchmarks.md) にまとめています。
 
