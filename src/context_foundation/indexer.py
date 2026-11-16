@@ -15,6 +15,7 @@ import re
 import sqlite3
 import sys
 import time
+import zlib
 from collections import defaultdict
 from contextlib import closing
 from pathlib import Path
@@ -86,21 +87,39 @@ def text_key(text: str) -> bytes:
     return hashlib.blake2b(text.encode("utf-8"), digest_size=16).digest()
 
 
+# 埋め込みに渡す文(embedding_text)の作り方の版。embedding_text や strip_license_header を変えたら上げる
+# (前の索引の鍵は、前の索引の passage から今の embedding_text で作り直すので、作り方が変わったら使い回せない)
+EMBED_TEXT_VERSION = 1
+
 # 前の索引の埋め込みを使い回してよいか、の判定に使う項目(どれかが違えば、すべて埋め込み直す)
-_REUSE_KEYS = ("model", "revision", "dim", "onnx_file", "pooling", "max_tokens", "passage_prefix", "vector_dtype")
+_REUSE_KEYS = ("model", "revision", "dim", "onnx_file", "onnx_bytes", "pooling", "max_tokens", "passage_prefix",
+               "vector_dtype", "embed_text_version")
+# 0.1 で作った索引の meta に無い項目。無いときは、今の設定が既定のままなら同じとみなす(下の _missing_ok)
+_ADDED_IN_0_2 = ("onnx_bytes", "passage_prefix", "embed_text_version")
 
 
 def embedding_signature(emb: Embedder, vector_dtype: str) -> dict:
-    sig = dict(emb.info(), vector_dtype=vector_dtype)
+    sig = dict(emb.info(), vector_dtype=vector_dtype, embed_text_version=EMBED_TEXT_VERSION)
     spec = getattr(emb, "spec", None)
     sig["passage_prefix"] = getattr(spec, "passage_prefix", "") if spec is not None else ""
     return {k: sig.get(k) for k in _REUSE_KEYS}
 
 
-def _previous_vectors(dest: Path, signature: dict, log) -> tuple[dict[bytes, int], np.ndarray | None]:
+def _missing_ok(key: str, ecfg) -> bool:
+    """前の索引の meta に無い項目を、同じとみなしてよいか(0.1 の索引は、既定の設定で作ったものとして扱う)。"""
+    if key == "embed_text_version":
+        return EMBED_TEXT_VERSION == 1                 # 0.1 の embedding_text は版 1 と同じ
+    if key == "passage_prefix":
+        return ecfg is None or ecfg.passage_prefix is None
+    if key == "onnx_bytes":
+        return ecfg is None or (not ecfg.model_dir and not ecfg.onnx_file)
+    return False
+
+
+def _previous_vectors(dest: Path, signature: dict, log, ecfg=None) -> tuple[dict[bytes, int], np.ndarray | None]:
     """前の索引から、使い回せる埋め込みを読む。返すのは (文の鍵 → 行, ベクトルの行列)。
 
-    前の索引が無い・壊れている・形式の版が違う・埋め込みの作り方(モデル・版・次元・保存の形など)が
+    前の索引が無い・壊れている・形式の版が違う・埋め込みの作り方(モデル・版・次元・保存の形・文の作り方など)が
     違うときは、何も使い回さない(空の辞書)。"""
     if not dest.is_file():
         return {}, None
@@ -110,8 +129,9 @@ def _previous_vectors(dest: Path, signature: dict, log) -> tuple[dict[bytes, int
             old = meta.get("embedding") or {}
             if not old:
                 return {}, None
-            # 前の索引に無い項目(古い版で作った索引の passage_prefix)は、今の値と同じとみなす
-            diff = [k for k in _REUSE_KEYS if k in old and old.get(k) != signature.get(k)]
+            diff = [k for k in _REUSE_KEYS
+                    if (old.get(k) != signature.get(k) if k in old
+                        else signature.get(k) is not None and not _missing_ok(k, ecfg))]
             if diff:
                 log(f"  前の索引とは埋め込みの作り方が違う({', '.join(diff)})ので、すべて埋め込み直します")
                 return {}, None
@@ -125,9 +145,17 @@ def _previous_vectors(dest: Path, signature: dict, log) -> tuple[dict[bytes, int
                 keys.setdefault(text_key(embedding_text(path, scope, signature_, unpack_text(text), start_line)),
                                 cid - 1)
             return keys, mat
-    except (IndexError_, sqlite3.Error, ValueError, KeyError) as e:
+    except (IndexError_, sqlite3.Error, ValueError, KeyError, IndexError, zlib.error) as e:
         log(f"  前の索引を読めないので、すべて埋め込み直します({str(e).splitlines()[0]})")
         return {}, None
+
+
+def _had_embeddings(dest: Path) -> bool:
+    try:
+        with closing(open_readonly(dest)) as db:
+            return bool(read_meta(db).get("embedding"))
+    except (IndexError_, sqlite3.Error, ValueError):
+        return False
 
 
 def _percentile(sorted_values: list[int], p: float) -> int:
@@ -239,7 +267,7 @@ def build_index(cfg: Config, *, use_embedding: bool | None = None, embedder: Emb
             if emb is not None:
                 dtype = cfg.embedding.vector_dtype
                 signature = embedding_signature(emb, dtype)
-                old_keys, old_mat = _previous_vectors(dest, signature, log) if reuse else ({}, None)
+                old_keys, old_mat = _previous_vectors(dest, signature, log, cfg.embedding) if reuse else ({}, None)
 
                 # 1. 新しい passage ごとに、使い回せる前の行(無ければ -1)を決める
                 src_rows = np.full(total_chunks, -1, dtype=np.int64)
@@ -256,9 +284,10 @@ def build_index(cfg: Config, *, use_embedding: bool | None = None, embedder: Emb
                         f"埋め込み直すのは {len(missing):,} passage")
 
                 # 2. 使い回せない passage だけを埋め込む
-                vectors = np.empty((total_chunks, emb.dim), dtype=np.float32)
+                # 保存の形(既定は float16)で持つ。float16 → float32 → float16 は値が変わらない
+                vectors = np.empty((total_chunks, emb.dim), dtype=dtype)
                 if reused:
-                    vectors[src_rows >= 0] = old_mat[src_rows[src_rows >= 0]]
+                    vectors[src_rows >= 0] = old_mat[src_rows[src_rows >= 0]].astype(dtype)
                 del old_mat, old_keys
                 workers = 1
                 if len(missing) and embedder is None and not isinstance(emb, HashEmbedder):
@@ -281,7 +310,7 @@ def build_index(cfg: Config, *, use_embedding: bool | None = None, embedder: Emb
                     with closing(open_readonly(tmp)) as rdb:
                         results = pool.map(batches(rdb)) if pool else (emb.embed_passages(t) for t in batches(rdb))
                         for vecs in results:
-                            vectors[missing[done:done + len(vecs)]] = vecs
+                            vectors[missing[done:done + len(vecs)]] = vecs.astype(dtype)
                             done += len(vecs)
                             el = time.time() - t_embed0
                             rate = done / el if el > 0 else 0
@@ -297,11 +326,15 @@ def build_index(cfg: Config, *, use_embedding: bool | None = None, embedder: Emb
                 writer.commit()
                 del vectors
                 embedding_meta = dict(emb.info(), vector_dtype=dtype, workers=workers,
-                                      passage_prefix=signature["passage_prefix"])
+                                      passage_prefix=signature["passage_prefix"],
+                                      embed_text_version=EMBED_TEXT_VERSION)
                 embed_counts = {"reused": int(reused), "embedded": int(len(missing))}
                 log(f"埋め込み: {len(missing):,} passage を計算、{reused:,} passage を使い回し"
                     f"({time.time() - t_embed0:.1f} 秒、モデル {emb.name}、{workers} プロセス)")
         t_embed = time.time()
+        if embedding_meta is None and reuse and _had_embeddings(dest):
+            log("注意: 前の索引には埋め込みがありましたが、今回は keyword だけの索引になります。"
+                "次に埋め込みつきで作るときは、すべての passage を埋め込み直します(時間がかかります)")
 
         sizes.sort()
         code_lines = sum(v["lines"] for k, v in by_lang.items() if k in ("c", "cpp", "csharp"))

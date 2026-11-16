@@ -94,6 +94,24 @@ def test_changed_embedding_settings_reembed_everything(tmp_path, corpus_copy):
     assert r["timings"]["reused_passages"] == 0 and r["timings"]["embedded_passages"] == r["stats"]["chunks"]
 
 
+def test_changed_embedding_text_version_reembeds_everything(tmp_path, corpus_copy, monkeypatch):
+    """埋め込みに渡す文の作り方(embedding_text)を変えた版では、前の埋め込みを使い回さない。"""
+    from context_foundation import indexer
+    ws = tmp_path / "ws"
+    _build(ws, corpus_copy)
+    monkeypatch.setattr(indexer, "EMBED_TEXT_VERSION", indexer.EMBED_TEXT_VERSION + 1)
+    r = _build(ws, corpus_copy)
+    assert r["timings"]["reused_passages"] == 0
+
+
+def test_dropping_embeddings_warns_that_the_next_build_reembeds(tmp_path, corpus_copy):
+    ws = tmp_path / "ws"
+    _build(ws, corpus_copy)
+    logs: list[str] = []
+    build_index(load_config(write_config(ws, corpus_copy)), use_embedding=False, progress=False, log=logs.append)
+    assert any("埋め込み直します" in s for s in logs)
+
+
 def test_keyword_only_previous_index_is_not_reused(tmp_path, corpus_copy):
     ws = tmp_path / "ws"
     _build(ws, corpus_copy, use_embedding=False)

@@ -70,6 +70,29 @@ def test_launcher_uses_the_runtime_only_while_its_dependencies_match(monkeypatch
     assert py is None and "dependencies changed" in reason
 
 
+def test_launcher_without_a_finished_setup_says_so(monkeypatch, tmp_path):
+    """仮想環境はあるが、setup が最後まで終わっていない(覚え書きが無い)とき。"""
+    home = tmp_path / "home"
+    ctxf = load_launcher(monkeypatch, home)
+    monkeypatch.setattr(ctxf, "HERE", str(tmp_path / "plugin"))
+    venv_py = home / "runtime" / "venv" / "Scripts" / "python.exe"
+    venv_py.parent.mkdir(parents=True)
+    venv_py.write_bytes(b"")
+    py, _, reason = ctxf.find_python()
+    assert py is None and "did not finish" in reason
+
+
+def test_setup_checks_its_arguments_before_downloading_anything(tmp_path):
+    env = {"CF_HOME": str(tmp_path / "home"), "SYSTEMROOT": __import__("os").environ.get("SYSTEMROOT", "")}
+    r = subprocess.run([sys.executable, "-I", str(REPO / "ctxf.py"), "setup", "--help"], capture_output=True,
+                       text=True, encoding="utf-8", env=env, timeout=60)
+    assert r.returncode == 0 and r.stdout.startswith("usage:") and "Ask the user" in r.stdout
+    r = subprocess.run([sys.executable, "-I", str(REPO / "ctxf.py"), "setup", "--dry-run"], capture_output=True,
+                       text=True, encoding="utf-8", env=env, timeout=60)
+    assert r.returncode == 2 and "unknown option" in r.stdout
+    assert not (tmp_path / "home" / "runtime" / "venv").exists()      # 何も作っていない
+
+
 def test_launcher_prefers_cf_python_then_the_local_venv(monkeypatch, tmp_path):
     ctxf = load_launcher(monkeypatch, tmp_path / "home")
     plugin = tmp_path / "plugin"
@@ -110,7 +133,10 @@ def test_init_writes_a_config_with_relative_and_absolute_roots(tmp_path, corpus_
     assert cfg.sources[0].root == (ws / "docs").resolve() and cfg.sources[1].root == (corpus_copy / "engine").resolve()
     assert (ws / ".cf" / ".gitignore").read_text(encoding="utf-8") == "*\n"
     assert cli_main(["init", "docs"]) == 2                     # すでにあれば、--force なしでは書き直さない
+    (ws / ".cf" / ".gitignore").write_text("*\n# mine\n", encoding="utf-8")
     assert cli_main(["init", "docs", "--force"]) == 0
+    assert (ws / ".cf" / ".gitignore").read_text(encoding="utf-8") == "*\n# mine\n"   # あれば書き換えない
+    assert (ws / ".cf" / "config.toml.bak").is_file()                                  # 前の設定を残す
     assert cli_main(["init", str(tmp_path / "no-such-folder"), "--force"]) == 2
 
 
@@ -119,9 +145,69 @@ def test_register_status_reads_the_marketplace_name():
     assert marketplace_name() == PLUGIN_NAME == "context-foundation"
 
 
-@pytest.mark.parametrize("rows,expect", [("[]", None), ('[{"name": "context-foundation", "enabled": true}]', True)])
-def test_installed_plugin_parses_the_json_list(monkeypatch, rows, expect):
+# Copilot CLI 1.0.112 の `copilot plugin list --json` と `copilot plugin marketplace list --json` の実際の出力の形
+# (パスだけ置き換えたもの)
+PLUGIN_LIST = """[
+  {"name": "context-foundation", "marketplace": "context-foundation", "version": "0.2.0", "enabled": true,
+   "source": "live", "installedFrom": "%s"},
+  {"name": "computer-use", "marketplace": "", "version": "0.1.97", "enabled": false, "source": "builtin"}
+]"""
+MARKET_LIST = """[
+  {"name": "context-foundation", "source": "Local: %s", "isDefault": false},
+  {"name": "awesome-copilot", "source": "GitHub: github/awesome-copilot", "isDefault": true}
+]"""
+
+
+def test_json_list_is_read_from_stdout_with_noise_around_it():
+    from context_foundation.copilot_reg import StateUnreadable, parse_json_list
+    noisy = "\x1b[33m[warn]\x1b[0m update available\n" + PLUGIN_LIST % "C:/x" + "\ntrailing notice\n"
+    rows = parse_json_list(noisy)
+    assert [r["name"] for r in rows] == ["context-foundation", "computer-use"]
+    with pytest.raises(StateUnreadable):
+        parse_json_list("no json here")
+
+
+def test_plugin_and_marketplace_count_as_ours_only_when_they_point_here():
+    from context_foundation.copilot_reg import (REPO_ROOT, find_marketplace, find_plugin, parse_json_list,
+                                                plugin_is_ours)
+    here = REPO_ROOT.as_posix()
+    p = find_plugin(parse_json_list(PLUGIN_LIST % here))
+    assert plugin_is_ours(p, "context-foundation")
+    other = find_plugin(parse_json_list(PLUGIN_LIST % "C:/somewhere/else"))
+    assert not plugin_is_ours(other, "context-foundation")
+    m, ours = find_marketplace(parse_json_list(MARKET_LIST % here), "context-foundation")
+    assert m is not None and ours
+    m, ours = find_marketplace(parse_json_list(MARKET_LIST % "D:/old/clone"), "context-foundation")
+    assert m is not None and not ours
+    github = '[{"name": "context-foundation", "source": "GitHub: noxitro/context-foundation", "isDefault": false}]'
+    m, ours = find_marketplace(parse_json_list(github), "context-foundation")
+    assert m is not None and not ours
+
+
+def test_register_stops_without_touching_a_marketplace_from_elsewhere(monkeypatch, capsys):
+    """同じ名前の Marketplace が GitHub から登録されていれば、追加も削除もせずに止まる。"""
+    from types import SimpleNamespace
+
     from context_foundation import copilot_reg
-    monkeypatch.setattr(copilot_reg, "_run", lambda exe, *a: (0, "Plugins:\n" + rows))
-    p = copilot_reg.installed_plugin("copilot")
-    assert (p is None) if expect is None else p["enabled"] is True
+    calls = []
+
+    def fake_run(exe, *args):
+        calls.append(args)
+        if args[:2] == ("plugin", "list"):
+            return 0, "[]", ""
+        if args[:3] == ("plugin", "marketplace", "list"):
+            return 0, '[{"name": "context-foundation", "source": "GitHub: noxitro/context-foundation"}]', ""
+        if args[:2] == ("skill", "list"):
+            return 0, "[]", ""
+        return 0, "", ""
+
+    monkeypatch.setattr(copilot_reg, "_run", fake_run)
+    monkeypatch.setattr(copilot_reg, "find_copilot", lambda: "copilot.exe")
+    rc = copilot_reg.main(SimpleNamespace(action="register", mcp=False, yes=True))
+    assert rc == 1 and "別の場所" in capsys.readouterr().err
+    assert not any(a[:3] in (("plugin", "marketplace", "add"), ("plugin", "marketplace", "remove")) for a in calls)
+
+
+def test_mcp_command_goes_through_the_launcher():
+    from context_foundation.copilot_reg import LAUNCHER, mcp_command
+    assert mcp_command()[1:] == ["-I", str(LAUNCHER), "--run", "serve"]

@@ -19,8 +19,10 @@ Python の依存(約 200 MB)は、次のどちらかに置く。プラグイン�
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
+import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SRC = os.path.join(HERE, "src")
@@ -55,8 +57,14 @@ def dependencies():
     """pyproject.toml の [project] dependencies(依存の一覧)。読めなければ None。"""
     try:
         import tomllib
-    except ImportError:          # Python 3.10 以前
-        return None
+    except ImportError:          # Python 3.10 以前: この入口だけは動かせるよう、配列を簡単に読む
+        try:
+            with open(PYPROJECT, encoding="utf-8") as f:
+                text = f.read()
+        except OSError:
+            return None
+        m = re.search(r"^dependencies\s*=\s*\[(.*?)^\]", text, re.S | re.M)
+        return re.findall(r'"([^"]+)"', re.sub(r"#[^\n]*", "", m.group(1))) if m else None
     try:
         with open(PYPROJECT, "rb") as f:
             return list(tomllib.load(f)["project"]["dependencies"])
@@ -91,8 +99,11 @@ def find_python():
     py = _venv_python(os.path.join(runtime_dir(), "venv"))
     if py is None:
         return None, "", "not set up"
+    stamp = _read_stamp()
+    if not stamp.get("deps_hash"):
+        return None, "", "not set up completely (the last setup did not finish)"
     deps = dependencies()
-    if deps is not None and _read_stamp().get("deps_hash") != deps_hash(deps):
+    if deps is None or stamp["deps_hash"] != deps_hash(deps):
         return None, "", "set up for an older version (its dependencies changed)"
     return py, "runtime", ""
 
@@ -134,15 +145,16 @@ def session_hint():
     知らせる(説明文だけでは、skill を読まずに grep から始めるモデルがあるため)。索引が無ければ何も足さない。
     仮想環境の python は起動しない(セッションの始まりを遅くしないため)。何が起きても 0 で終わる。"""
     try:
-        data = json.loads(sys.stdin.buffer.read().decode("utf-8", "replace") or "{}")
-    except ValueError:
-        data = {}
-    cwd = data.get("cwd") if isinstance(data, dict) else None
-    try:
+        raw = sys.stdin.buffer.read() if sys.stdin is not None else b""
+        try:
+            data = json.loads(raw.decode("utf-8", "replace") or "{}")
+        except ValueError:
+            data = {}
+        cwd = data.get("cwd") if isinstance(data, dict) else None
         if has_index(cwd or os.getcwd()):
             ready = find_python()[0] is not None
             sys.stdout.write(json.dumps({"additionalContext": SESSION_HINT if ready else SESSION_HINT_NOT_READY}))
-    except Exception:            # hook はセッションを止めない
+    except BaseException:        # hook はセッションを止めない
         pass
     return 0
 
@@ -152,8 +164,63 @@ def _say(text):
     sys.stdout.flush()
 
 
+SETUP_USAGE = """usage: python -I ctxf.py setup [--no-model]
+
+Creates a virtual environment with the Python packages (about 200 MB from PyPI) under
+the runtime folder, and downloads the embedding model (about 490 MB from Hugging Face).
+--no-model skips the model (keyword-only search). Ask the user before running it.
+"""
+IMPORT_CHECK = "import numpy, onnxruntime, tokenizers, tree_sitter, jsonschema"
+LOCK_STALE_SECONDS = 3600
+
+
+def _write_stamp(deps):
+    os.makedirs(runtime_dir(), exist_ok=True)
+    tmp = _stamp_path() + ".tmp-%d" % os.getpid()
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump({"deps_hash": deps_hash(deps), "dependencies": deps,
+                   "python": sys.version.split()[0]}, f, ensure_ascii=False, indent=1)
+    os.replace(tmp, _stamp_path())
+
+
+def _healthy(py, check):
+    try:
+        return subprocess.call([py, "-I", "-c", check], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) == 0
+    except OSError:
+        return False
+
+
 def setup(argv):
-    """利用者ごとの置き場に、依存の入った仮想環境を作り(依存が変わっていれば入れ直す)、埋め込みモデルを取得する。"""
+    """利用者ごとの置き場に、依存の入った仮想環境を作り(依存が変わっていれば入れ直す)、埋め込みモデルを取得する。
+    引数を検査してから始める(--help で、何も取得せずに説明だけ出す)。2 つの setup が同時に走らないよう排他する。"""
+    if any(a in ("-h", "--help") for a in argv):
+        sys.stdout.write(SETUP_USAGE)
+        return 0
+    unknown = [a for a in argv if a != "--no-model"]
+    if unknown:
+        sys.stdout.write("unknown option: " + " ".join(unknown) + "\n" + SETUP_USAGE)
+        return 2
+    os.makedirs(runtime_dir(), exist_ok=True)
+    lock = os.path.join(runtime_dir(), "setup.lock")
+    try:
+        if os.path.exists(lock) and time.time() - os.path.getmtime(lock) > LOCK_STALE_SECONDS:
+            os.remove(lock)                  # 前の setup が途中で止まったときの残り
+        fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    except FileExistsError:
+        _say("Another setup is running (" + lock + "). Wait for it to finish, then run setup again.")
+        return 3
+    try:
+        os.write(fd, str(os.getpid()).encode("ascii"))
+        os.close(fd)
+        return _setup(argv)
+    finally:
+        try:
+            os.remove(lock)
+        except OSError:
+            pass
+
+
+def _setup(argv):
     want_model = "--no-model" not in argv
     if sys.version_info < MIN_PYTHON:
         _say("Python %d.%d or later is required (this is %s). Install it from https://www.python.org/downloads/ "
@@ -168,25 +235,29 @@ def setup(argv):
     _say("== context-foundation setup")
     _say("  runtime folder: " + rt)
     py = _venv_python(venv)
+    if py is not None and not _healthy(py, "import pip"):
+        _say("  the virtual environment is broken (an earlier setup stopped, or its Python was removed); recreating ...")
+        py = None
     if py is None:
         _say("  creating the virtual environment ...")
-        r = subprocess.call([sys.executable, "-m", "venv", venv])
+        try:
+            os.remove(_stamp_path())
+        except OSError:
+            pass
+        r = subprocess.call([sys.executable, "-m", "venv", "--clear", venv])
         py = _venv_python(venv)
         if r != 0 or py is None:
             _say("  could not create the virtual environment (exit code %s)" % r)
             return 1
-    if _read_stamp().get("deps_hash") == deps_hash(deps):
+    if _read_stamp().get("deps_hash") == deps_hash(deps) and _healthy(py, IMPORT_CHECK):
         _say("  Python packages: already installed")
     else:
         _say("  installing the Python packages from PyPI (about 200 MB the first time) ...")
         r = subprocess.call([py, "-m", "pip", "install", "--quiet", "--disable-pip-version-check", *deps])
-        if r != 0:
+        if r != 0 or not _healthy(py, IMPORT_CHECK):
             _say("  pip failed (exit code %s). Check the network or the proxy settings, then run setup again." % r)
             return 1
-        os.makedirs(rt, exist_ok=True)
-        with open(_stamp_path(), "w", encoding="utf-8") as f:
-            json.dump({"deps_hash": deps_hash(deps), "dependencies": deps,
-                       "python": sys.version.split()[0]}, f, ensure_ascii=False, indent=1)
+        _write_stamp(deps)
         _say("  Python packages: installed")
     if want_model:
         _say("  embedding model: checking (downloads about 490 MB the first time) ...")
@@ -216,6 +287,11 @@ def run_inner(argv):
 
 
 def main():
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):
+            pass
     argv = sys.argv[1:]
     if argv[:1] == ["--run"]:
         return run_inner(argv[1:])

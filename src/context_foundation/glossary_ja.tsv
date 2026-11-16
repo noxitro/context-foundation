@@ -1,0 +1,227 @@
+# 既定の用語の対応表(日本語 → 英語の語)。日本語だけの質問に、英語で書かれたコードと文書の語を足すために使う。
+# 1 行 1 語: <日本語の語><TAB><足す英語の語(空白区切り)>。# で始まる行は注釈。
+# ゲームエンジンとプログラミングでよく使う一般の語だけを入れる(特定のエンジンや製品の名前は入れない)。
+# 「処理」「仕組み」「関数」のように、どのコードにも当たる語は入れない(keyword の重みを上げるだけで、順位を乱す)。
+# エンジンに固有の語(別のエンジンの用語との対応など)は、作業フォルダの .cf/glossary.tsv に書く。
+#
+# --- 一般 ---
+引数	argument parameter
+戻り値	return value
+呼び出	call invoke
+初期化	initialize init
+終了	shutdown finalize
+破棄	destroy dispose release
+生成	create construct generate
+作成	create build
+削除	delete remove
+追加	add insert
+登録	register
+解除	unregister remove
+更新	update refresh
+取得	get fetch query
+設定	settings config set
+構成	configuration config
+既定	default
+管理	manager manage
+検索	search find lookup
+比較	compare comparison
+変換	convert transform
+並べ替	sort
+重複	duplicate
+識別子	identifier id
+継承	inherit derive base
+抽象	abstract interface
+仮想	virtual
+テンプレート	template generic
+例外	exception error
+エラー	error failure
+警告	warning
+失敗	fail failure error
+成功	success
+検証	validate verify check
+検査	check validate inspect
+確認	check confirm verify
+判定	check decide test
+分岐	branch
+繰り返	loop iterate
+再帰	recursive recursion
+非同期	async asynchronous
+同期	sync synchronize
+並列	parallel concurrent
+並行	concurrent parallel
+スレッド	thread
+ワーカー	worker
+タスク	task job
+ジョブ	job task
+キュー	queue
+スケジューラ	scheduler
+排他	mutex lock exclusive
+ロック	lock mutex
+待機	wait
+待つ	wait
+通知	notify notification event
+イベント	event
+コールバック	callback
+メッセージ	message
+購読	subscribe listener
+ハンドラ	handler
+# --- メモリ・資源 ---
+メモリ	memory
+確保	allocate allocation reserve
+割り当	allocate assign allocator
+割当	allocate allocator
+解放	release free deallocate
+断片化	fragmentation
+領域	region block area
+プール	pool
+使い回	reuse pool recycle
+再利用	reuse recycle
+キャッシュ	cache
+バッファ	buffer
+ヒープ	heap
+参照	reference ref
+参照カウント	reference count refcount
+ポインタ	pointer
+所有	owner ownership
+寿命	lifetime
+遅延	deferred delay latency
+資源	resource
+リソース	resource asset
+ハンドル	handle
+# --- ファイル・入出力 ---
+ファイル	file
+フォルダ	folder directory
+パス	path pass
+読み込	load read
+書き込	write
+保存	save store serialize
+読み出	read load
+一時ファイル	temp temporary file
+置き換	replace swap rename
+圧縮	compress compression
+展開	decompress extract
+シリアライズ	serialize serialization
+直列化	serialize serialization
+復元	restore deserialize load
+ストリーム	stream
+ストリーミング	streaming stream
+非同期読み込	async load streaming
+入力	input
+出力	output
+ログ	log logging trace
+文字列	string
+文字コード	encoding
+# --- 数学・時間 ---
+ベクトル	vector
+行列	matrix
+回転	rotation rotate quaternion
+位置	position location
+座標	coordinate position
+距離	distance
+角度	angle
+補間	interpolate interpolation lerp blend
+なめらか	smooth ease lerp
+乱数	random
+時間	time
+時刻	time timestamp
+経過	elapsed delta
+フレーム	frame
+毎フレーム	per frame update tick
+更新処理	update tick
+タイマー	timer
+計測	measure profile timing
+# --- 描画 ---
+描画	render draw
+レンダリング	render rendering
+画面	screen display
+表示	display present show
+シェーダー	shader
+シェーダ	shader
+テクスチャ	texture image
+画像	image texture
+ミップ	mip mipmap
+解像度	resolution
+頂点	vertex
+索引バッファ	index buffer
+メッシュ	mesh
+マテリアル	material
+ライト	light lighting
+影	shadow
+光源	light
+カメラ	camera view
+視点	view camera
+深度	depth
+ブレンド	blend
+透明	transparent alpha
+パイプライン	pipeline
+コマンド	command
+コマンドリスト	command list
+記録	record recording
+送信	submit send
+フェンス	fence
+同期処理	synchronization fence barrier
+バリア	barrier
+スワップ	swap swapchain present
+バックバッファ	back buffer swapchain
+描画パス	render pass
+フレームグラフ	frame graph
+依存	dependency depend
+加速構造	acceleration structure
+レイトレーシング	ray tracing raytracing
+後処理	post process postprocess
+# --- 音 ---
+音	audio sound
+音声	audio sound voice
+音量	volume gain
+ミキサー	mixer
+混ぜ	mix mixer
+再生	play playback
+停止	stop
+フェード	fade
+# --- ゲーム ---
+入力処理	input handling
+キー	key
+キー割り当	key binding keybinding mapping
+操作	input control
+コントローラー	controller gamepad
+ゲームパッド	gamepad controller
+プレイヤー	player
+キャラクター	character
+敵	enemy
+アニメーション	animation anim
+物理	physics
+衝突	collision
+当たり判定	collision hit test
+剛体	rigid body
+重力	gravity
+移動	move movement
+追従	follow
+経路	path navigation
+ナビゲーション	navigation navmesh
+セーブ	save
+セーブデータ	save data savegame
+ロード	load
+チェックサム	checksum hash
+ハッシュ	hash
+暗号	encrypt crypto
+ネットワーク	network networking
+通信	network communication
+接続	connect connection
+マッチメイキング	matchmaking
+シーン	scene level world
+レベル	level scene
+エンティティ	entity
+コンポーネント	component
+オブジェクト	object
+スクリプト	script
+エディター	editor
+エディタ	editor
+ツール	tool
+プラグイン	plugin
+モジュール	module
+アセット	asset
+ビルド	build
+起動	startup launch boot
+起動時	startup initialize
+設定ファイル	config file settings
+ウィジェット	widget

@@ -100,12 +100,19 @@ def cmd_init(args) -> int:
         used.add(sid)
         try:
             rel = os.path.relpath(p, ws)
-            root = rel if not rel.startswith("..") else str(p)
+            outside = rel == ".." or rel.startswith(".." + os.sep)
+            root = str(p) if outside else rel
         except ValueError:                  # ドライブが違う
             root = str(p)
         sources.append((sid, root))
     cfg_path.parent.mkdir(parents=True, exist_ok=True)
-    (cfg_path.parent / ".gitignore").write_text("*\n", encoding="utf-8")     # 設定と索引を git に入れない
+    ignore = cfg_path.parent / ".gitignore"
+    if not ignore.exists():
+        ignore.write_text("*\n", encoding="utf-8")       # 設定と索引を git に入れない
+    if cfg_path.is_file():                  # --force: 手で書いた設定を失わないよう、前のものを残す
+        backup = cfg_path.with_name(CONFIG_FILE_NAME + ".bak")
+        backup.write_bytes(cfg_path.read_bytes())
+        print(f"前の設定を残しました: {backup}")
     cfg_path.write_text(config_template(sources), encoding="utf-8")
     load_config(cfg_path)                   # 書いたものが読めることを確かめる
     print(f"設定を書きました: {cfg_path}")

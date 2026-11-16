@@ -213,6 +213,7 @@ class OnnxEmbedder(Embedder):
         onnx_path, tok_path = model_files(spec)
         self.spec, self.name, self.revision, self.batch_size = spec, spec.name, spec.revision, max(1, batch_size)
         self.onnx_file = onnx_path.name
+        self.onnx_bytes = onnx_path.stat().st_size     # 同じ名前のまま中身を差し替えたモデルを見分ける(差分更新)
         tok = Tokenizer.from_file(str(tok_path))
         tok.enable_truncation(max_length=spec.max_tokens)
         pad_id = next((tok.token_to_id(t) for t in ("<pad>", "[PAD]", "<|pad|>") if tok.token_to_id(t) is not None), 0)
@@ -275,7 +276,8 @@ class OnnxEmbedder(Embedder):
 
     def info(self) -> dict:
         return {"model": self.name, "revision": self.revision, "dim": self.dim, "onnx_file": self.onnx_file,
-                "pooling": self.spec.pooling, "max_tokens": self.spec.max_tokens, "license": self.spec.license}
+                "onnx_bytes": self.onnx_bytes, "pooling": self.spec.pooling, "max_tokens": self.spec.max_tokens,
+                "license": self.spec.license}
 
 
 class HashEmbedder(Embedder):

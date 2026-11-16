@@ -14,8 +14,9 @@ from pathlib import Path
 
 import numpy as np
 
-from .config import MODES, Config, EmbeddingConfig, SearchConfig
+from .config import MODES, Config, ConfigError, EmbeddingConfig, SearchConfig
 from .embed import Embedder, ModelUnavailable, make_embedder
+from .glossary import Glossary, GlossaryError, resolve_workspace_file
 from .store import IndexError_, fetch_passages, load_vectors, open_readonly, read_meta
 from .textproc import fts_query, query_tokens
 
@@ -29,10 +30,12 @@ class SearchResponse:
     notes: list[str] = field(default_factory=list)       # 利用者・エージェントに伝えること(切り替えた理由など)
     timings: dict = field(default_factory=dict)          # ミリ秒。load_ms は、モデルとベクトルの読み込み
     index: dict = field(default_factory=dict)            # 索引の作成日時と件数
+    added_terms: list[str] = field(default_factory=list)  # 用語の対応表で、質問に足した語
 
     def to_dict(self) -> dict:
-        return {"query": self.query, "mode": self.mode, "requested_mode": self.requested_mode,
-                "notes": self.notes, "timings": self.timings, "index": self.index, "passages": self.passages}
+        return {"query": self.query, "added_terms": self.added_terms, "mode": self.mode,
+                "requested_mode": self.requested_mode, "notes": self.notes, "timings": self.timings,
+                "index": self.index, "passages": self.passages}
 
 
 def load_reranker(spec: str):
@@ -72,7 +75,8 @@ class Searcher:
     """索引 1 つに対する検索。作ったまま使い回すと、モデルとベクトルを読み込んだまま保つ(MCP サーバーと評価で使う)。"""
 
     def __init__(self, index_path: Path, search_cfg: SearchConfig | None = None,
-                 embedding_cfg: EmbeddingConfig | None = None, embedder: Embedder | None = None):
+                 embedding_cfg: EmbeddingConfig | None = None, embedder: Embedder | None = None,
+                 glossary: Glossary | None = None):
         self.index_path = Path(index_path)
         self.search_cfg = search_cfg or SearchConfig()
         self.embedding_cfg = embedding_cfg or EmbeddingConfig()
@@ -82,10 +86,16 @@ class Searcher:
         self._meta: dict = {}
         self._vectors: np.ndarray | None = None
         self._reranker = load_reranker(self.search_cfg.reranker) if self.search_cfg.reranker else None
+        self._glossary = glossary
 
     @classmethod
     def from_config(cls, cfg: Config, embedder: Embedder | None = None) -> "Searcher":
-        return cls(cfg.index_path, cfg.search, cfg.embedding, embedder)
+        try:
+            glossary = Glossary.load(resolve_workspace_file(cfg.cf_dir, cfg.search.glossary),
+                                     cfg.search.builtin_glossary)
+        except GlossaryError as e:
+            raise ConfigError(str(e)) from None
+        return cls(cfg.index_path, cfg.search, cfg.embedding, embedder, glossary)
 
     # --- 索引の読み込み ---
     def _refresh(self) -> None:
@@ -183,6 +193,12 @@ class Searcher:
         if unknown:
             raise ValueError(f"知らない source_id です: {', '.join(unknown)}(索引にあるのは {', '.join(known)})")
 
+        # 用語の対応表で、質問に語を足す(日本語だけの質問で、英語のコードと文書を引くため)
+        added = self._glossary.expand(query) if self._glossary else []
+        q = query + " " + " ".join(added) if added else query
+        if added:
+            notes.append("added terms from the glossary: " + " ".join(added))
+
         effective = requested
         qvec = None
         if requested in ("semantic", "hybrid"):
@@ -203,7 +219,7 @@ class Searcher:
                         if not loaded_before:
                             timings["load_ms"] = round((time.perf_counter() - t) * 1000, 1)
                         t = time.perf_counter()
-                        qvec = emb.embed_query(query)
+                        qvec = emb.embed_query(q)
                         timings["embed_ms"] = round((time.perf_counter() - t) * 1000, 1)
                 except ModelUnavailable as e:
                     reason = "the embedding model is not available locally (" + str(e).splitlines()[0] + ")"
@@ -217,7 +233,7 @@ class Searcher:
         with closing(open_readonly(self.index_path)) as db:
             if effective in ("keyword", "hybrid"):
                 t = time.perf_counter()
-                kw = self._keyword(db, query, n_cand, sources or None)
+                kw = self._keyword(db, q, n_cand, sources or None)
                 timings["keyword_ms"] = round((time.perf_counter() - t) * 1000, 1)
             if effective in ("semantic", "hybrid") and qvec is not None:
                 t = time.perf_counter()
@@ -233,7 +249,12 @@ class Searcher:
             else:
                 w_kw = 1.0
                 if c.hybrid_weighting == "coverage":
-                    w_kw = keyword_coverage(db, query_tokens(query)) ** 0.5
+                    # 用語の対応表で語を足したときは、足した語と元の質問の英字の語で割合を見る(日本語の質問の
+                    # 2 文字の組は、英語のコードにはほとんど無いので、それで割合を下げると、足した語が効かない)
+                    cov_tokens = query_tokens(q)
+                    if added:
+                        cov_tokens = [t for t in cov_tokens if t.isascii()] or cov_tokens
+                    w_kw = keyword_coverage(db, cov_tokens) ** 0.5
                 timings["keyword_weight"] = round(w_kw, 3)
                 ranked = rrf([[cid for cid, _ in kw], [cid for cid, _ in sem]], c.rrf_k, [w_kw, 1.0])
 
@@ -260,7 +281,7 @@ class Searcher:
         timings["total_ms"] = round((time.perf_counter() - t0) * 1000, 1)
         timings["search_ms"] = round(timings["total_ms"] - timings["load_ms"], 1)
         return SearchResponse(query=query, mode=effective, requested_mode=requested, passages=passages, notes=notes,
-                              timings=timings, index=self.index_info())
+                              timings=timings, index=self.index_info(), added_terms=added)
 
     def _mark_stale(self, db, passages: list[dict], meta: dict) -> None:
         """索引の後に変わった(か、無くなった)ファイルの passage に印を付ける。見るのは大きさと更新日時だけ。"""
