@@ -1,8 +1,11 @@
 # Reproduces the public worked example (examples/o3de) on a GitHub-hosted
 # runner: gets the two folders of O3DE 2605.0 the example uses, builds the
 # index on the CPU, and runs the retrieval-only evaluation. Nothing is sent to
-# a model provider. Run it by hand (Actions > Benchmark (O3DE example) > Run
-# workflow); building the index takes an hour or more on a hosted runner.
+# a model provider. Building the index takes an hour or more on a hosted
+# runner, so it does not run on every change. Start it in one of two ways:
+#   - by hand: Actions > Benchmark (O3DE example) > Run workflow;
+#   - by pushing a branch whose name starts with benchmark/ (it measures the
+#     code of that branch, for example a change before it is merged).
 name: Benchmark (O3DE example)
 
 on:
@@ -13,6 +16,8 @@ on:
         type: choice
         options: [eval, tune, all]
         default: eval
+  push:
+    branches: ["benchmark/**"]
 
 permissions:
   contents: read
@@ -22,6 +27,8 @@ concurrency:
   cancel-in-progress: false
 
 env:
+  # A push has no inputs: it runs the held-out questions.
+  SPLIT: ${{ inputs.split || 'eval' }}
   O3DE_TAG: "2605.0"
   O3DE_COMMIT: 3db6943249d8bd7960b9ed7e9aee310b7668586e
 
@@ -94,12 +101,12 @@ jobs:
         run: >
           python -m context_foundation eval --config "$RUNNER_TEMP/o3de-eval"
           --cases examples/o3de/cases.jsonl --out "$RUNNER_TEMP/o3de-out"
-          --split "${{ inputs.split }}" --run-id "actions-${{ github.run_number }}"
+          --split "$SPLIT" --run-id "actions-${{ github.run_number }}"
 
       - name: Show the summary
         run: |
           {
-            echo "Tool at commit \`${GITHUB_SHA}\`, questions: \`${{ inputs.split }}\`"
+            echo "Tool at commit \`${GITHUB_SHA}\`, questions: \`${SPLIT}\`"
             echo
             python -m context_foundation status --config "$RUNNER_TEMP/o3de-eval" | head -12
             echo
@@ -111,7 +118,7 @@ jobs:
       - name: Keep the summary
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: o3de-${{ inputs.split }}-summary
+          name: o3de-${{ env.SPLIT }}-summary
           path: |
             ${{ runner.temp }}/o3de-out/summary.md
             ${{ runner.temp }}/o3de-out/summary.json
