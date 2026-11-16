@@ -95,6 +95,12 @@ ctxf eval --cases <ここ>\examples\o3de\cases.jsonl --out .cf\eval\run-01
 呼ばないので費用はかからず、1 分ほどで終わります。調整用の質問で回す
 ときは `--split tune` を付けます。
 
+同じ手順を、GitHub Actions でも回せます。リポジトリの Actions で
+「Benchmark (O3DE example)」を手で起動すると、GitHub の機械が O3DE の
+2 つのフォルダを取得し、索引を作り、評価を回します。要約は、実行の画面と
+成果物に残ります(質問ごとの結果は、ソースの場所の一覧になるので
+残しません)。
+
 ## 測った結果
 
 埋め込みモデルは既定の `intfloat/multilingual-e5-small`、設定は既定のまま
