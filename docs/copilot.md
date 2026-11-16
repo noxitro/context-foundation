@@ -21,7 +21,10 @@ Visual Studio Code は、今回の確認と手順の対象にしていません�
 | リポジトリを取得して `register-copilot.bat` | 手元で試す人、道具を直す人 | 取得したフォルダの `.venv`(`setup.bat` が作る) |
 
 どちらも、Python 3.11 以上が `python` という名前で使えることが前提です。
-hook と skill は、`python` で入口の `ctxf.py` を動かします。`python` が
+hook と skill は、`python` で入口の `ctxf.py` を動かします。skill は、
+skill のフォルダに置いた取り次ぎ(`skills/context-search/ctxf.py`)を
+呼び、取り次ぎが同じ入口を動かします(skill の文に「2 つ上のフォルダ」と
+書くと、エージェントがパスを組み立て間違える回があったため)。`python` が
 無い PC では、hook は何も足さず、skill は検索できません。
 
 ## GitHub の Marketplace から入れる
@@ -252,7 +255,7 @@ Haiku 5.5、合成のコーパス、毎回空の設定フォルダ)。
   "name": "context-foundation",
   "source": { "source": "github", "repo": "noxitro/context-foundation" },
   "description": "Find code and design docs by meaning and keywords, locally.",
-  "version": "0.2.1"
+  "version": "0.2.2"
 }
 ```
 

@@ -205,6 +205,20 @@ def test_session_hint_only_where_an_index_exists(indexed_workspace, tmp_path):
 
 
 def test_skill_file_points_at_the_launcher():
-    skill = (REPO / "skills" / "context-search" / "SKILL.md").read_text(encoding="utf-8")
+    folder = REPO / "skills" / "context-search"
+    skill = (folder / "SKILL.md").read_text(encoding="utf-8")
     assert skill.startswith("---\nname: context-search\ndescription: ")
     assert "ctxf.py\" search" in skill and (REPO / "ctxf.py").is_file()
+    # 入口は、skill のフォルダの直下の取り次ぎから呼ぶ。「2 つ上」と書くと、エージェントがパスを組み立て
+    # 間違える回があった(Godot での計測で、skill を読んだ 50 回のうち 15 回)
+    assert '"<base directory of this skill>\\ctxf.py" search' in skill and "..\\" not in skill
+    assert (folder / "ctxf.py").is_file()
+
+
+def test_skill_folder_launcher_forwards_to_the_entry(tmp_path):
+    def where(script):
+        return subprocess.run([sys.executable, "-I", str(script), "where"], capture_output=True, encoding="utf-8",
+                              errors="replace", cwd=tmp_path, timeout=60)
+    via_skill, direct = where(REPO / "skills" / "context-search" / "ctxf.py"), where(REPO / "ctxf.py")
+    assert via_skill.returncode == direct.returncode and direct.returncode in (0, 4)   # 4: 依存がまだ入っていない PC
+    assert via_skill.stdout == direct.stdout and str(REPO / "ctxf.py") in via_skill.stdout
