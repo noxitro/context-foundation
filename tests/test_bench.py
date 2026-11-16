@@ -131,6 +131,33 @@ def test_every_method_gets_the_same_tools_and_permissions(bench, tmp_path, metho
     assert [cmd[i + 1] for i, c in enumerate(cmd) if c == "--add-dir"][:3] == [str(r) for r in roots]
 
 
+def test_the_skill_method_gets_the_session_hint_hook(bench):
+    """agent_cf は、プラグインと同じ入口(ctxf.py session-hint)を sessionStart の hook に置く。--no-hint で外れる。"""
+    hook = bench.hooks_for(Namespace(method="agent_cf", no_hint=False, cxxref=None))["hooks"]["sessionStart"][0]
+    assert (hook["exec"], hook["args"][0], hook["args"][2]) == ("python", "-I", "session-hint")
+    assert Path(hook["args"][1]) == REPO / "ctxf.py" and Path(hook["args"][1]).is_file()
+    plugin = json.loads((REPO / "com.github.copilot" / "hooks" / "hooks.json").read_text(encoding="utf-8"))
+    assert plugin["hooks"]["sessionStart"][0]["command"].endswith('ctxf.py" session-hint')
+    assert bench.hooks_for(Namespace(method="agent_cf", no_hint=True, cxxref=None)) is None
+    for method in ("agent_grep", "agent_cf_mcp"):
+        assert bench.hooks_for(Namespace(method=method, no_hint=False, cxxref=None)) is None
+
+
+@pytest.mark.parametrize("method", ["agent_grep", "agent_cf", "agent_cf_mcp"])
+def test_dry_run_reaches_the_command_for_every_method(bench, tmp_path, capsys, method):
+    """--dry-run は、どの手法でも、hook を用意する所を通ってコマンドを出し、その回の設定フォルダを残さない。"""
+    cfg = load_config(write_config(tmp_path))
+    roots = [s.root for s in cfg.sources]
+    args = Namespace(method=method, model="anthropic/claude-haiku-5-5", workspace=cfg.workspace, cxxref=None,
+                     max_ai_credits=0, trust_folder=False, provider="anthropic",
+                     providers_config="~/.copilot/providers.json", no_custom_instructions=False, no_hint=False,
+                     out=tmp_path / "out", run_id="t", dry_run=True, time_limit=10)
+    row = bench.run_one(args, "copilot", {"case_id": "Q1", "question": "q"}, 1, bench.Mapper(cfg), roots, None)
+    shown = json.loads(capsys.readouterr().out)
+    assert row == {} and shown["name"] == f"t-Q1-{method}-t1" and shown["cmd"][2] == "<質問と回答の書式>"
+    assert not (tmp_path / "out" / "homes" / shown["name"]).exists()
+
+
 def test_instruction_files_are_reported_by_place_not_by_path(bench, tmp_path):
     """Copilot CLI が指示として読むファイルを、置き場の種類と名前で挙げる。版管理のルートより上は見ない。"""
     repo = tmp_path / "repo"
