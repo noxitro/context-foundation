@@ -86,6 +86,9 @@ copilot plugin install context-foundation@context-foundation
   フォルダができ、設定(`config.toml`)と索引(`index.db`)が入ります
 - **検索したいフォルダ**は、いくつでも指定できます(エンジンのソース、
   参考にするアプリ、設計文書など)。作業フォルダの外にあっても構いません
+- 索引づくりの時間は、ほとんどが埋め込みの計算です。GPU(Windows の
+  DirectX 12 の GPU)で計算すると、6〜7 倍速くなります。入れ方は
+  [docs/design.md](docs/design.md) の「GPU で計算する」にあります
 - ソースが変わったら、もう一度 `index.bat` を実行します。変わっていない
   passage の埋め込みは前の索引から使い回すので、変わったファイルの分だけの
   時間で済みます(差分更新)。索引の後に変わったファイルを指す結果には、
@@ -190,6 +193,7 @@ include = ['**/*.md']         # 省くと、既定の拡張子
 
 [embedding]
 enabled = true                # false にすると keyword だけ
+# device = 'cpu'              # 索引づくりの埋め込みを GPU で計算しない(既定は auto: 使えれば GPU)
 
 [search]
 mode = 'hybrid'

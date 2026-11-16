@@ -4,6 +4,8 @@
 - モデルの取得は、明示的に頼まれたときだけ(`ctxf model download`、索引づくりの `--download`)。
   検索のときには取得しない。モデルが無ければ、呼び出し側が keyword だけに切り替える
 - モデルは設定で差し替えられる。既定の候補は、下の MODEL_PRESETS(入手先・版・ライセンス・大きさを固定)
+- 索引づくりの埋め込みは、入っている onnxruntime に GPU の実行先があれば、GPU で計算する(GPU_PROVIDERS)。
+  検索のときの質問の埋め込みは、いつも CPU(短い文 1 つなので速さは変わらず、GPU のセッションは作るのが遅い)
 """
 from __future__ import annotations
 
@@ -205,8 +207,28 @@ class Embedder:
         return {"model": self.name, "revision": self.revision, "dim": self.dim}
 
 
+CPU_PROVIDER = "CPUExecutionProvider"
+# GPU で計算するときの実行先(onnxruntime での名前)。入っている onnxruntime が持っているものを、この順で使う。
+# DirectML は Windows の DirectX 12 の GPU(メーカーを問わない)、CUDA は NVIDIA の GPU。
+# 確かめたのは DirectML だけ(onnxruntime-directml 1.24.4。docs/design.md の「速さについて」)
+GPU_PROVIDERS = ("DmlExecutionProvider", "CUDAExecutionProvider")
+GPU_BATCH_SIZE = 32                # GPU では、束を大きくしたほうが速い(CPU の既定は 8)
+GPU_HOWTO = ("GPU で計算するには、仮想環境の onnxruntime を、GPU の実行先を持つもの(Windows なら onnxruntime-directml)"
+             "に入れ替えます。手順は docs/design.md の「速さについて」")
+
+
+def gpu_provider() -> str | None:
+    """入っている onnxruntime が持つ、GPU の実行先の名前(無ければ None)。"""
+    try:
+        import onnxruntime as ort
+        available = ort.get_available_providers()
+    except Exception:
+        return None
+    return next((p for p in GPU_PROVIDERS if p in available), None)
+
+
 class OnnxEmbedder(Embedder):
-    def __init__(self, spec: ModelSpec, threads: int = 0, batch_size: int = 16):
+    def __init__(self, spec: ModelSpec, threads: int = 0, batch_size: int = 16, provider: str = CPU_PROVIDER):
         import onnxruntime as ort
         from tokenizers import Tokenizer
 
@@ -224,7 +246,15 @@ class OnnxEmbedder(Embedder):
         opts.log_severity_level = 3
         if threads > 0:
             opts.intra_op_num_threads = threads
-        self.session = ort.InferenceSession(str(onnx_path), sess_options=opts, providers=["CPUExecutionProvider"])
+        if provider == "DmlExecutionProvider":
+            # DirectML は、メモリの使い回しの最適化と並列の実行に対応していない。切らないと誤りになる(公式文書)
+            opts.enable_mem_pattern = False
+            opts.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+        providers = [provider] if provider == CPU_PROVIDER else [provider, CPU_PROVIDER]
+        self.session = ort.InferenceSession(str(onnx_path), sess_options=opts, providers=providers)
+        self.provider = self.session.get_providers()[0]       # 実際に使われる実行先
+        if self.provider != provider:
+            raise RuntimeError(f"{provider} を使えませんでした(使われるのは {self.provider})")
         self.input_names = [i.name for i in self.session.get_inputs()]
         outs = [o.name for o in self.session.get_outputs()]
         self.output_name = "last_hidden_state" if "last_hidden_state" in outs else outs[0]
@@ -344,12 +374,33 @@ class EmbedPool:
         self.pool.shutdown(wait=True, cancel_futures=True)
 
 
-def make_embedder(cfg: EmbeddingConfig) -> Embedder:
-    """設定に合う埋め込み器を作る。モデルが無ければ ModelUnavailable。"""
+def make_embedder(cfg: EmbeddingConfig, for_index: bool = False, log=None) -> Embedder:
+    """設定に合う埋め込み器を作る。モデルが無ければ ModelUnavailable。
+
+    for_index が真(索引づくり)のときだけ、設定の device に従って GPU を使う。auto は、GPU の実行先があれば GPU、
+    無ければ CPU。GPU でセッションを作れなかったとき(ドライバーが古いなど)も、auto なら CPU で続ける。
+    gpu は、GPU を使えなければ ModelUnavailable。
+    """
     if os.environ.get("CF_TEST_EMBEDDER") == "hash" or cfg.model == HashEmbedder.name:
         return HashEmbedder()
     spec = resolve_model(cfg)
+    gpu = gpu_provider() if for_index and cfg.device != "cpu" else None
+    if for_index and cfg.device == "gpu" and gpu is None:
+        raise ModelUnavailable('[embedding] device = "gpu" ですが、入っている onnxruntime に GPU の実行先がありません。'
+                               + GPU_HOWTO)
     try:
+        if gpu is not None:
+            try:
+                return OnnxEmbedder(spec, threads=cfg.threads, batch_size=max(cfg.batch_size, GPU_BATCH_SIZE),
+                                    provider=gpu)
+            except ModelUnavailable:
+                raise
+            except Exception as e:
+                if cfg.device == "gpu":
+                    raise
+                if log:
+                    log(f"注意: GPU({gpu})で埋め込みを始められないので、CPU で計算します({type(e).__name__}: "
+                        f"{str(e).splitlines()[0] if str(e) else ''})")
         return OnnxEmbedder(spec, threads=cfg.threads, batch_size=cfg.batch_size)
     except ModelUnavailable:
         raise

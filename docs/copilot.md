@@ -88,6 +88,9 @@ python -I "<プラグインのフォルダ>\ctxf.py" setup
 - `setup --no-model` でモデルを取らずに済ませると、keyword(BM25)だけの
   検索になります
 - `setup --help` は、何も取得せずに説明だけを出します
+- `setup --gpu`(Windows)は、onnxruntime の代わりに onnxruntime-directml を
+  入れます。索引づくりの埋め込みを、GPU で計算するようになります
+  ([design.md](design.md) の「GPU で計算する」)。`setup --cpu` で戻します
 - 途中で止まった仮想環境は、次の `setup` で作り直します。2 つの `setup`
   が同時に走らないよう、排他します(前の `setup` のプロセスが終わっていれば、
   打ち切られたときの残りとみなして引き継ぎます)

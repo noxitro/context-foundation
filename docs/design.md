@@ -280,7 +280,54 @@ O3DE の索引(72,616 passage)では、8,578 件(12%)が中身の無い passage
   (`[embedding] workers`)はありますが、既定では使いません
 - 量子化した ONNX(配布元にあるもの)も、この PC では速くなりません
   でした【実測】
-- GPU は使っていません【未確認】
+- GPU では、7 倍ほど速くなります(下の「GPU で計算する」)
+
+### GPU で計算する
+
+索引づくりの埋め込みは、入っている onnxruntime に GPU の実行先があれば、
+GPU で計算します(設定の `[embedding] device`。既定は `auto`)。検索の
+ときの質問の埋め込みは、いつも CPU です。短い文 1 つなので速さは変わらず、
+GPU のセッションは作るのに時間がかかるためです。
+
+Godot の全体(69,406 passage。うち 68,593 を埋め込む)で、索引を最初から
+作って比べました【実測】。GPU は GeForce RTX 5070 Ti、実行先は DirectML
+(onnxruntime-directml 1.24.4)です。
+
+| 計算先 | 索引づくり | うち埋め込み | 埋め込みの速さ |
+| --- | ---: | ---: | ---: |
+| CPU(16 コア。ほかの作業と並行) | 4,959 秒 | 記録なし | 毎秒 14 ほど |
+| GPU | 290 秒 | 240 秒 | 毎秒 286 |
+
+- CPU だけで単独に動かしたときの速さは、毎秒 45〜50 passage(上の
+  「速さについて」)。GPU は、その 6〜7 倍
+- GPU で作った索引と、CPU で作った索引は、passage が同じで、ベクトルも
+  一致した。埋め込んだ 68,593 件のコサイン類似度は、最小でも 1.00000
+  (16 ビットで保存した値どうし)。検索だけの評価の数字(上位 1・5・10 件、
+  MRR、根拠の再現率)も、3 つの手法ですべて同じだった
+- そのため、差分更新は、計算先が違っても、前の索引の埋め込みを使い回す
+- 束の大きさは、GPU では 32 以上にする(同じ 4,000 件で、16 なら毎秒 263、
+  32 なら 320、64 なら 338、128 なら 341)。CPU の既定は 8
+- 実行先は、DirectML(Windows の DirectX 12 の GPU。メーカーを問わない
+  【公式】)と CUDA(NVIDIA)の名前を見て選ぶ。動かして確かめたのは
+  DirectML だけで、CUDA は確かめていない【未確認】
+- 配布元は、DirectML を、新しい機能を足さない段階(sustained engineering)
+  としている【公式】。メモリの使い回しの最適化と並列の実行には対応して
+  いないので、その 2 つを切ってセッションを作る【公式】
+  <https://onnxruntime.ai/docs/execution-providers/DirectML-ExecutionProvider.html>
+- GPU の実行先があっても始められないとき(ドライバーが古いなど)は、
+  `auto` なら、そう知らせて CPU で続ける。`device = "gpu"` なら止まる。
+  `device = "cpu"` で、GPU を使わない
+
+入れ方: GPU 用の onnxruntime は、CPU 用と同じ名前のモジュールを入れるので、
+両方は入れられません。入れ替えます。
+
+- プラグインとして入れた人: `python -I "<プラグインのフォルダ>\ctxf.py"
+  setup --gpu`。選び方は覚えていて、依存が変わって `setup` をやり直す
+  ときにも引き継ぐ。`setup --cpu` で戻す
+- リポジトリを取得した人: `.venv\Scripts\python -m pip uninstall -y
+  onnxruntime` のあとに、`.venv\Scripts\python -m pip install
+  onnxruntime-directml`。`setup.bat` をもう一度実行すると、CPU 用が上から
+  入るので、そのときはやり直す
 
 ## hybrid
 

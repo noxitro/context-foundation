@@ -176,12 +176,18 @@ def _say(text):
     sys.stdout.flush()
 
 
-SETUP_USAGE = """usage: python -I ctxf.py setup [--no-model]
+SETUP_USAGE = """usage: python -I ctxf.py setup [--no-model] [--gpu | --cpu]
 
 Creates a virtual environment with the Python packages (about 200 MB from PyPI) under
 the runtime folder, and downloads the embedding model (about 490 MB from Hugging Face).
 --no-model skips the model (keyword-only search). Ask the user before running it.
+--gpu (Windows) installs onnxruntime-directml instead of onnxruntime, so that building an
+index computes the embeddings on the GPU (any DirectX 12 GPU). The choice is remembered
+for later setups; --cpu switches back.
 """
+SETUP_OPTIONS = ("--no-model", "--gpu", "--cpu")
+ORT_CPU, ORT_GPU = "onnxruntime", "onnxruntime-directml"
+GPU_CHECK = "import onnxruntime as o; raise SystemExit(0 if 'DmlExecutionProvider' in o.get_available_providers() else 1)"
 IMPORT_CHECK = "import numpy, onnxruntime, tokenizers, tree_sitter, jsonschema"
 LOCK_STALE_SECONDS = 6 * 3600        # プロセスの生死が分からないときに、古いとみなすまでの時間
 
@@ -227,13 +233,31 @@ def _lock_is_stale(lock):
     return alive is None and time.time() - os.path.getmtime(lock) > LOCK_STALE_SECONDS
 
 
-def _write_stamp(deps):
+def _write_stamp(deps, gpu=False):
     os.makedirs(runtime_dir(), exist_ok=True)
     tmp = _stamp_path() + ".tmp-%d" % os.getpid()
     with open(tmp, "w", encoding="utf-8") as f:
-        json.dump({"deps_hash": deps_hash(deps), "dependencies": deps,
+        json.dump({"deps_hash": deps_hash(deps), "dependencies": deps, "gpu": bool(gpu),
                    "python": sys.version.split()[0]}, f, ensure_ascii=False, indent=1)
     os.replace(tmp, _stamp_path())
+
+
+def wants_gpu(argv, stamp):
+    """GPU 用の onnxruntime を入れるか。--gpu か --cpu の指定が無ければ、前の setup の選び方を引き継ぐ。"""
+    if "--gpu" in argv:
+        return True
+    if "--cpu" in argv:
+        return False
+    return bool(stamp.get("gpu"))
+
+
+def install_requirements(deps, gpu):
+    """pip に渡す依存の一覧。gpu なら、onnxruntime を onnxruntime-directml に読み替える(版の条件はそのまま)。
+
+    2 つは同じ名前のモジュール(onnxruntime)を入れるので、両方を入れることはできない。"""
+    if not gpu:
+        return list(deps)
+    return [ORT_GPU + d[len(ORT_CPU):] if re.match(ORT_CPU + r"(?![A-Za-z0-9_.-])", d) else d for d in deps]
 
 
 def _healthy(py, check):
@@ -249,9 +273,16 @@ def setup(argv):
     if any(a in ("-h", "--help") for a in argv):
         sys.stdout.write(SETUP_USAGE)
         return 0
-    unknown = [a for a in argv if a != "--no-model"]
+    unknown = [a for a in argv if a not in SETUP_OPTIONS]
     if unknown:
         sys.stdout.write("unknown option: " + " ".join(unknown) + "\n" + SETUP_USAGE)
+        return 2
+    if "--gpu" in argv and "--cpu" in argv:
+        sys.stdout.write("--gpu and --cpu cannot be used together\n" + SETUP_USAGE)
+        return 2
+    if "--gpu" in argv and os.name != "nt":
+        sys.stdout.write("--gpu installs onnxruntime-directml, which exists for Windows only. On other systems, "
+                         "install an onnxruntime build with a GPU provider into the virtual environment yourself.\n")
         return 2
     os.makedirs(runtime_dir(), exist_ok=True)
     lock = os.path.join(runtime_dir(), "setup.lock")
@@ -303,16 +334,29 @@ def _setup(argv):
         if r != 0 or py is None:
             _say("  could not create the virtual environment (exit code %s)" % r)
             return 1
-    if _read_stamp().get("deps_hash") == deps_hash(deps) and _healthy(py, IMPORT_CHECK):
-        _say("  Python packages: already installed")
+    stamp = _read_stamp()
+    gpu = wants_gpu(argv, stamp)
+    if stamp.get("deps_hash") == deps_hash(deps) and bool(stamp.get("gpu")) == gpu and _healthy(py, IMPORT_CHECK):
+        _say("  Python packages: already installed" + (" (onnxruntime-directml, for the GPU)" if gpu else ""))
     else:
         _say("  installing the Python packages from PyPI (about 200 MB the first time) ...")
-        r = subprocess.call([py, "-m", "pip", "install", "--quiet", "--disable-pip-version-check", *deps])
+        pip = [py, "-m", "pip", "--disable-pip-version-check"]
+        if stamp.get("deps_hash") and bool(stamp.get("gpu")) != gpu:
+            # CPU 用と GPU 用は、同じ名前のモジュールを入れる。入れ替えるときは、先に両方を外す
+            try:
+                os.remove(_stamp_path())
+            except OSError:
+                pass
+            subprocess.call(pip + ["uninstall", "--quiet", "--yes", ORT_CPU, ORT_GPU])
+        r = subprocess.call(pip + ["install", "--quiet", *install_requirements(deps, gpu)])
         if r != 0 or not _healthy(py, IMPORT_CHECK):
             _say("  pip failed (exit code %s). Check the network or the proxy settings, then run setup again." % r)
             return 1
-        _write_stamp(deps)
-        _say("  Python packages: installed")
+        _write_stamp(deps, gpu)
+        _say("  Python packages: installed" + (" (onnxruntime-directml, for the GPU)" if gpu else ""))
+    if gpu and not _healthy(py, GPU_CHECK):
+        _say("  note: onnxruntime-directml is installed, but it reports no DirectML provider on this PC. "
+             "Building an index will use the CPU.")
     if want_model:
         _say("  embedding model: checking (downloads about 490 MB the first time) ...")
         r = subprocess.call([py, "-I", os.path.abspath(__file__), "--run", "model", "download"])

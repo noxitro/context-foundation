@@ -70,6 +70,7 @@ class EmbeddingConfig:
     batch_size: int = 8                # 1 回に計算する passage の数(小さいほうが、埋め草が減って速い)
     threads: int = 0                   # 1 プロセスのスレッド数。0 なら自動
     workers: int = 0                   # 索引づくりで埋め込みを計算するプロセスの数。0 と 1 は 1 プロセス
+    device: str = "auto"               # 索引づくりの埋め込みの計算先: auto(GPU が使えれば GPU)/ cpu / gpu
     vector_dtype: str = "float16"      # 保存の形(float16 / float32)
 
 
@@ -233,7 +234,8 @@ def load_config(path: str | os.PathLike) -> Config:
 
     t = data.get("embedding", {})
     _check_keys(t, {"enabled", "model", "model_dir", "cache_dir", "onnx_file", "revision", "pooling", "query_prefix",
-                    "passage_prefix", "max_tokens", "batch_size", "threads", "workers", "vector_dtype"}, "embedding")
+                    "passage_prefix", "max_tokens", "batch_size", "threads", "workers", "device",
+                    "vector_dtype"}, "embedding")
     cfg.embedding = EmbeddingConfig(
         enabled=_take(t, "enabled", bool, True), model=_take(t, "model", str, ""),
         model_dir=_take(t, "model_dir", str, ""), cache_dir=_take(t, "cache_dir", str, ""),
@@ -242,7 +244,9 @@ def load_config(path: str | os.PathLike) -> Config:
         query_prefix=_take(t, "query_prefix", str, None), passage_prefix=_take(t, "passage_prefix", str, None),
         max_tokens=_take(t, "max_tokens", int, 512), batch_size=_take(t, "batch_size", int, 8),
         threads=_take(t, "threads", int, 0), workers=_take(t, "workers", int, 0),
-        vector_dtype=_take(t, "vector_dtype", str, "float16"))
+        device=_take(t, "device", str, "auto"), vector_dtype=_take(t, "vector_dtype", str, "float16"))
+    if cfg.embedding.device not in ("auto", "cpu", "gpu"):
+        raise ConfigError("[embedding] device は auto・cpu・gpu のどれかです")
     if cfg.embedding.vector_dtype not in ("float16", "float32"):
         raise ConfigError("[embedding] vector_dtype は float16 か float32 です")
     if cfg.embedding.pooling not in ("", "cls", "mean"):
