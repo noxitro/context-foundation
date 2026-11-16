@@ -18,9 +18,10 @@ from .config import CONFIG_DIR_NAME, CONFIG_FILE_NAME, MODES, ConfigError, confi
 
 
 def _state_file() -> Path:
-    base = os.environ.get("LOCALAPPDATA") if os.name == "nt" else None
-    root = Path(base) / "context-foundation" if base else Path.home() / ".cache" / "context-foundation"
-    return root / "state.json"
+    if os.environ.get("CF_HOME") or (os.name == "nt" and os.environ.get("LOCALAPPDATA")):
+        from .embed import data_home
+        return data_home() / "state.json"
+    return Path.home() / ".cache" / "context-foundation" / "state.json"
 
 
 def _load_state() -> dict:
@@ -75,14 +76,8 @@ def ask_folder(prompt: str, default: str = "", allow_empty: bool = False) -> Pat
 
 
 def _source_id(path: Path, used: set[str]) -> str:
-    base = re.sub(r"[^A-Za-z0-9._-]+", "-", path.name).strip("-._") or "source"
-    if not base[0].isalnum():
-        base = "s" + base
-    sid, n = base[:40], 2
-    while sid in used:
-        sid = f"{base[:36]}-{n}"
-        n += 1
-    return sid
+    from .config import source_id_for
+    return source_id_for(path, used)
 
 
 def _model_ready(cfg) -> bool:

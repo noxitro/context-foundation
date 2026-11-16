@@ -1,5 +1,5 @@
 @echo off
-rem Remove the context-search skill (and the MCP server, if registered) from GitHub Copilot CLI.
+rem Uninstall the Copilot plugin context-foundation and the local marketplace (and the MCP server, if registered).
 setlocal
 if not exist "%~dp0.venv\Scripts\python.exe" (
   echo Run setup.bat first.

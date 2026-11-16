@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+from pathlib import Path
 
 from . import __version__
 from .config import MODES, ConfigError, find_config, load_config
@@ -69,13 +70,23 @@ class _State:
                 "No context-foundation index: no .cf folder found from " + os.getcwd() + " upward. "
                 "Search with grep as usual. Building an index takes minutes; ask the user first.")
         key = str(path)
-        mtime = path.stat().st_mtime_ns
         hit = self.searchers.get(key)
-        if hit is None or hit[0] != mtime:          # 設定が変わったら読み直す
+        # 設定か、作業フォルダの用語の対応表が変わったら読み直す
+        if hit is None or hit[0] != (path.stat().st_mtime_ns, _glossary_mtime(path.parent, hit[1])):
             cfg = load_config(path)
-            hit = (mtime, cfg, Searcher.from_config(cfg))
+            hit = ((path.stat().st_mtime_ns, _glossary_mtime(path.parent, cfg)), cfg, Searcher.from_config(cfg))
             self.searchers[key] = hit
         return hit[1], hit[2]
+
+
+def _glossary_mtime(cf_dir: Path, cfg) -> int | None:
+    """作業フォルダの用語の対応表の更新時刻(無ければ None)。設定で場所を変えていれば、そのファイル。"""
+    setting = cfg.search.glossary
+    p = Path(setting) if setting and Path(setting).is_absolute() else cf_dir / (setting or "glossary.tsv")
+    try:
+        return p.stat().st_mtime_ns
+    except OSError:
+        return None
 
 
 def call_tool(state: _State, name: str, args: dict) -> tuple[bool, str]:

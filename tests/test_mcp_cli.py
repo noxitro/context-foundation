@@ -204,13 +204,6 @@ def test_session_hint_only_where_an_index_exists(indexed_workspace, tmp_path):
     assert r.returncode == 0 and r.stdout == ""       # 入力が壊れていても、セッションを止めない
 
 
-def test_hook_config_runs_the_launcher_without_a_shell():
-    from context_foundation.copilot_reg import LAUNCHER, hook_config
-    (entry,) = hook_config()["hooks"]["sessionStart"]
-    assert entry["exec"] == "python" and entry["args"] == ["-I", str(LAUNCHER), "session-hint"]
-    assert LAUNCHER == REPO / "ctxf.py"
-
-
 def test_skill_file_points_at_the_launcher():
     skill = (REPO / "skills" / "context-search" / "SKILL.md").read_text(encoding="utf-8")
     assert skill.startswith("---\nname: context-search\ndescription: ")

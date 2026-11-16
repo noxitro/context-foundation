@@ -88,13 +88,25 @@ class ModelSpec:
     cache_dir: str
 
 
+def data_home() -> Path:
+    """利用者ごとの置き場(モデル・ctxf.py setup の仮想環境・.bat の覚え書き)。環境変数 CF_HOME で変えられる。
+    ctxf.py の data_home と同じ決め方にする。"""
+    env = os.environ.get("CF_HOME")
+    if env:
+        return Path(env)
+    if os.name == "nt" and os.environ.get("LOCALAPPDATA"):
+        return Path(os.environ["LOCALAPPDATA"]) / "context-foundation"
+    base = os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local" / "share")
+    return Path(base) / "context-foundation"
+
+
 def default_cache_dir() -> Path:
     env = os.environ.get("CF_MODEL_CACHE")
     if env:
         return Path(env)
-    if os.name == "nt" and os.environ.get("LOCALAPPDATA"):
-        return Path(os.environ["LOCALAPPDATA"]) / "context-foundation" / "models"
-    return Path.home() / ".cache" / "context-foundation" / "models"
+    if os.environ.get("CF_HOME") or os.name == "nt":
+        return data_home() / "models"
+    return Path.home() / ".cache" / "context-foundation" / "models"     # 0.1 と同じ場所(Windows 以外)
 
 
 def resolve_model(cfg: EmbeddingConfig) -> ModelSpec:
@@ -201,6 +213,7 @@ class OnnxEmbedder(Embedder):
         onnx_path, tok_path = model_files(spec)
         self.spec, self.name, self.revision, self.batch_size = spec, spec.name, spec.revision, max(1, batch_size)
         self.onnx_file = onnx_path.name
+        self.onnx_bytes = onnx_path.stat().st_size     # 同じ名前のまま中身を差し替えたモデルを見分ける(差分更新)
         tok = Tokenizer.from_file(str(tok_path))
         tok.enable_truncation(max_length=spec.max_tokens)
         pad_id = next((tok.token_to_id(t) for t in ("<pad>", "[PAD]", "<|pad|>") if tok.token_to_id(t) is not None), 0)
@@ -263,7 +276,8 @@ class OnnxEmbedder(Embedder):
 
     def info(self) -> dict:
         return {"model": self.name, "revision": self.revision, "dim": self.dim, "onnx_file": self.onnx_file,
-                "pooling": self.spec.pooling, "max_tokens": self.spec.max_tokens, "license": self.spec.license}
+                "onnx_bytes": self.onnx_bytes, "pooling": self.spec.pooling, "max_tokens": self.spec.max_tokens,
+                "license": self.spec.license}
 
 
 class HashEmbedder(Embedder):

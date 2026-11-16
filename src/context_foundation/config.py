@@ -86,6 +86,8 @@ class SearchConfig:
     reranker: str = ""                 # "モジュール:関数"。空なら使わない
     rerank_candidates: int = 30
     max_output_bytes: int = 12_000     # エージェント向けの出力の上限
+    glossary: str = ""                 # 用語の対応表(.cf からの相対か絶対パス)。空なら .cf/glossary.tsv があれば使う
+    builtin_glossary: bool = True      # 既定の対応表(日本語 → 英語の一般の語)も使うか
 
 
 @dataclass
@@ -247,7 +249,7 @@ def load_config(path: str | os.PathLike) -> Config:
 
     t = data.get("search", {})
     _check_keys(t, {"mode", "top_k", "candidates", "rrf_k", "hybrid_weighting", "weight_body", "weight_symbols",
-                    "weight_path",
+                    "weight_path", "glossary", "builtin_glossary",
                     "reranker", "rerank_candidates", "max_output_bytes"}, "search")
     cfg.search = SearchConfig(
         mode=_take(t, "mode", str, "hybrid"), top_k=_take(t, "top_k", int, 8),
@@ -256,12 +258,25 @@ def load_config(path: str | os.PathLike) -> Config:
         weight_body=_take(t, "weight_body", float, 1.0), weight_symbols=_take(t, "weight_symbols", float, 4.0),
         weight_path=_take(t, "weight_path", float, 2.0), reranker=_take(t, "reranker", str, ""),
         rerank_candidates=_take(t, "rerank_candidates", int, 30),
-        max_output_bytes=_take(t, "max_output_bytes", int, 12_000))
+        max_output_bytes=_take(t, "max_output_bytes", int, 12_000),
+        glossary=_take(t, "glossary", str, ""), builtin_glossary=_take(t, "builtin_glossary", bool, True))
     if cfg.search.hybrid_weighting not in ("coverage", "equal"):
         raise ConfigError("[search] hybrid_weighting は coverage か equal です")
     if cfg.search.mode not in MODES:
         raise ConfigError(f"[search] mode は {' / '.join(MODES)} のどれかです")
     return cfg
+
+
+def source_id_for(path: Path, used: set[str]) -> str:
+    """フォルダの名前から、source の呼び名(英数字と . _ -)を作る。使った名前とは重ならないようにする。"""
+    base = re.sub(r"[^A-Za-z0-9._-]+", "-", path.name).strip("-._") or "source"
+    if not base[0].isalnum():
+        base = "s" + base
+    sid, n = base[:40], 2
+    while sid in used:
+        sid = f"{base[:36]}-{n}"
+        n += 1
+    return sid
 
 
 def toml_string(s: str) -> str:

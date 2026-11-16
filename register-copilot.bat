@@ -1,5 +1,6 @@
 @echo off
-rem Register the context-search skill with GitHub Copilot CLI (the desktop app uses the same settings). Add --mcp to also register the MCP server.
+rem Install this folder as the Copilot plugin context-foundation (skill and hook) through a local marketplace.
+rem GitHub Copilot CLI and the desktop app share the setting. Add --mcp to also register the MCP server.
 setlocal
 if not exist "%~dp0.venv\Scripts\python.exe" (
   echo Run setup.bat first.

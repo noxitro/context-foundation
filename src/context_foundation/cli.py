@@ -64,7 +64,7 @@ def cmd_index(args) -> int:
         download_model(resolve_model(cfg.embedding), log=lambda s: print(s, file=sys.stderr))
     try:
         result = build_index(cfg, use_embedding=use_embedding, require_embedding=args.require_embedding,
-                             progress=not args.quiet, revision=args.revision)
+                             progress=not args.quiet, revision=args.revision, reuse=not args.full)
     except ModelUnavailable as e:
         sys.stderr.write(f"{e}\n")
         return EXIT_USAGE
@@ -74,6 +74,51 @@ def cmd_index(args) -> int:
         from .render import status_human
         from .search import Searcher
         sys.stdout.write(status_human(Searcher.from_config(cfg).status()))
+    return 0
+
+
+def cmd_init(args) -> int:
+    """作業フォルダに .cf/config.toml を作る(対話なし。エージェントや .bat から呼ぶ)。"""
+    from pathlib import Path
+
+    from .config import CONFIG_DIR_NAME, CONFIG_FILE_NAME, config_template, source_id_for
+
+    ws = Path(args.workspace or os.getcwd()).resolve()
+    cfg_path = ws / CONFIG_DIR_NAME / CONFIG_FILE_NAME
+    if cfg_path.is_file() and not args.force:
+        sys.stderr.write(f"設定がすでにあります: {cfg_path}\n(作り直すなら --force。索引を作るなら `ctxf index`)\n")
+        return EXIT_USAGE
+    sources: list[tuple[str, str]] = []
+    used: set[str] = set()
+    for raw in args.folders:
+        p = Path(raw)
+        p = (ws / p if not p.is_absolute() else p).resolve()
+        if not p.is_dir():
+            sys.stderr.write(f"フォルダがありません: {p}\n")
+            return EXIT_USAGE
+        sid = source_id_for(p, used)
+        used.add(sid)
+        try:
+            rel = os.path.relpath(p, ws)
+            outside = rel == ".." or rel.startswith(".." + os.sep)
+            root = str(p) if outside else rel
+        except ValueError:                  # ドライブが違う
+            root = str(p)
+        sources.append((sid, root))
+    cfg_path.parent.mkdir(parents=True, exist_ok=True)
+    ignore = cfg_path.parent / ".gitignore"
+    if not ignore.exists():
+        ignore.write_text("*\n", encoding="utf-8")       # 設定と索引を git に入れない
+    if cfg_path.is_file():                  # --force: 手で書いた設定を失わないよう、前のものを残す
+        backup = cfg_path.with_name(CONFIG_FILE_NAME + ".bak")
+        backup.write_bytes(cfg_path.read_bytes())
+        print(f"前の設定を残しました: {backup}")
+    cfg_path.write_text(config_template(sources), encoding="utf-8")
+    load_config(cfg_path)                   # 書いたものが読めることを確かめる
+    print(f"設定を書きました: {cfg_path}")
+    for sid, root in sources:
+        print(f"  source {sid}: {root}")
+    print("次は `ctxf index` で索引を作ります(大きなコードでは時間がかかります)。")
     return 0
 
 
@@ -197,8 +242,17 @@ def build_parser() -> argparse.ArgumentParser:
     def common(p):
         p.add_argument("--config", help="設定ファイル、.cf フォルダ、またはその親フォルダ(省くと作業フォルダから親へ探す)")
 
-    p = sub.add_parser("index", help="索引を作り直す", allow_abbrev=False)
+    p = sub.add_parser("init", help="作業フォルダに設定(.cf/config.toml)を作る。検索したいフォルダを並べる",
+                       allow_abbrev=False)
+    p.add_argument("folders", nargs="+", help="検索したいフォルダ(エンジンのソース、参考にするアプリ、設計文書 など)")
+    p.add_argument("--workspace", help="作業フォルダ(省くと今のフォルダ。Copilot を起動するフォルダ)")
+    p.add_argument("--force", action="store_true", help="設定がすでにあっても書き直す")
+    p.set_defaults(func=cmd_init)
+
+    p = sub.add_parser("index", help="索引を作る(前の索引の埋め込みは、変わっていない passage の分を使い回す)",
+                       allow_abbrev=False)
     common(p)
+    p.add_argument("--full", action="store_true", help="前の索引の埋め込みを使い回さず、すべて埋め込み直す")
     p.add_argument("--no-embed", action="store_true", help="埋め込みを作らない(keyword だけの索引)")
     p.add_argument("--download", action="store_true", help="埋め込みモデルが無ければ、先に取得する")
     p.add_argument("--require-embedding", action="store_true", help="モデルが無いとき、keyword だけで作らずに止まる")
@@ -265,7 +319,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("copilot", help="Copilot CLI・アプリへの登録と解除", allow_abbrev=False)
     p.add_argument("action", choices=("register", "unregister", "status"))
-    p.add_argument("--mcp", action="store_true", help="MCP サーバーも登録する(既定は skill だけ)")
+    p.add_argument("--mcp", action="store_true", help="MCP サーバーも登録する(既定はプラグインの skill と hook だけ)")
     p.add_argument("--yes", action="store_true", help="確認を尋ねない")
     p.set_defaults(func=cmd_copilot)
 

@@ -1,24 +1,35 @@
 """索引づくり: 取り込み → 分割 → keyword の索引 → 埋め込み → 1 ファイルに保存。
 
-最初は作り直しの方式(毎回すべてを作る)。途中のファイルに書き、できあがってから置き換えるので、
-作り直しの最中も前の索引で検索できる。所要時間と統計は、索引の meta に残す。
+毎回、取り込みと分割はすべてのファイルについてやり直し、新しいファイルに書いて、できあがってから
+置き換える(作り直しの最中も、前の索引で検索できる)。時間のほとんどを占める埋め込みだけは、前の索引に
+同じ文の埋め込みがあれば、それを使い回す(差分更新)。使い回すかどうかは、埋め込みに渡す文そのもの
+(場所・スコープ・シグネチャ・本文)のハッシュで決めるので、変更の検知に版管理(git など)は使わない。
+変わったファイル・増えたファイルの passage だけが埋め込み直され、消えたファイルの passage は新しい索引に
+入らない。passage は作り直したときと同じになり、同じ文には同じ埋め込みを使う(埋め込みの計算は、まとめて
+計算する相手によって浮動小数の末尾が変わりうるので、作り直しとの厳密な一致は保証しない。実測では一致した)。
+所要時間と統計は、索引の meta に残す。
 """
 from __future__ import annotations
 
+import hashlib
 import os
 import re
+import sqlite3
 import sys
 import time
+import zlib
 from collections import defaultdict
 from contextlib import closing
 from pathlib import Path
+
+import numpy as np
 
 from . import __version__
 from .chunking import chunk_file
 from .config import CONFIG_DIR_NAME, Config
 from .embed import EmbedPool, Embedder, HashEmbedder, ModelUnavailable, make_embedder
 from .ingest import IngestStats, iter_source_files
-from .store import IndexWriter, open_readonly, unpack_text
+from .store import IndexError_, IndexWriter, load_vectors, open_readonly, read_meta, unpack_text
 from .sysinfo import peak_memory_bytes
 from .textproc import fts_text
 
@@ -73,6 +84,82 @@ def embedding_text(path: str, scope: str, signature: str, text: str, start_line:
     return head + "\n" + text
 
 
+def text_key(text: str) -> bytes:
+    """埋め込みに渡す文の鍵(使い回すかどうかを決める)。"""
+    return hashlib.blake2b(text.encode("utf-8"), digest_size=16).digest()
+
+
+# 埋め込みに渡す文(embedding_text)の作り方の版。embedding_text や strip_license_header を変えたら上げる
+# (前の索引の鍵は、前の索引の passage から今の embedding_text で作り直すので、作り方が変わったら使い回せない)
+EMBED_TEXT_VERSION = 1
+
+# 前の索引の埋め込みを使い回してよいか、の判定に使う項目(どれかが違えば、すべて埋め込み直す)
+_REUSE_KEYS = ("model", "revision", "dim", "onnx_file", "onnx_bytes", "pooling", "max_tokens", "passage_prefix",
+               "vector_dtype", "embed_text_version")
+# 0.1 で作った索引の meta に無い項目。無いときは、今の設定が既定のままなら同じとみなす(下の _missing_ok)
+_ADDED_IN_0_2 = ("onnx_bytes", "passage_prefix", "embed_text_version")
+
+
+def embedding_signature(emb: Embedder, vector_dtype: str) -> dict:
+    sig = dict(emb.info(), vector_dtype=vector_dtype, embed_text_version=EMBED_TEXT_VERSION)
+    spec = getattr(emb, "spec", None)
+    sig["passage_prefix"] = getattr(spec, "passage_prefix", "") if spec is not None else ""
+    return {k: sig.get(k) for k in _REUSE_KEYS}
+
+
+def _missing_ok(key: str, ecfg) -> bool:
+    """前の索引の meta に無い項目を、同じとみなしてよいか(0.1 の索引は、既定の設定で作ったものとして扱う)。"""
+    if key == "embed_text_version":
+        return EMBED_TEXT_VERSION == 1                 # 0.1 の embedding_text は版 1 と同じ
+    if key == "passage_prefix":
+        return ecfg is None or ecfg.passage_prefix is None
+    if key == "onnx_bytes":
+        return ecfg is None or (not ecfg.model_dir and not ecfg.onnx_file)
+    return False
+
+
+def _previous_vectors(dest: Path, signature: dict, log, ecfg=None) -> tuple[dict[bytes, int], np.ndarray | None]:
+    """前の索引から、使い回せる埋め込みを読む。返すのは (文の鍵 → 行, ベクトルの行列)。
+
+    前の索引が無い・壊れている・形式の版が違う・埋め込みの作り方(モデル・版・次元・保存の形・文の作り方など)が
+    違うときは、何も使い回さない(空の辞書)。"""
+    if not dest.is_file():
+        return {}, None
+    try:
+        with closing(open_readonly(dest)) as db:
+            meta = read_meta(db)
+            old = meta.get("embedding") or {}
+            if not old:
+                return {}, None
+            diff = [k for k in _REUSE_KEYS
+                    if (old.get(k) != signature.get(k) if k in old
+                        else signature.get(k) is not None and not _missing_ok(k, ecfg))]
+            if diff:
+                log(f"  前の索引とは埋め込みの作り方が違う({', '.join(diff)})ので、すべて埋め込み直します")
+                return {}, None
+            mat = load_vectors(db, old["dim"], old.get("vector_dtype", "float16"))
+            n_chunks = db.execute("SELECT count(*) FROM chunks").fetchone()[0]
+            if len(mat) != n_chunks:
+                return {}, None
+            keys: dict[bytes, int] = {}
+            for cid, path, scope, signature_, text, start_line in db.execute(
+                    "SELECT id, path, scope, signature, text, start_line FROM chunks ORDER BY id"):
+                keys.setdefault(text_key(embedding_text(path, scope, signature_, unpack_text(text), start_line)),
+                                cid - 1)
+            return keys, mat
+    except (IndexError_, sqlite3.Error, ValueError, KeyError, IndexError, zlib.error) as e:
+        log(f"  前の索引を読めないので、すべて埋め込み直します({str(e).splitlines()[0]})")
+        return {}, None
+
+
+def _had_embeddings(dest: Path) -> bool:
+    try:
+        with closing(open_readonly(dest)) as db:
+            return bool(read_meta(db).get("embedding"))
+    except (IndexError_, sqlite3.Error, ValueError):
+        return False
+
+
 def _percentile(sorted_values: list[int], p: float) -> int:
     if not sorted_values:
         return 0
@@ -102,11 +189,13 @@ def _replace(tmp: Path, dest: Path) -> None:
 
 
 def build_index(cfg: Config, *, use_embedding: bool | None = None, embedder: Embedder | None = None,
-                require_embedding: bool = False, progress: bool = True, log=None, revision: str = "") -> dict:
+                require_embedding: bool = False, progress: bool = True, log=None, revision: str = "",
+                reuse: bool = True) -> dict:
     """索引を作り直し、統計(meta に入れたものと同じ)を返す。
 
     use_embedding: None なら設定([embedding] enabled)に従う。
     モデルが手元に無いときは、keyword だけの索引を作る(require_embedding なら ModelUnavailable を投げる)。
+    reuse: 前の索引に同じ文の埋め込みがあれば使い回す(差分更新)。False なら、すべて埋め込み直す。
     """
     say = _Progress(progress)
     log = log or (lambda s: say(s, force=True))
@@ -166,6 +255,7 @@ def build_index(cfg: Config, *, use_embedding: bool | None = None, embedder: Emb
 
         # 埋め込み
         embedding_meta = None
+        embed_counts = {"reused": 0, "embedded": 0}
         want = cfg.embedding.enabled if use_embedding is None else use_embedding
         t_embed0 = time.time()
         if want:
@@ -177,41 +267,76 @@ def build_index(cfg: Config, *, use_embedding: bool | None = None, embedder: Emb
                 log(f"注意: {e}\n      → keyword(BM25)だけの索引を作ります")
                 emb = None
             if emb is not None:
+                dtype = cfg.embedding.vector_dtype
+                signature = embedding_signature(emb, dtype)
+                old_keys, old_mat = _previous_vectors(dest, signature, log, cfg.embedding) if reuse else ({}, None)
+
+                # 1. 新しい passage ごとに、使い回せる前の行(無ければ -1)を決める
+                src_rows = np.full(total_chunks, -1, dtype=np.int64)
+                with closing(open_readonly(tmp)) as rdb:
+                    for cid, path, scope, sig, text, start_line in rdb.execute(
+                            "SELECT id, path, scope, signature, text, start_line FROM chunks ORDER BY id"):
+                        row = old_keys.get(text_key(embedding_text(path, scope, sig, unpack_text(text), start_line)))
+                        if row is not None:
+                            src_rows[cid - 1] = row
+                missing = np.flatnonzero(src_rows < 0)       # 埋め込み直す passage(0 始まりの位置)
+                reused = total_chunks - len(missing)
+                if reused:
+                    log(f"  前の索引の埋め込みを使い回します: {reused:,} passage、"
+                        f"埋め込み直すのは {len(missing):,} passage")
+
+                # 2. 使い回せない passage だけを埋め込む
+                # 保存の形(既定は float16)で持つ。float16 → float32 → float16 は値が変わらない
+                vectors = np.empty((total_chunks, emb.dim), dtype=dtype)
+                if reused:
+                    vectors[src_rows >= 0] = old_mat[src_rows[src_rows >= 0]].astype(dtype)
+                del old_mat, old_keys
                 workers = 1
-                if embedder is None and not isinstance(emb, HashEmbedder):
+                if len(missing) and embedder is None and not isinstance(emb, HashEmbedder):
                     workers = cfg.embedding.workers or 1
-                    workers = max(1, min(workers, -(-total_chunks // EMBED_TASK)))
+                    workers = max(1, min(workers, -(-len(missing) // EMBED_TASK)))
                 pool = EmbedPool(cfg.embedding, workers) if workers > 1 else None
-                done = 0
 
                 def batches(rdb):
-                    for first in range(1, total_chunks + 1, EMBED_TASK):
-                        rows = rdb.execute(
-                            "SELECT path, scope, signature, text, start_line FROM chunks "
-                            "WHERE id >= ? AND id < ? ORDER BY id", (first, first + EMBED_TASK)).fetchall()
-                        yield [embedding_text(r[0], r[1], r[2], unpack_text(r[3]), r[4]) for r in rows]
+                    for s in range(0, len(missing), EMBED_TASK):
+                        ids = [int(i) + 1 for i in missing[s:s + EMBED_TASK]]
+                        marks = ",".join("?" * len(ids))
+                        rows = {r[0]: r[1:] for r in rdb.execute(
+                            f"SELECT id, path, scope, signature, text, start_line FROM chunks WHERE id IN ({marks})",
+                            ids)}
+                        yield [embedding_text(rows[i][0], rows[i][1], rows[i][2], unpack_text(rows[i][3]), rows[i][4])
+                               for i in ids]
 
+                done = 0
                 try:
                     with closing(open_readonly(tmp)) as rdb:
                         results = pool.map(batches(rdb)) if pool else (emb.embed_passages(t) for t in batches(rdb))
                         for vecs in results:
-                            writer.add_vectors(done + 1, vecs, cfg.embedding.vector_dtype)
+                            vectors[missing[done:done + len(vecs)]] = vecs.astype(dtype)
                             done += len(vecs)
-                            if done % (EMBED_TASK * 16) < EMBED_TASK:
-                                writer.commit()
                             el = time.time() - t_embed0
                             rate = done / el if el > 0 else 0
-                            eta = (total_chunks - done) / rate if rate else 0
-                            say(f"  埋め込み中: {done:,} / {total_chunks:,} passage"
+                            eta = (len(missing) - done) / rate if rate else 0
+                            say(f"  埋め込み中: {done:,} / {len(missing):,} passage"
                                 f"({rate:.0f} 件/秒、残り 約 {eta:.0f} 秒)")
                 finally:
                     if pool:
                         pool.close()
+
+                # 3. id の順に書く
+                writer.add_vectors(1, vectors, dtype)
                 writer.commit()
-                embedding_meta = dict(emb.info(), vector_dtype=cfg.embedding.vector_dtype, workers=workers)
-                log(f"埋め込み: {total_chunks:,} passage({time.time() - t_embed0:.1f} 秒、モデル {emb.name}、"
-                    f"{workers} プロセス)")
+                del vectors
+                embedding_meta = dict(emb.info(), vector_dtype=dtype, workers=workers,
+                                      passage_prefix=signature["passage_prefix"],
+                                      embed_text_version=EMBED_TEXT_VERSION)
+                embed_counts = {"reused": int(reused), "embedded": int(len(missing))}
+                log(f"埋め込み: {len(missing):,} passage を計算、{reused:,} passage を使い回し"
+                    f"({time.time() - t_embed0:.1f} 秒、モデル {emb.name}、{workers} プロセス)")
         t_embed = time.time()
+        if embedding_meta is None and reuse and _had_embeddings(dest):
+            log("注意: 前の索引には埋め込みがありましたが、今回は keyword だけの索引になります。"
+                "次に埋め込みつきで作るときは、すべての passage を埋め込み直します(時間がかかります)")
 
         sizes.sort()
         code_lines = sum(v["lines"] for k, v in by_lang.items() if k in ("c", "cpp", "csharp"))
@@ -237,7 +362,8 @@ def build_index(cfg: Config, *, use_embedding: bool | None = None, embedder: Emb
         writer.set_meta("created_at", time.strftime("%Y-%m-%dT%H:%M:%S%z"))
         writer.set_meta("revision", revision)     # コーパスの版(コミットやチェンジリストの番号。利用者が渡す)
         timings = {"ingest_chunk_seconds": round(t_chunk - t_start, 2),
-                   "embed_seconds": round(t_embed - t_embed0, 2) if embedding_meta else 0.0}
+                   "embed_seconds": round(t_embed - t_embed0, 2) if embedding_meta else 0.0,
+                   "embedded_passages": embed_counts["embedded"], "reused_passages": embed_counts["reused"]}
         writer.set_meta("timings", timings)        # finalize と total は、下で書き足す
         t_fin0 = time.time()
         writer.finish()

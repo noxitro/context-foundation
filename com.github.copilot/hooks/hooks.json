@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      {
+        "type": "command",
+        "command": "python -I \"${PLUGIN_ROOT}/ctxf.py\" session-hint",
+        "timeoutSec": 10
+      }
+    ]
+  }
+}

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "context-foundation"
-version = "0.1.0"
+version = "0.2.0"
 description = "Retrieval-only proof of concept: find evidence passages in large codebases and design documents from natural-language questions."
 readme = "README.md"
 license = "MIT"
@@ -34,7 +34,7 @@ ctxf = "context_foundation.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-context_foundation = ["schemas/*.json"]
+context_foundation = ["schemas/*.json", "glossary_ja.tsv"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
