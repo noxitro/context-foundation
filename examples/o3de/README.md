@@ -96,8 +96,10 @@ ctxf eval --cases <ここ>\examples\o3de\cases.jsonl --out .cf\eval\run-01
 ときは `--split tune` を付けます。
 
 同じ手順を、GitHub Actions でも回せます。リポジトリの Actions で
-「Benchmark (O3DE example)」を手で起動すると、GitHub の機械が O3DE の
-2 つのフォルダを取得し、索引を作り、評価を回します。要約は、実行の画面と
+「Benchmark (O3DE example)」を手で起動するか、名前が `benchmark/` で始まる
+ブランチを push すると、GitHub の機械が O3DE の 2 つのフォルダを取得し、
+索引を作り、評価を回します(ブランチを push したときは、そのブランチの
+道具で測ります)。要約は、実行の画面と
 成果物に残ります(質問ごとの結果は、ソースの場所の一覧になるので
 残しません)。
 
