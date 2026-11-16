@@ -121,6 +121,16 @@ SESSION_HINT = (
     "This workspace has a context-foundation index (.cf folder: the code and design docs, searchable by meaning "
     "and keywords). When you need to find where something is implemented or documented and do not know its exact "
     "name or file, load the context-search skill before grepping. For a known identifier, grep as usual.")
+# MCP サーバーも入っているとき(プラグインと一緒に入る)の 1 文。検索の道具を、grep より先に呼ぶように促す。
+# 「名前を知っているなら grep」とは書かない: 公開のコードでは、モデルが名前を覚えているつもりで grep から
+# 始め、検索を 1 回も使わなかった(docs/benchmarks.md)。検索は keyword も見るので、識別子でも引ける
+SESSION_HINT_MCP = (
+    "This workspace has a context-foundation index (.cf folder: the code and design docs, searchable by meaning "
+    "and keywords). To find where something is implemented or documented, call the context-foundation-search tool "
+    "first, before grepping: describe what the code does in English and add identifiers you expect. One call "
+    "returns ranked passages with source:path:start-end and their text, usually enough to answer and cite. Grep "
+    "or open files afterwards only for what the passages do not show. If that tool is not available, load the "
+    "context-search skill instead.")
 SESSION_HINT_NOT_READY = (
     "This workspace has a context-foundation index (.cf folder), but the search tool is not set up on this PC yet. "
     "If you need to find code or docs without knowing their names, load the context-search skill: it says how to "
@@ -140,9 +150,10 @@ def has_index(cwd):
     return False
 
 
-def session_hint():
+def session_hint(mcp=False):
     """Copilot の sessionStart の hook から呼ばれる。索引のある作業フォルダでだけ、skill の使いどころを 1 文で
     知らせる(説明文だけでは、skill を読まずに grep から始めるモデルがあるため)。索引が無ければ何も足さない。
+    mcp が真なら(`session-hint --mcp`。MCP サーバーも入れているとき)、検索の道具を先に呼ぶように促す。
     仮想環境の python は起動しない(セッションの始まりを遅くしないため)。何が起きても 0 で終わる。"""
     try:
         raw = sys.stdin.buffer.read() if sys.stdin is not None else b""
@@ -153,7 +164,8 @@ def session_hint():
         cwd = data.get("cwd") if isinstance(data, dict) else None
         if has_index(cwd or os.getcwd()):
             ready = find_python()[0] is not None
-            sys.stdout.write(json.dumps({"additionalContext": SESSION_HINT if ready else SESSION_HINT_NOT_READY}))
+            hint = SESSION_HINT_MCP if mcp else SESSION_HINT
+            sys.stdout.write(json.dumps({"additionalContext": hint if ready else SESSION_HINT_NOT_READY}))
     except BaseException:        # hook はセッションを止めない
         pass
     return 0
@@ -312,6 +324,41 @@ def _setup(argv):
     return 0
 
 
+def serve_not_ready():
+    """用意(setup)が済んでいない PC で、MCP サーバーとして起動されたとき。
+
+    プラグインは MCP サーバーも一緒に登録するので、用意の前でも起動される。ここで誤りの文を標準出力に書いて
+    終わると、エージェントの側では「サーバーが壊れている」としか見えない。そこで、道具を 1 つも出さない
+    サーバーとして答え続ける(用意のしかたは、始めの 1 文と skill が伝える)。標準ライブラリだけで動く。
+    """
+    stdin, stdout = sys.stdin.buffer, sys.stdout.buffer
+    while True:
+        line = stdin.readline()
+        if not line:
+            return 0
+        try:
+            msg = json.loads(line.decode("utf-8"))
+        except ValueError:
+            continue
+        if not isinstance(msg, dict) or msg.get("id") is None or not msg.get("method"):
+            continue                                  # 通知には答えない
+        method, params = msg["method"], msg.get("params")
+        reply = {"jsonrpc": "2.0", "id": msg["id"]}
+        if method == "initialize":
+            want = params.get("protocolVersion") if isinstance(params, dict) else None
+            reply["result"] = {"protocolVersion": want if isinstance(want, str) else "2025-06-18",
+                               "capabilities": {"tools": {"listChanged": False}},
+                               "serverInfo": {"name": "context-foundation", "version": "0"}}
+        elif method == "ping":
+            reply["result"] = {}
+        elif method == "tools/list":
+            reply["result"] = {"tools": []}
+        else:
+            reply["error"] = {"code": -32601, "message": "context-foundation is not set up on this PC yet"}
+        stdout.write(json.dumps(reply).encode("utf-8") + b"\n")
+        stdout.flush()
+
+
 def where():
     py, kind, reason = find_python()
     _say("ctxf.py:   " + os.path.abspath(__file__))
@@ -338,13 +385,15 @@ def main():
     if argv[:1] == ["--run"]:
         return run_inner(argv[1:])
     if argv[:1] == ["session-hint"]:
-        return session_hint()
+        return session_hint(mcp="--mcp" in argv[1:])
     if argv[:1] == ["setup"]:
         return setup(argv[1:])
     if argv[:1] == ["where"]:
         return where()
     py, _kind, reason = find_python()
     if py is None:
+        if argv[:1] == ["serve"]:
+            return serve_not_ready()
         sys.stdout.write(not_ready_message(reason))
         return 4
     try:

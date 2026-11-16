@@ -8,13 +8,17 @@
 (索引の後に変わったかの印を付けるために、結果に出たファイルの大きさと更新日時だけは見る)。
 
 サーバーは起動したまま保たれるので、埋め込みモデルとベクトルを読み込んだままにでき、2 回目からの検索が速い。
-設定(.cf)は、--config が無ければ、サーバーの作業フォルダ(= エージェントの作業フォルダ)から親へ探す。
+最初の 1 回も待たせないように、索引のある作業フォルダでは、起動の挨拶(initialize)のときに裏で読み込みを始める
+(設定の [search] preload = false で止められる)。
+設定(.cf)は、--config が無ければ、エージェントの作業フォルダから親へ探す。エージェントの作業フォルダは、
+ホストが環境変数で知らせていればその場所(session_dir)、無ければサーバーの作業フォルダ。
 """
 from __future__ import annotations
 
 import json
 import os
 import sys
+import threading
 from pathlib import Path
 
 from . import __version__
@@ -23,22 +27,25 @@ from .render import HARD_MAX_BYTES, status_agent, to_agent
 
 PROTOCOL_VERSIONS = ("2025-06-18", "2025-03-26", "2024-11-05")
 INSTRUCTIONS = (
-    "Use `search` when you need to find where something is implemented or documented but do not know its name "
-    "or location (another engine's term, a plain-language or Japanese description). It returns ranked passages "
-    "with source:path:start-end. For a known identifier, use grep or a reference index instead.")
+    "Call `search` first, before grepping, to find where something is implemented or documented in this workspace. "
+    "Describe what the code does in English and add identifiers you expect. It returns ranked passages with "
+    "source:path:start-end and their text, usually enough to answer and cite; grep or open files afterwards only "
+    "for what the passages do not show.")
 
 TOOLS = [
     {
         "name": "search",
         "description": (
-            "Find code or design-doc passages by meaning when the name or location is unknown. Searches a local "
-            "index (keyword + multilingual semantic) and returns ranked passages as source:path:start-end with "
-            "scope, signature and text. Not for known identifiers - use grep for those."),
+            "Find where something is implemented or documented in this workspace. Searches a local index of the "
+            "code and design docs by meaning and by keywords, and returns ranked passages as source:path:start-end "
+            "with scope, signature and text - usually enough to answer and cite without opening files. Call it "
+            "before grep."),
         "inputSchema": {
             "type": "object",
             "properties": {
                 "query": {"type": "string",
-                          "description": "Question or keywords. For code written in English, include English terms."},
+                          "description": ("What to find: what the code does, in English, plus identifiers you "
+                                          "expect (function, class or file names).")},
                 "top_k": {"type": "integer", "minimum": 1, "maximum": 20, "description": "Passages to return (8)."},
                 "mode": {"type": "string", "enum": list(MODES), "description": "Default hybrid."},
                 "source_id": {"type": "string", "description": "Limit to one source (see status)."},
@@ -57,17 +64,36 @@ TOOLS = [
 ]
 
 
+# ホストが、エージェントの作業フォルダを知らせる環境変数。Copilot CLI は、プラグインに入っている MCP サーバーを、
+# プラグインのフォルダを作業フォルダにして起動し、利用者の作業フォルダはこの変数で渡す(1.0.112 で実測。
+# MCP の roots は空で返る)
+SESSION_DIR_ENV = ("COPILOT_SESSION_CWD",)
+
+
+def session_dir() -> str:
+    """エージェントの作業フォルダ(設定を探し始める場所)。"""
+    for name in SESSION_DIR_ENV:
+        value = os.environ.get(name)
+        if value and os.path.isdir(value):
+            return value
+    return os.getcwd()
+
+
 class _State:
     def __init__(self, config: str | None):
         self.config = config
         self.searchers: dict[str, tuple] = {}
+        # 検索と、起動時の先読み(warm_up)が、同じ索引とモデルを同時に読み込まないようにする
+        self.lock = threading.RLock()
+        self.warm_up_started = False
 
     def searcher(self):
         from .search import Searcher
-        path = find_config(self.config)
+        start = session_dir()
+        path = find_config(self.config, start=start)
         if path is None:
             raise LookupError(
-                "No context-foundation index: no .cf folder found from " + os.getcwd() + " upward. "
+                "No context-foundation index: no .cf folder found from " + start + " upward. "
                 "Search with grep as usual. Building an index takes minutes; ask the user first.")
         key = str(path)
         hit = self.searchers.get(key)
@@ -89,8 +115,39 @@ def _glossary_mtime(cf_dir: Path, cfg) -> int | None:
         return None
 
 
+def warm_up(state: _State) -> None:
+    """索引のベクトルと埋め込みモデルを、先に読み込む(裏のスレッドで動かす)。
+
+    最初の検索は、モデルの読み込みで 1.5 秒ほどかかる。起動の挨拶のときに始めておけば、エージェントのモデルが
+    最初の応答を返すまでの間に済む。索引が無い作業フォルダでは何もしない。ここでの失敗は黙って終わる
+    (検索のときに、同じ誤りをあらためて文面で返す)。
+    """
+    try:
+        with state.lock:
+            cfg, searcher = state.searcher()
+            if cfg.search.preload:
+                searcher.warm_up()
+    except Exception:
+        pass
+
+
+def start_warm_up(state: _State) -> threading.Thread | None:
+    """先読みを、裏のスレッドで 1 回だけ始める。"""
+    if state.warm_up_started:
+        return None
+    state.warm_up_started = True
+    th = threading.Thread(target=warm_up, args=(state,), name="cf-warm-up", daemon=True)
+    th.start()
+    return th
+
+
 def call_tool(state: _State, name: str, args: dict) -> tuple[bool, str]:
-    """(誤りか, 文面) を返す。"""
+    """(誤りか, 文面) を返す。先読みが動いていれば、終わるのを待ってから検索する。"""
+    with state.lock:
+        return _call_tool(state, name, args)
+
+
+def _call_tool(state: _State, name: str, args: dict) -> tuple[bool, str]:
     from .store import IndexError_
     try:
         cfg, searcher = state.searcher()
@@ -134,6 +191,7 @@ def handle(state: _State, msg: dict) -> dict | None:
         return {"jsonrpc": "2.0", "id": mid, "error": {"code": code, "message": message}}
 
     if method == "initialize":
+        start_warm_up(state)
         want = params.get("protocolVersion")
         return ok({"protocolVersion": want if want in PROTOCOL_VERSIONS else PROTOCOL_VERSIONS[0],
                    "capabilities": {"tools": {"listChanged": False}},

@@ -343,9 +343,10 @@ def hooks_for(args) -> dict | None:
     フォルダで、skill の使いどころを知らせる)。プラグインの hooks.json は ${PLUGIN_ROOT} からの場所で書かれて
     いて、設定フォルダに置く hook では使えないので、shell を通さずに、入口の場所を直接渡す。
     """
-    if args.method == "agent_cf" and not args.no_hint:
+    if args.method in ("agent_cf", "agent_cf_mcp") and not args.no_hint:
+        hint = ["session-hint"] + (["--mcp"] if args.method == "agent_cf_mcp" else [])
         return {"version": 1, "hooks": {"sessionStart": [
-            {"type": "command", "exec": "python", "args": ["-I", str(REPO / "ctxf.py"), "session-hint"],
+            {"type": "command", "exec": "python", "args": ["-I", str(REPO / "ctxf.py"), *hint],
              "timeoutSec": 10}]}}
     if args.method == "agent_grep_cxxref":
         script = str(Path(args.cxxref) / "scripts" / "cxxref_hook.py")
@@ -517,7 +518,7 @@ def main() -> int:
                 "agent_grep": [], "agent_cf": ["skill:context-search"], "agent_cf_mcp": [f"mcp:{MCP_NAME}"],
                 "agent_grep_cxxref": ["skill:cxxref"]}[args.method],
             "permissions": "read allowed, write denied, shell limited to python",
-            "session_hint": args.method == "agent_grep_cxxref" or (args.method == "agent_cf" and not args.no_hint),
+            "session_hint": args.method == "agent_grep_cxxref" or (args.method in ("agent_cf", "agent_cf_mcp") and not args.no_hint),
             "isolated_config": True, "trust_folder": args.trust_folder,
             "custom_instructions": "disabled" if args.no_custom_instructions else "enabled",
             "instruction_files": instructions}

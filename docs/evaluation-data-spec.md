@@ -29,8 +29,12 @@ host, model, prompt and tool set; only the search tool differs.
 | `hybrid` | Retrieval only | `keyword` and `semantic` fused by rank |
 | `agent_cf` | Agent | `agent_grep` plus this tool as a skill |
 
-`agent_cf_mcp` is the same as `agent_cf` with the tool exposed through MCP
-instead of a skill. It is optional and exists to compare the two packagings.
+`agent_cf_mcp` is the same as `agent_cf` with the tool exposed through an MCP
+server instead of a skill, plus a session-start hint that tells the agent to
+search before grepping. Since version 0.3 this is the packaging the plugin
+ships, so choose it as the agent candidate when the plugin as shipped is what
+is being judged. `agent_cf` stays as the packaging of version 0.2 and
+earlier, which the comparison on Godot used.
 
 Rules:
 

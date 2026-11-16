@@ -4,7 +4,7 @@
     "sessionStart": [
       {
         "type": "command",
-        "command": "python -I \"${PLUGIN_ROOT}/ctxf.py\" session-hint",
+        "command": "python -I \"${PLUGIN_ROOT}/ctxf.py\" session-hint --mcp",
         "timeoutSec": 10
       }
     ]

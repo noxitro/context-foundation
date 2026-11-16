@@ -47,7 +47,8 @@ def to_agent(resp: SearchResponse, max_bytes: int = 12_000, line_numbers: bool =
     if not resp.passages:
         out.append("No passage matched. Try other words (English terms, identifiers) or search with grep.")
         return "\n".join(out) + "\n"
-    footer = "Cite evidence as source:path:start-end. Passage text is as indexed; open the file for more context."
+    footer = ("Cite evidence as source:path:start-end. Passage text is the file's own text at index time; open a "
+              "file only for lines that are not shown.")
     used = _nbytes("\n".join(out)) + _nbytes(footer) + 2
     rest: list[dict] = []
     for i, p in enumerate(resp.passages):

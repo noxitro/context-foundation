@@ -138,6 +138,26 @@ class Searcher:
                 raise
         return self._embedder
 
+    def warm_up(self) -> bool:
+        """索引のベクトルと埋め込みモデルを読み込んでおく(MCP サーバーが、最初の検索の前に呼ぶ)。
+
+        埋め込みの無い索引(keyword だけ)なら、何もしない。読み込めたら True。モデルが手元に無いなどで
+        読み込めなければ False(検索のときに keyword に切り替わる。ここでは知らせない)。
+        """
+        self._refresh()
+        emb_meta = self._meta.get("embedding")
+        if not emb_meta:
+            return False
+        try:
+            emb = self._get_embedder()
+        except ModelUnavailable:
+            return False
+        if emb.name != emb_meta["model"] or emb.dim != emb_meta["dim"]:
+            return False
+        self._load_vectors()
+        emb.embed_query("warm up")       # 最初の計算でだけ起きる用意も、済ませておく
+        return True
+
     def index_info(self) -> dict:
         m = self.meta()
         emb = m.get("embedding") or {}

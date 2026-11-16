@@ -45,14 +45,15 @@ copilot plugin marketplace add noxitro/context-foundation
 copilot plugin install context-foundation@context-foundation
 ```
 
-The plugin adds a **skill** (`context-search`) that runs the command-line
-tool once per question, and a **session-start hook** that points the agent to
-the skill only in workspaces that have an index. Python dependencies (about
-200 MB) and the embedding model (about 490 MB) live outside the plugin, in a
-per-user folder that `python -I ctxf.py setup` fills once. A read-only
-**MCP server** with two tools, `search` and `status`, is available as an
-extra. The skill is the default because an MCP server's tool definitions are
-sent with every model request, whether or not the tools are used.
+The plugin adds a read-only **MCP server** with two tools, `search` and
+`status`, and a **session-start hook** that tells the agent to search before
+grepping, only in workspaces that have an index. A **skill**
+(`context-search`) that runs the same search through the command line stays
+as a fallback for when the MCP tools are not available. Python dependencies
+(about 200 MB) and the embedding model (about 490 MB) live outside the
+plugin, in a per-user folder that `python -I ctxf.py setup` fills once.
+Until version 0.2 the skill was the default; why the MCP server replaced it
+is in [docs/copilot.md](docs/copilot.md).
 
 How to install either way, the first-time setup, and what was verified are in
 [docs/copilot.md](docs/copilot.md).
@@ -125,16 +126,20 @@ for step 4:
   searching (a built-in one for general terms and one per workspace);
 - passages without content (an include block, namespace braces, forward
   declarations) are kept out of the semantic ranking;
-- the Copilot plugin and marketplace (skill and hook), the MCP server, and
-  registration from a local clone;
+- the Copilot plugin and marketplace (MCP server, hook and fallback skill),
+  and registration from a local clone;
 - an evaluation runner for the retrieval-only methods and a runner for the
   agent methods.
 
 The comparison (step 4) has been run on a public codebase (Godot) only.
 Neither candidate met the thresholds set beforehand, and the agent with this
 tool did not differ from the grep-only baseline in answer quality, time or
-cost. It has not been run on a private corpus. Everything here has been
-exercised on the synthetic corpus and on public codebases only.
+cost. After that, version 0.3 changed how the search reaches the agent (an
+MCP server instead of the skill); on a few tuning questions the agent then
+made fewer model calls and used fewer input tokens than the baseline, but the
+held-out questions have not been re-run. It has not been run on a private
+corpus. Everything here has been exercised on the synthetic corpus and on
+public codebases only.
 What has been measured so far, and what has not, is listed in
 [docs/benchmarks.md](docs/benchmarks.md) (in Japanese).
 

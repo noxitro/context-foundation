@@ -319,7 +319,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("copilot", help="Copilot CLI・アプリへの登録と解除", allow_abbrev=False)
     p.add_argument("action", choices=("register", "unregister", "status"))
-    p.add_argument("--mcp", action="store_true", help="MCP サーバーも登録する(既定はプラグインの skill と hook だけ)")
+    p.add_argument("--mcp", action="store_true", help="何もしない(0.3 から、MCP サーバーはプラグインに入っている。前の指定を受け取るだけ)")
     p.add_argument("--yes", action="store_true", help="確認を尋ねない")
     p.set_defaults(func=cmd_copilot)
 
