@@ -23,7 +23,7 @@ README の計画の手順 4(既存の手順と PoC を、同じ質問で比べ�
 | 決めること | 目安 |
 | --- | --- |
 | コーパスと、その版 | 1 つに絞る。コミットやチェンジリストの番号を控える |
-| 判定の対象にする手法 | 既定は `hybrid` と `agent_cf` |
+| 判定の対象にする手法 | 既定は `hybrid` と `agent_cf`。0.3 からのプラグインの形(MCP サーバー)を判定するなら、`hybrid` と `agent_cf_mcp`(手順 7 の `--candidate` で渡す) |
 | しきい値 | 仕様の「Decision thresholds」。変えるなら、走らせる前に |
 | 回答の採点のしかた | 既定は、`expected_answer_points` のうち回答が示した割合(0〜1) |
 | エージェントのモデルと、1 件あたりの時間の上限 | 全手法で同じにする |
@@ -159,7 +159,8 @@ python bench\agent_run.py --config <作業フォルダ> ^
   トークンが 2〜3 割変わることがある(cxxref の計測での経験)
 - cxxref の索引と比べるときは、`--method agent_grep_cxxref --cxxref
   <cxxref のフォルダ>` を足す(作業フォルダに cxxref の索引が要る)
-- MCP の形と比べるときは、`--method agent_cf_mcp` を足す
+- 0.3 からのプラグインの形(MCP サーバーと、検索を先に使うように促す始めの
+  1 文)は、`--method agent_cf_mcp`。`agent_cf` は、0.2 までの skill の形
 - 作業フォルダか、その版管理のルートまでに、指示のファイル(`AGENTS.md`・
   `CLAUDE.md`・`.github/copilot-instructions.md` など)があると、Copilot
   CLI は、それを毎回読む。中身は、どの手法の入力にも入る。道具は、見つけた

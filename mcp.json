@@ -1,0 +1,10 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+  "mcpServers": {
+    "context-foundation": {
+      "type": "stdio",
+      "command": "python",
+      "args": ["-I", "${PLUGIN_ROOT}/ctxf.py", "serve"]
+    }
+  }
+}

@@ -12,8 +12,9 @@ Visual Studio Code は、今回の確認と手順の対象にしていません�
 
 このリポジトリは、Copilot のプラグイン `context-foundation` で、リポジトリ
 自身がそのプラグインを載せた Marketplace です(`plugin.json`、
-`.github/plugin/marketplace.json`)。プラグインには、skill
-`context-search` と、セッションの始めの hook が入っています。
+`.github/plugin/marketplace.json`)。プラグインには、読み取り専用の MCP
+サーバー(`mcp.json`)、セッションの始めの hook、控えの skill
+`context-search` が入っています。
 
 | 入れ方 | 向いている人 | Python の依存の置き場 |
 | --- | --- | --- |
@@ -21,11 +22,12 @@ Visual Studio Code は、今回の確認と手順の対象にしていません�
 | リポジトリを取得して `register-copilot.bat` | 手元で試す人、道具を直す人 | 取得したフォルダの `.venv`(`setup.bat` が作る) |
 
 どちらも、Python 3.11 以上が `python` という名前で使えることが前提です。
-hook と skill は、`python` で入口の `ctxf.py` を動かします。skill は、
-skill のフォルダに置いた取り次ぎ(`skills/context-search/ctxf.py`)を
-呼び、取り次ぎが同じ入口を動かします(skill の文に「2 つ上のフォルダ」と
-書くと、エージェントがパスを組み立て間違える回があったため)。`python` が
-無い PC では、hook は何も足さず、skill は検索できません。
+MCP サーバー・hook・skill は、どれも `python` で入口の `ctxf.py` を
+動かします。skill は、skill のフォルダに置いた取り次ぎ
+(`skills/context-search/ctxf.py`)を呼び、取り次ぎが同じ入口を動かします
+(skill の文に「2 つ上のフォルダ」と書くと、エージェントがパスを組み立て
+間違える回があったため)。`python` が無い PC では、MCP サーバーは起動
+できず、hook は何も足さず、skill は検索できません。
 
 ## GitHub の Marketplace から入れる
 
@@ -136,48 +138,91 @@ copilot plugin install context-foundation@context-foundation
 - フォルダのパスに `& | < > ^ % ( ) ! "` があると、npm で入れた Copilot CLI
   (`copilot.cmd`)に正しく渡せないので、登録を断ります
 
-## 出し方: skill と hook(既定)、MCP サーバーは追加
+## 出し方: MCP サーバーと hook(既定)、skill は控え
 
 | 出し方 | 中身 | 入れ方 |
 | --- | --- | --- |
-| skill と hook(既定) | `skills/context-search`。モデルが必要なときに読み、検索の CLI を 1 回呼ぶ。hook は、索引のある作業フォルダでだけ、skill の使いどころを 1 文で知らせる | プラグイン |
-| MCP サーバー | ツールは `search` と `status` だけ。読み取り専用 | `register-copilot.bat --mcp` |
+| MCP サーバーと hook(既定) | ツールは `search` と `status` だけ。読み取り専用。hook は、索引のある作業フォルダでだけ、検索を grep より先に使うように 1 文で知らせる | プラグイン(`mcp.json` と `hooks.json`) |
+| skill(控え) | `skills/context-search`。MCP の道具が使えない場面で、検索の CLI を 1 回呼ぶ。最初の用意(setup)のしかたも、ここに書いてある | プラグイン |
 
-skill を既定にした理由:
+0.2 までは、skill と hook が既定で、MCP サーバーは追加でした。0.3 で入れ
+替えました。理由は、Godot の調整用の 7 問を 3 回ずつ流した結果です
+(Claude Haiku 5.5。数字は [benchmarks.md](benchmarks.md) の「出し方を MCP
+サーバーと始めの 1 文に変えたとき」)【実測】。
 
-- 同じ作者の cxxref の計測で、MCP サーバーの形は、ツールの定義と使い方の
-  指示を、使わない回でもモデルを呼ぶたびに送っていた(1 回あたり約 2,100
-  トークン)。skill の形では、常に送るのは説明文だけだった
-  <https://github.com/noxitro/cxxref/blob/main/docs/benchmarks.md>
-- この道具での実測(合成のコーパス、各 1 回)では、モデルを呼ぶ 1 回目の
-  入力の上乗せは、skill と始めの 1 文で +358、MCP サーバーで +365 トークン
-  と、ほとんど差が無かった。それでも、索引の無い作業フォルダでは skill の
-  上乗せが説明文だけになること、結果の読み方を skill の本文に書けること、
-  cxxref と同じ形にそろうことから、skill にした
+- skill の形では、モデルが skill を読まない回が残った(21 回のうち 5 回)。
+  読んだ回も、skill を読む分だけモデルの呼び出しが 1 回増え、検索の
+  たびに CLI を起動して 1.5〜2 秒かかった。既存の手順(grep だけ)より、
+  速くも安くもならなかった
+- MCP の形に、始めの 1 文を足すと、21 回すべてで検索が使われた。モデルの
+  呼び出しは中央値で 5 回から 2 回に、入力トークンは半分以下になり、時間は
+  10%、費用は 14% 下がった
+- MCP の道具を置くだけでは、使われなかった(17 回のうち 0 回)。モデルは、
+  覚えている識別子で grep から始めた。そこで、始めの 1 文には「検索を
+  grep より先に」と書いている
 
-skill の形の弱み(実測):
+MCP の形で気を付けること:
+
+- 道具の定義は、使わない回でも、モデルを呼ぶたびに送られる。索引の無い
+  作業フォルダでも送られる。合成のコーパスでの実測では、モデルを呼ぶ
+  1 回目の入力の上乗せは、skill と始めの 1 文で +358、MCP サーバーで +365
+  トークンだった(0.2 のときの計測)
+- サーバーは、セッションごとに起動したままになる。索引のある作業
+  フォルダでは、起動のときに埋め込みモデルとベクトルを読み込む。最初の
+  検索は、読み込みを待つと 1.2 秒、先に読み込んであれば 0.03 秒だった。
+  持ち続けるメモリは、約 7 万 passage の索引で 0.9 GB ほど【実測】。
+  セッションをたくさん開く人は、設定の `[search] preload = false` で、
+  最初の検索まで読み込みを遅らせられる
+- Copilot CLI は、プラグインに入っている MCP サーバーを、プラグインの
+  フォルダを作業フォルダにして起動する。利用者の作業フォルダは、環境変数
+  `COPILOT_SESSION_CWD` で渡る(MCP の roots は空で返る)。サーバーは、
+  その場所から `.cf` を探す【実測。公式文書には、作業フォルダの記載が無い】
+- 道具の名前は、Copilot CLI では `context-foundation-search` と
+  `context-foundation-status` になる【実測】
+- 最初の用意(`ctxf.py setup`)が済んでいない PC では、サーバーは道具を
+  1 つも出さずに起動したままになる。始めの 1 文が、skill を読めば用意の
+  しかたが分かる、と知らせる
+- リポジトリを取得して使う人の `register-copilot.bat --mcp` は、要らなく
+  なった(指定しても、何もしない)
+
+skill の形(控え)の弱み【実測】:
 
 - 検索のたびに、モデルの呼び出しが 1 回増える(skill を読む回)
 - 検索のたびに CLI を起動するので、1 回に 1.5〜2 秒かかる(約 7 万 passage
-  の索引で、中央値 2.0 秒)。MCP サーバーは起動したままなので、2 回目から
-  は 10〜30 ミリ秒([design.md](design.md) の「規模と時間」)
+  の索引で、中央値 2.0 秒)
 - shell の許可が要る(下の「許可」)
-- skill を読むかどうかはモデルが決める。Claude Haiku 5.5 は、説明文だけ
-  では読まずに grep から始めた。始めの 1 文を足すと読んだ。MCP のツールは、
-  何も足さなくても呼ばれた
+- skill を読むかどうかは、モデルが決める
 
 ## 許可
 
-skill は、shell で `python` を起動します。入口の `ctxf.py` は作業フォルダの
+MCP の道具は、対話のセッションでは、最初に呼ぶときに許可を尋ねられます
+(`copilot help permissions`)【公式】。確認のできない実行(`copilot -p`)
+では、`--allow-tool context-foundation` で通りました【実測】。shell の
+許可は要りません。
+
+控えの skill は、shell で `python` を起動します。入口の `ctxf.py` は作業フォルダの
 外にあるので、対話のセッションでは、最初の実行のときに許可を尋ねられます。
 確認のできない実行(`copilot -p`)では、`--allow-tool "shell(python:*)"`
 で通りました【実測】。この指定は、`python` で始まる命令をすべて通します。
 計測では、書き込みを断る指定(`--deny-tool write`)と組み合わせています。
 
-MCP サーバーの形では、shell の許可は要りません。ツールの許可は
-`--allow-tool context-foundation` です。
-
 ## 確かめたこと
+
+### 0.3(MCP サーバーを同梱した形)
+
+- 空の設定フォルダ(`COPILOT_HOME`)に、手元のフォルダからプラグインを
+  入れ、Godot の索引のある作業フォルダで `copilot -p` を 1 回動かした
+  (BYOK の Claude Haiku 5.5)。`copilot mcp list` に、プラグインの
+  サーバーとして `context-foundation` が出た。セッションの始めの hook が
+  1 文を足し、モデルが `context-foundation-search` を呼び、8 件の passage
+  が返り、場所を根拠に挙げて答えた【実測】
+- 直す前は、同じ流れで、検索が「索引が無い」と返った。サーバーの作業
+  フォルダが、プラグインのフォルダだったため。上の「気を付けること」の
+  とおりに直した【実測】
+- MCP サーバーの形での時間と費用は、Godot の調整用の 7 問で測った
+  ([benchmarks.md](benchmarks.md))。評価用の 29 問では、測っていない
+- GitHub の Marketplace から入れた形(ファイルが写される形)では、0.3 を
+  確かめていない【未確認】
 
 ### 0.2(プラグインの形)
 
@@ -238,7 +283,8 @@ Haiku 5.5、合成のコーパス、毎回空の設定フォルダ)。
 
 ## 確かめていないこと
 
-- アプリでの動作(上の「アプリ」)
+- アプリでの動作(上の「アプリ」)。プラグインの MCP サーバーが、アプリでも
+  同じ環境変数で作業フォルダを受け取るか
 - 対話のセッションでの動作(確かめたのは `copilot -p`)
 - Claude Haiku 5.5 のほかのモデルで、skill が読まれるか
 - `python` が無い PC、Microsoft Store 版の Python での動作
@@ -255,7 +301,7 @@ Haiku 5.5、合成のコーパス、毎回空の設定フォルダ)。
   "name": "context-foundation",
   "source": { "source": "github", "repo": "noxitro/context-foundation" },
   "description": "Find code and design docs by meaning and keywords, locally.",
-  "version": "0.2.2"
+  "version": "0.3.0"
 }
 ```
 

@@ -40,7 +40,13 @@ def test_plugin_manifest_marketplace_and_hook_agree():
     assert entry["name"] == plugin["name"] == "context-foundation" and entry["source"] == "./"
     assert plugin["version"] == entry["version"] == project["version"] == __version__   # 版をそろえる
     (hook,) = hooks["hooks"]["sessionStart"]
-    assert hook["command"] == 'python -I "${PLUGIN_ROOT}/ctxf.py" session-hint' and hook["timeoutSec"] <= 10
+    assert hook["command"] == 'python -I "${PLUGIN_ROOT}/ctxf.py" session-hint --mcp' and hook["timeoutSec"] <= 10
+    # Agent Plugins 1.0: MCP サーバーの定義は、ルートの mcp.json(場所は固定)。入口 ctxf.py を通して起動する
+    mcp = json.loads((REPO / "mcp.json").read_text(encoding="utf-8"))
+    assert mcp["$schema"] == "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json"
+    ((name, server),) = mcp["mcpServers"].items()
+    assert name == "context-foundation" and server["type"] == "stdio" and server["command"] == "python"
+    assert server["args"] == ["-I", "${PLUGIN_ROOT}/ctxf.py", "serve"]
     # Agent Plugins 1.0: skill は skills/ の下だけから読まれる
     assert (REPO / "skills" / "context-search" / "SKILL.md").is_file()
 
@@ -208,6 +214,24 @@ def test_register_stops_without_touching_a_marketplace_from_elsewhere(monkeypatc
     assert not any(a[:3] in (("plugin", "marketplace", "add"), ("plugin", "marketplace", "remove")) for a in calls)
 
 
-def test_mcp_command_goes_through_the_launcher():
-    from context_foundation.copilot_reg import LAUNCHER, mcp_command
-    assert mcp_command()[1:] == ["-I", str(LAUNCHER), "--run", "serve"]
+def test_mcp_server_stays_up_without_tools_when_the_tool_is_not_set_up(tmp_path):
+    """用意(setup)の前に MCP サーバーとして起動されても、落ちずに挨拶に答え、道具は 1 つも出さない。"""
+    plugin = tmp_path / "plugin"
+    plugin.mkdir()
+    (plugin / "ctxf.py").write_bytes((REPO / "ctxf.py").read_bytes())       # 隣に .venv の無い写し
+    (plugin / "pyproject.toml").write_bytes((REPO / "pyproject.toml").read_bytes())
+    env = {"CF_HOME": str(tmp_path / "empty-home"), "SYSTEMROOT": __import__("os").environ.get("SYSTEMROOT", "")}
+    lines = [{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-06-18"}},
+             {"jsonrpc": "2.0", "method": "notifications/initialized"},
+             {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
+             {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "search", "arguments": {}}}]
+    r = subprocess.run([sys.executable, "-I", str(plugin / "ctxf.py"), "serve"], capture_output=True,
+                       input="".join(json.dumps(m) + "\n" for m in lines) + "not json" + "\n", text=True,
+                       encoding="utf-8", env=env, timeout=60)
+    assert r.returncode == 0 and r.stderr == ""
+    replies = [json.loads(line) for line in r.stdout.splitlines()]
+    assert [m["id"] for m in replies] == [1, 2, 3]                 # 通知と、壊れた行には答えない
+    assert replies[0]["result"]["protocolVersion"] == "2025-06-18"
+    assert replies[0]["result"]["serverInfo"]["name"] == "context-foundation"
+    assert replies[1]["result"] == {"tools": []}
+    assert "not set up" in replies[2]["error"]["message"]

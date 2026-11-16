@@ -133,16 +133,20 @@ def test_every_method_gets_the_same_tools_and_permissions(bench, tmp_path, metho
     assert [cmd[i + 1] for i, c in enumerate(cmd) if c == "--add-dir"][:3] == [str(r) for r in roots]
 
 
-def test_the_skill_method_gets_the_session_hint_hook(bench):
-    """agent_cf は、プラグインと同じ入口(ctxf.py session-hint)を sessionStart の hook に置く。--no-hint で外れる。"""
+def test_the_skill_and_mcp_methods_get_the_session_hint_hook(bench):
+    """agent_cf と agent_cf_mcp は、プラグインと同じ入口(ctxf.py session-hint)を sessionStart の hook に置く。
+    MCP の形は、検索の道具を先に呼ぶ 1 文(--mcp)。--no-hint で外れる。"""
     hook = bench.hooks_for(Namespace(method="agent_cf", no_hint=False, cxxref=None))["hooks"]["sessionStart"][0]
-    assert (hook["exec"], hook["args"][0], hook["args"][2]) == ("python", "-I", "session-hint")
+    assert (hook["exec"], hook["args"][0], hook["args"][2:]) == ("python", "-I", ["session-hint"])
     assert Path(hook["args"][1]) == REPO / "ctxf.py" and Path(hook["args"][1]).is_file()
+    hook = bench.hooks_for(Namespace(method="agent_cf_mcp", no_hint=False, cxxref=None))["hooks"]["sessionStart"][0]
+    assert hook["args"][2:] == ["session-hint", "--mcp"] and Path(hook["args"][1]) == REPO / "ctxf.py"
+    # プラグインは MCP サーバーも入れるので、プラグインの hook は MCP の形の 1 文を使う
     plugin = json.loads((REPO / "com.github.copilot" / "hooks" / "hooks.json").read_text(encoding="utf-8"))
-    assert plugin["hooks"]["sessionStart"][0]["command"].endswith('ctxf.py" session-hint')
-    assert bench.hooks_for(Namespace(method="agent_cf", no_hint=True, cxxref=None)) is None
-    for method in ("agent_grep", "agent_cf_mcp"):
-        assert bench.hooks_for(Namespace(method=method, no_hint=False, cxxref=None)) is None
+    assert plugin["hooks"]["sessionStart"][0]["command"].endswith('ctxf.py" session-hint --mcp')
+    for method in ("agent_cf", "agent_cf_mcp"):
+        assert bench.hooks_for(Namespace(method=method, no_hint=True, cxxref=None)) is None
+    assert bench.hooks_for(Namespace(method="agent_grep", no_hint=False, cxxref=None)) is None
 
 
 @pytest.mark.parametrize("method", ["agent_grep", "agent_cf", "agent_cf_mcp"])

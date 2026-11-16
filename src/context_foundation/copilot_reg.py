@@ -8,15 +8,16 @@
 
 手元のフォルダの Marketplace から入れたプラグインは、写されずに、そのフォルダから直接読まれる
 (Copilot CLI 1.0.112 で実測。「nothing was copied」と出る)。そのため、このフォルダの .venv を
-そのまま使い、フォルダを更新すれば次のセッションから新しい中身で動く。プラグインには、skill
-`context-search` と、索引のある作業フォルダでだけ skill の使いどころを 1 文で知らせる hook が入る。
+そのまま使い、フォルダを更新すれば次のセッションから新しい中身で動く。プラグインには、読み取り専用の
+MCP サーバー(mcp.json)、索引のある作業フォルダでだけ検索の使いどころを 1 文で知らせる hook、MCP の
+道具が使えないときのための skill `context-search` が入る。
 
 GitHub から入れる人(アプリの Customize など)は、この登録を使わない(docs/copilot.md)。同じ名前の
 Marketplace やプラグインが、ほかの場所(GitHub・別のフォルダ)から入っているときは、触らずに知らせて止まる。
 
 0.1 の登録の形(`copilot skill add` と hooks フォルダのファイル)が残っていれば、確認のうえで外す。
-`--mcp` を付けると、読み取り専用の MCP サーバーも `copilot mcp add` で登録する(mcp-config.json)。
-MCP の形は、ツールの定義を使わない回でも毎回モデルに送るので、既定にはしていない。
+0.2 までの `--mcp` は、MCP サーバーを利用者の設定(mcp-config.json)に別に登録していた。0.3 からは
+プラグインに入っているので、`--mcp` は何もしない(受け取るだけ)。前に登録したものは、解除のときに外す。
 """
 from __future__ import annotations
 
@@ -154,11 +155,6 @@ def mcp_registered(exe: str) -> tuple[bool, str]:
     return code == 0, out.strip()
 
 
-def mcp_command() -> list[str]:
-    """MCP サーバーを起動するコマンド(入口 ctxf.py を通すので、.venv でも利用者ごとの置き場の仮想環境でも動く)。"""
-    return [sys.executable, "-I", str(LAUNCHER), "--run", "serve"]
-
-
 def _confirm(question: str, assume_yes: bool) -> bool:
     if assume_yes:
         return True
@@ -208,9 +204,9 @@ def _register(exe: str, mp: str, args) -> int:
     legacy = legacy_registrations(exe)
     print("Copilot CLI の利用者設定に、次のものを登録します(アプリも同じ設定を使います):")
     print(f"  Marketplace {mp}: {REPO_ROOT}(このフォルダ。写さずに、ここから直接読まれます)")
-    print(f"  プラグイン {PLUGIN_NAME}@{mp}(skill {SKILL_NAME} と、セッションの始めの hook)")
+    print(f"  プラグイン {PLUGIN_NAME}@{mp}(MCP サーバー {MCP_NAME}、セッションの始めの hook、skill {SKILL_NAME})")
     if args.mcp:
-        print(f"  MCP サーバー {MCP_NAME}: {' '.join(mcp_command())}")
+        print("  (--mcp は要らなくなりました。MCP サーバーは、プラグインに入っています)")
     for what in legacy:
         print(f"  外すもの: {what}")
     if not _confirm("登録しますか", args.yes):
@@ -232,13 +228,6 @@ def _register(exe: str, mp: str, args) -> int:
             return 1
     elif not p.get("enabled"):
         _run(exe, "plugin", "enable", PLUGIN_NAME)
-    if args.mcp:
-        _run(exe, "mcp", "remove", MCP_NAME)
-        code, out, err = _run(exe, "mcp", "add", MCP_NAME, "--", *mcp_command())
-        print((out + err).strip())
-        if code != 0:
-            sys.stderr.write("MCP サーバーの登録に失敗しました\n")
-            return 1
     print()
     show_status(exe, mp)
     print("\n使うには: 索引を作った作業フォルダで Copilot CLI(かアプリ)の新しいセッションを始めます。"

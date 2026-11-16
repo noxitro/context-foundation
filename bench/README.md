@@ -21,8 +21,8 @@
 | --- | --- |
 | `agent_grep` | 無し(既存の手順) |
 | `agent_grep_cxxref` | cxxref の skill と hook(`--cxxref` で場所を渡す) |
-| `agent_cf` | この道具の skill と、セッションの始めの 1 文(hook) |
-| `agent_cf_mcp` | この道具の MCP サーバー |
+| `agent_cf` | この道具の skill と、セッションの始めの 1 文(hook)。0.2 までの既定の形 |
+| `agent_cf_mcp` | この道具の MCP サーバーと、検索を先に使うように促す始めの 1 文(hook)。0.3 からの、プラグインの既定の形 |
 
 - 道具の一式は `view`・`grep`・`glob`・`skill` と shell です。道具の定義は、
   使わない回でもモデルを呼ぶたびに送られるので、手法によって一式が違うと、
@@ -83,7 +83,7 @@ python bench\agent_run.py --config <作業フォルダ> --cases cases.jsonl ^
 | `--model`、`--provider` | モデルと提供元(下の「モデル」) |
 | `--time-limit` | 1 回の上限(秒。既定 600) |
 | `--price KIND=USD` | 100 万トークンあたりの単価(費用の見積もり用) |
-| `--no-hint` | `agent_cf` で、セッションの始めの 1 文を足さない |
+| `--no-hint` | `agent_cf` と `agent_cf_mcp` で、セッションの始めの 1 文を足さない |
 | `--no-custom-instructions` | 指示のファイル(`AGENTS.md` など)を、どの手法でも読ませない |
 | `--split` | 使う質問(既定 `eval`) |
 
