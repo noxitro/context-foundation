@@ -171,7 +171,48 @@ the runtime folder, and downloads the embedding model (about 490 MB from Hugging
 --no-model skips the model (keyword-only search). Ask the user before running it.
 """
 IMPORT_CHECK = "import numpy, onnxruntime, tokenizers, tree_sitter, jsonschema"
-LOCK_STALE_SECONDS = 3600
+LOCK_STALE_SECONDS = 6 * 3600        # プロセスの生死が分からないときに、古いとみなすまでの時間
+
+
+def _pid_alive(pid):
+    """そのプロセスが動いているか。分からなければ None。"""
+    if pid <= 0:
+        return False
+    if os.name == "nt":
+        try:
+            import ctypes
+            k32 = ctypes.windll.kernel32
+            h = k32.OpenProcess(0x1000, False, pid)       # PROCESS_QUERY_LIMITED_INFORMATION
+            if not h:
+                return False
+            try:
+                code = ctypes.c_ulong()
+                if not k32.GetExitCodeProcess(h, ctypes.byref(code)):
+                    return None
+                return code.value == 259                  # STILL_ACTIVE
+            finally:
+                k32.CloseHandle(h)
+        except (AttributeError, OSError):
+            return None
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except OSError:
+        return None
+
+
+def _lock_is_stale(lock):
+    try:
+        with open(lock, encoding="ascii", errors="replace") as f:
+            pid = int(f.read().strip() or "0")
+    except (OSError, ValueError):
+        pid = 0
+    alive = _pid_alive(pid)
+    if alive is False:
+        return True
+    return alive is None and time.time() - os.path.getmtime(lock) > LOCK_STALE_SECONDS
 
 
 def _write_stamp(deps):
@@ -203,11 +244,12 @@ def setup(argv):
     os.makedirs(runtime_dir(), exist_ok=True)
     lock = os.path.join(runtime_dir(), "setup.lock")
     try:
-        if os.path.exists(lock) and time.time() - os.path.getmtime(lock) > LOCK_STALE_SECONDS:
-            os.remove(lock)                  # 前の setup が途中で止まったときの残り
+        if os.path.exists(lock) and _lock_is_stale(lock):
+            os.remove(lock)                  # 前の setup が途中で止まった(打ち切られた)ときの残り
         fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
     except FileExistsError:
-        _say("Another setup is running (" + lock + "). Wait for it to finish, then run setup again.")
+        _say("Another setup is running (" + lock + "). Wait for it to finish, then run setup again. "
+             "If no setup is running, delete that file.")
         return 3
     try:
         os.write(fd, str(os.getpid()).encode("ascii"))

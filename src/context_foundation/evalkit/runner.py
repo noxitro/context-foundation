@@ -25,6 +25,24 @@ from .summary import DEFAULT_THRESHOLDS, build_summary, to_markdown
 DATA_HANDLING = "Source content stays on the local machine. Embeddings are computed locally."
 
 
+def glossary_info(searcher) -> dict | None:
+    """用語の対応表を使ったか(既定のもの・作業フォルダのものと、その中身のハッシュ)。"""
+    import hashlib
+    g = getattr(searcher, "_glossary", None)
+    if g is None:
+        return None
+    files = []
+    for src in g.sources:
+        if src == "builtin":
+            continue
+        try:
+            digest = hashlib.sha256(Path(src).read_bytes()).hexdigest()[:16]
+        except OSError:
+            digest = None
+        files.append({"name": Path(src).name, "sha256": digest})
+    return {"builtin": "builtin" in g.sources, "workspace_files": files, "skipped_lines": len(g.problems)}
+
+
 def run_metadata(run_id: str, searcher, methods: list[str], top_k: int, corpus_revision: str, search_cfg,
                  candidates: list[str]) -> dict:
     st = searcher.status()
@@ -37,15 +55,18 @@ def run_metadata(run_id: str, searcher, methods: list[str], top_k: int, corpus_r
                         "rrf_k": search_cfg.rrf_k, "hybrid_weighting": search_cfg.hybrid_weighting,
                         "bm25_weights": {"body": search_cfg.weight_body, "symbols": search_cfg.weight_symbols,
                                          "path": search_cfg.weight_path},
-                        "reranker": search_cfg.reranker or None} for m in methods},
+                        "reranker": search_cfg.reranker or None,
+                        "glossary": glossary_info(searcher)} for m in methods},
         "corpus": {"files": stats["files"], "lines": stats["lines"], "chunks": stats["chunks"],
                    "sources": [{"source_id": s["id"], "files": s["files"], "lines": s["lines"], "chunks": s["chunks"]}
                                for s in st["sources"]]},
         "index": {"size_bytes": st["index_bytes"], "build_seconds": tm.get("total_seconds", 0.0),
                   "ingest_chunk_seconds": tm.get("ingest_chunk_seconds", 0.0),
                   "embed_seconds": tm.get("embed_seconds", 0.0),
-                  # 差分の更新はまだ無い(作り直しの方式)ので、更新の費用は、全体を作り直す時間
-                  "update_seconds": tm.get("total_seconds", 0.0), "update_mode": "full_rebuild",
+                  # 最後の索引づくりの時間と、使い回した埋め込みの数(差分更新なら reused が多い)
+                  "update_seconds": tm.get("total_seconds", 0.0),
+                  "update_mode": "incremental" if tm.get("reused_passages") else "full_rebuild",
+                  "embedded_passages": tm.get("embedded_passages"), "reused_passages": tm.get("reused_passages"),
                   "peak_memory_bytes": tm.get("peak_memory_bytes"),
                   "syntax_fallback_ratio": stats.get("syntax_fallback_ratio", 0.0),
                   "created_at": st["created_at"],

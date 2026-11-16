@@ -198,6 +198,9 @@ class Searcher:
         q = query + " " + " ".join(added) if added else query
         if added:
             notes.append("added terms from the glossary: " + " ".join(added))
+        if self._glossary and self._glossary.problems:
+            notes.append("glossary lines skipped (need <term><TAB><words>): "
+                         + ", ".join(self._glossary.problems[:5]))
 
         effective = requested
         qvec = None
@@ -251,10 +254,13 @@ class Searcher:
                 if c.hybrid_weighting == "coverage":
                     # 用語の対応表で語を足したときは、足した語と元の質問の英字の語で割合を見る(日本語の質問の
                     # 2 文字の組は、英語のコードにはほとんど無いので、それで割合を下げると、足した語が効かない)
-                    cov_tokens = query_tokens(q)
-                    if added:
-                        cov_tokens = [t for t in cov_tokens if t.isascii()] or cov_tokens
-                    w_kw = keyword_coverage(db, cov_tokens) ** 0.5
+                    # ただし日本語の文書が主の索引では、足した英語の語が無く、元の語のほうがよく当たるので、
+                    # 元の質問の語での割合との大きい方を使う(対応表が無いときと同じ重みを下回らない)
+                    cov = keyword_coverage(db, query_tokens(query))
+                    ascii_tokens = [t for t in query_tokens(q) if t.isascii()]
+                    if added and ascii_tokens:
+                        cov = max(cov, keyword_coverage(db, ascii_tokens))
+                    w_kw = cov ** 0.5
                 timings["keyword_weight"] = round(w_kw, 3)
                 ranked = rrf([[cid for cid, _ in kw], [cid for cid, _ in sem]], c.rrf_k, [w_kw, 1.0])
 

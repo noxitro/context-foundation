@@ -115,7 +115,8 @@ for step 4:
   for Markdown, keyword, semantic and hybrid search over a single SQLite
   file;
 - incremental index updates that reuse the embeddings of unchanged passages
-  and give the same index as a full rebuild;
+  (the passages match a full rebuild; on a public codebase the vectors and the
+  top-10 rankings matched too, though bit-exact vectors are not guaranteed);
 - a glossary that adds English terms to a Japanese-only question before
   searching (a built-in one for general terms and one per workspace);
 - the Copilot plugin and marketplace (skill and hook), the MCP server, and

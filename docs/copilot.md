@@ -84,7 +84,8 @@ python -I "<プラグインのフォルダ>\ctxf.py" setup
   検索になります
 - `setup --help` は、何も取得せずに説明だけを出します
 - 途中で止まった仮想環境は、次の `setup` で作り直します。2 つの `setup`
-  が同時に走らないよう、排他します
+  が同時に走らないよう、排他します(前の `setup` のプロセスが終わっていれば、
+  打ち切られたときの残りとみなして引き継ぎます)
 - 使われる python と置き場は `python -I "<…>\ctxf.py" where` で見られます
 
 ### 索引を作る
@@ -109,6 +110,9 @@ python -I "<プラグインのフォルダ>\ctxf.py" index
 2. `index.bat`: 作業フォルダと検索したいフォルダを尋ねて、索引を作る
 3. `register-copilot.bat`: このフォルダを手元の Marketplace として足し、
    プラグインを入れる(中身は `ctxf copilot register`)
+
+リポジトリを更新して依存の一覧(`pyproject.toml`)が変わったときは、
+`setup.bat` をもう一度実行します(`.venv` の依存は自動では確かめません)。
 
 ```text
 copilot plugin marketplace add <このフォルダ>
