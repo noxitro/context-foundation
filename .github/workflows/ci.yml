@@ -69,7 +69,8 @@ jobs:
       # The tests use a stand-in for the embedding model (tests/conftest.py).
       # The few tests marked `model` (tests/test_model.py) use the real model
       # and are skipped when it is not on the machine. This job downloads no
-      # model, so they are skipped here; smoke.yml runs the real model.
+      # model, so they are skipped here; smoke.yml and the lowest-versions
+      # job run them with the real model.
       - name: Run tests
         run: python -m pytest
 
@@ -92,7 +93,7 @@ jobs:
 
       # Every dependency at the lower bound that pyproject.toml declares, so
       # that a bound that is no longer true shows up here. Python 3.11, since
-      # the lowest numpy (2.0.0) has no build for newer Pythons.
+      # the lowest numpy (2.0.0) has no build for Python 3.13 and later.
       - name: Pin the dependencies to their lowest declared versions
         shell: bash
         run: |
@@ -105,6 +106,28 @@ jobs:
 
       - name: Run tests
         run: python -m pytest
+
+      # The other tests use a stand-in for the model, so onnxruntime,
+      # tokenizers and huggingface_hub at their lowest versions are only
+      # used here: fetch the real model with them and run the tests marked
+      # `model`. The model is cached like in smoke.yml (same folder and key).
+      - name: Point the per-user folder at a temporary place
+        shell: bash
+        run: echo "CF_HOME=${RUNNER_TEMP}/cf-home" >> "$GITHUB_ENV"
+
+      - name: Cache the embedding model
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/cf-home/models
+          key: cf-model-${{ runner.os }}-${{ hashFiles('src/context_foundation/embed.py') }}
+
+      # A skipped test would mean that the model is missing: fail then.
+      - name: Fetch the model and run the tests that use it
+        shell: bash
+        run: |
+          python -m context_foundation.cli model download
+          python -m pytest -m model -rs | tee "$RUNNER_TEMP/model-tests.txt"
+          ! grep -q SKIPPED "$RUNNER_TEMP/model-tests.txt"
 
   package:
     name: Build and use the wheel and the sdist
@@ -136,6 +159,7 @@ jobs:
       # The installed package alone, outside this checkout: index and search
       # the test corpus with the stand-in embedding model.
       - name: Install the wheel in a clean virtual environment and use it
+        shell: bash
         env:
           CF_TEST_EMBEDDER: hash
           CF_HOME: ${{ runner.temp }}/cf-home

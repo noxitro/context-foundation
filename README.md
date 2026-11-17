@@ -166,8 +166,8 @@ configuration, ingest rules, resuming an interrupted build, an output that
 fits its budget, clearer setup failures). The changes, and what to do
 after updating, are in [CHANGELOG.md](CHANGELOG.md) (in Japanese). They were
 run by hand on Windows with Python 3.13; other systems and Python versions
-are covered by the CI tests only, and version 0.4.0 has not been tried in
-Copilot yet.
+are covered by the CI tests (and the tests were also run on Ubuntu under WSL
+with Python 3.12), and version 0.4.0 has not been tried in Copilot yet.
 
 ## Supported environments
 

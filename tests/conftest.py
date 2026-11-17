@@ -31,6 +31,7 @@ def _hash_embedder(monkeypatch):
     """既定では、テスト用の埋め込みを使う(モデルの実物を使うテストは、自分で外す)。"""
     monkeypatch.setenv("CF_TEST_EMBEDDER", "hash")
     monkeypatch.delenv("CF_CONFIG", raising=False)
+    monkeypatch.delenv("COPILOT_SESSION_CWD", raising=False)   # MCP サーバーが作業フォルダを探す変数(Copilot のシェルで入る)
 
 
 def workspace_above(path: Path) -> Path | None:

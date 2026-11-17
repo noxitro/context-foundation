@@ -230,7 +230,7 @@ def test_generated_check_stays_fast_on_a_long_run_of_separators(text):
     t0 = time.perf_counter()
     assert not looks_generated(text, "a.cpp")
     assert not looks_generated(text, "a.py")
-    assert time.perf_counter() - t0 < 2.0
+    assert time.perf_counter() - t0 < 0.25          # 直したものは 1 ケース数ミリ秒。片方の正規表現を戻すと 0.5 秒を超える
 
 
 def test_generated_check_in_the_walk(tmp_path):

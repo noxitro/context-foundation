@@ -188,13 +188,16 @@ def repair_command(kind=""):
 
 NEW_SESSION_NOTE = ("A Copilot session that is already running does not get the search tool after setup: "
                     "start a new session (the context-search skill works meanwhile).")
+# 隣の .venv が壊れているときは、控えの skill も同じ python で動くので、勧めない
+LOCAL_VENV_NEW_SESSION_NOTE = ("A Copilot session that is already running does not get the search tool after setup: "
+                               "start a new session.")
 
 
 def not_ready_message(reason, kind=""):
     return ("context-foundation is " + reason + " on this PC. Search with grep meanwhile. To set it up, ask the user "
             "first (it downloads " + SETUP_SIZE_NOTE + " and takes a few minutes), then run: " + repair_command(kind)
             + "\n"
-            + NEW_SESSION_NOTE + "\n")
+            + (LOCAL_VENV_NEW_SESSION_NOTE if kind == LOCAL_VENV else NEW_SESSION_NOTE) + "\n")
 
 
 SESSION_HINT = (
@@ -336,6 +339,16 @@ def _write_stamp(deps, gpu=False):
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump({"deps_hash": deps_hash(deps), "dependencies": deps, "gpu": bool(gpu),
                    "python": sys.version.split()[0]}, f, ensure_ascii=False, indent=1)
+    os.replace(tmp, _stamp_path())
+
+
+def _keep_only_gpu_choice(gpu):
+    """覚え書きを「用意が済んでいない」(deps_hash なし)にして、--gpu の選び方だけを残す。仮想環境を作り直す
+    途中で pip が失敗したり止められたりしても、次の setup が選び方を引き継げるように。"""
+    os.makedirs(runtime_dir(), exist_ok=True)
+    tmp = _stamp_path() + ".tmp-%d" % os.getpid()
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump({"gpu": bool(gpu)}, f)
     os.replace(tmp, _stamp_path())
 
 
@@ -572,7 +585,7 @@ def _setup(argv):
         if py is None:
             _say("  creating the virtual environment ...")
             try:
-                os.remove(_stamp_path())
+                _keep_only_gpu_choice(gpu)
             except OSError:
                 pass
             r = subprocess.call([sys.executable, "-m", "venv", "--clear", venv])
@@ -809,6 +822,17 @@ def _import_failed(e):
     return VENV_IMPORT_FAILED
 
 
+
+def _wait(child):
+    """子の終わりを待って、終了コードを返す。Windows の wait() は、時間を決めないと Ctrl+C で割り込めない
+    (子が終わるまで KeyboardInterrupt が上がらない)ので、短い間隔で待ち直す。"""
+    while True:
+        try:
+            return child.wait(timeout=0.25)
+        except subprocess.TimeoutExpired:
+            pass
+
+
 def main():
     for stream in (sys.stdout, sys.stderr):
         try:
@@ -840,12 +864,12 @@ def main():
         sys.stdout.write("context-foundation could not start (" + str(e) + "). Search with grep meanwhile.\n")
         return 4
     try:
-        rc = child.wait()
+        rc = _wait(child)
     except KeyboardInterrupt:
         # Ctrl+C は子にも届いている。子を止めずに後始末(途中までの埋め込みを書き残すなど)を待ち、子の終了コード
         # (130)を返す。2 回目の Ctrl+C では、子を残さないように止めてから上げる
         try:
-            rc = child.wait()
+            rc = _wait(child)
         except KeyboardInterrupt:
             child.kill()
             child.wait()

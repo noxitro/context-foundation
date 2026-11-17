@@ -15,19 +15,33 @@ from pathlib import Path
 PYPROJECT = Path(__file__).resolve().parents[2] / "pyproject.toml"
 
 
+class NoFloor(ValueError):
+    """版の指定はあるのに、下限を決められない(この一覧から黙って落とさないため)。"""
+
+
 def lowest(requirement: str) -> str | None:
-    """'numpy>=2.0,<3' → 'numpy==2.0'。下限が無ければ None。"""
-    m = re.match(r"\s*([A-Za-z0-9_.-]+)\s*(.*)$", requirement)
+    """'numpy>=2.0,<3' → 'numpy==2.0'、'x~=1.2' と 'x==1.2' → 'x==1.2'。版の指定が無ければ None。
+    版の指定があるのに下限を決められない('x>1.0'、'x<2' など)ときは NoFloor。"""
+    m = re.match(r"\s*([A-Za-z0-9_.-]+)\s*([^;]*)", requirement)       # ; から後ろは環境の印(版の指定ではない)
     if not m:
         return None
-    floor = re.search(r">=\s*([0-9][0-9A-Za-z.]*)", m.group(2))
-    return f"{m.group(1)}=={floor.group(1)}" if floor else None
+    spec = m.group(2).strip()
+    if not spec:
+        return None
+    floor = re.search(r"(?:>=|~=|==)\s*([0-9][0-9A-Za-z.]*)", spec)
+    if not floor:
+        raise NoFloor(requirement)
+    return f"{m.group(1)}=={floor.group(1)}"
 
 
 def main() -> int:
     deps = tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))["project"]["dependencies"]
     for d in deps:
-        pin = lowest(d)
+        try:
+            pin = lowest(d)
+        except NoFloor:
+            sys.stderr.write(f"cannot pin the lowest version of {d!r}: write its lower bound with >=\n")
+            return 1
         if pin:
             sys.stdout.write(pin + "\n")
     return 0

@@ -70,7 +70,7 @@ class FakeChild:
         self.started.append((args, kwargs))
         return self
 
-    def wait(self):
+    def wait(self, timeout=None):
         r = self.results.pop(0)
         if isinstance(r, BaseException):
             raise r
@@ -480,6 +480,40 @@ def test_recreating_a_broken_venv_keeps_the_gpu_choice(monkeypatch, tmp_path, ca
     assert "installed (onnxruntime-directml, for the GPU)" in out
 
 
+def test_a_rebuild_that_stops_midway_still_keeps_the_gpu_choice(monkeypatch, tmp_path):
+    """作り直しの途中で pip が止まっても(Ctrl+C やネットワークの失敗)、次の setup は --gpu の選び方を引き継ぐ。"""
+    ctxf, made = _broken_venv_setup(monkeypatch, tmp_path, loads_after_rebuild=True, gpu=True)
+
+    first = ctxf._install
+
+    def stopped(py, deps, stamp, gpu):
+        if not made:                                   # 作り直す前は、ふつうに入れて「読めない」に気づく
+            return first(py, deps, stamp, gpu)
+        raise KeyboardInterrupt                        # 作り直した後の pip を止める
+
+    monkeypatch.setattr(ctxf, "_install", stopped)
+    with pytest.raises(KeyboardInterrupt):
+        ctxf._setup(["--no-model"])
+    stamp = ctxf._read_stamp()
+    assert len(made) == 1 and not stamp.get("deps_hash") and ctxf.wants_gpu([], stamp) is True
+
+
+def test_the_launcher_waits_for_the_child_in_short_steps(monkeypatch, tmp_path):
+    """Windows の wait() は時間を決めないと Ctrl+C で割り込めないので、入口は短い間隔で待ち直す。"""
+    ctxf = load_launcher(monkeypatch, tmp_path / "home")
+    calls = []
+
+    class Slow:
+        def wait(self, timeout=None):
+            calls.append(timeout)
+            if len(calls) < 3:
+                raise ctxf.subprocess.TimeoutExpired("ctxf", timeout)
+            return 7
+
+    assert ctxf._wait(Slow()) == 7
+    assert calls == [0.25, 0.25, 0.25]
+
+
 def test_setup_says_the_packages_cannot_be_loaded_when_recreating_does_not_help(monkeypatch, tmp_path, capsys):
     ctxf, made = _broken_venv_setup(monkeypatch, tmp_path, loads_after_rebuild=False)
     assert ctxf._setup(["--no-model"]) == 1
@@ -487,7 +521,7 @@ def test_setup_says_the_packages_cannot_be_loaded_when_recreating_does_not_help(
     assert len(made) == 1                                                         # 作り直すのは 1 回だけ
     assert "pip installed the Python packages, but they cannot be loaded" in out and "Delete the folder" in out
     assert "pip failed (exit code 0)" not in out and "Setup is done" not in out
-    assert ctxf._read_stamp() == {}
+    assert not ctxf._read_stamp().get("deps_hash")                               # 「用意済み」とは言わない
 
 
 def test_an_import_error_in_the_tool_itself_keeps_its_traceback(tmp_path):

@@ -229,7 +229,11 @@ PC・PyPI のミラー」)。
 (`--config` を付けないとき)、4 が用意ができていない(setup が済んでいない、
 プラグインの更新で依存の一覧が変わった、仮想環境のもとの Python が消えた、
 仮想環境の python が要るパッケージを読めない。setup をやり直すまで続き
-ます)、130 が途中で止めた(Ctrl+C)、です。
+ます)、130 が途中で止めた(Ctrl+C)、です。4 は、入口(`python -I
+"<…>\ctxf.py"`)から動かしたときです。`--run` の形(`.bat` と、取得した
+フォルダの `.venv` の python で直接動かす形)では、要るパッケージを読めない
+ときは 104、Windows で `.venv` のもとの Python が消えたときは 103 で終わり
+ます。
 埋め込みのある索引は、モデルを読めないときに keyword だけの索引に置き
 換えず、止まります(置き換えるなら `--no-embed`)。途中で止めた `index`
 は、次の実行で、計算済みの埋め込みを使い回して続きから計算します。
@@ -428,12 +432,13 @@ top_k = 8
 (`tests/fixtures`)で、分割・検索・評価・MCP サーバー・コマンドを通しで
 確かめます。埋め込みモデルが無くても通ります。
 
-GitHub Actions では、次の 3 つを回します(`.github/workflows`)。
+GitHub Actions では、次の 4 つを回します(`.github/workflows`)。
 
 | ワークフロー | いつ | すること |
 | --- | --- | --- |
-| CI | プルリクエスト、main への push、毎週月曜、手で起動したとき | テスト(Windows・Linux、Python 3.11・3.12・3.13・3.14)、依存を宣言した下限の版でのテスト(Python 3.11)、wheel と sdist を作って使う確認(sdist の中身が `git ls-files` と同じか)、Markdown の検査、リンクの確認 |
-| Plugin smoke test | 道具の中身に関わる変更、main への push、毎週月曜 | まっさらな機械で、`ctxf.py setup` から、実物の埋め込みモデルでの索引づくり・検索・評価・MCP サーバーまでを通す(Windows・Linux) |
+| CI | プルリクエスト、main への push、毎週月曜、手で起動したとき | テスト(Windows・Linux、Python 3.11・3.12・3.13・3.14)、依存を宣言した下限の版でのテスト(Python 3.11。実物のモデルを使うテストも)、wheel と sdist を作って使う確認(sdist の中身が `git ls-files` と同じか)、Markdown の検査、リンクの確認 |
+| Plugin smoke test | 道具の中身に関わる変更、main への push、毎週月曜、手で起動したとき | まっさらな機械で、`ctxf.py setup` から、実物の埋め込みモデルでの索引づくり・検索・評価・MCP サーバーまでを通し、実物のモデルを使うテスト(`pytest -m model`)も流す(Windows・Linux) |
+| Secret scan | すべての push、プルリクエスト、手で起動したとき | 秘密情報と、所属・著作権の表示の検査(共通の workflow) |
 | Benchmark (O3DE example) | 手で起動したとき | 公開の評価例([examples/o3de](examples/o3de/README.md))を、GitHub の機械で最初から測り直す |
 
 エージェントを使う比較(Copilot CLI を動かす計測)は、GitHub Actions では

@@ -274,7 +274,10 @@ python -I "<プラグインのフォルダ>\ctxf.py" index --config "<作業フ�
 付けないとき)、4 が用意ができていない(setup が済んでいない、プラグインの
 更新で依存の一覧が変わった、仮想環境のもとの Python が消えたなど)、130 が
 途中で止めた、です。2 と 4 のときは、前の索引がそのまま使えます。4 は、
-setup をやり直すまで続きます。
+setup をやり直すまで続きます。4 は入口(`python -I "<…>\ctxf.py" index
+…`)から動かしたときで、上の `--run` の形では、要るパッケージを読めない
+ときは 104、Windows で `.venv` のもとの Python が消えたときは 103 で終わり
+ます。
 
 毎日決まった時刻に流すなら、Windows のタスク スケジューラに登録します
 (例は毎朝 7 時。`<…>` は自分の場所に置き換えます)。この例は、登録して
@@ -385,7 +388,8 @@ MCP の形で気を付けること:
   1 つも出さずに起動したままになる。始めの 1 文が、理由(「not set up」
   「set up for an older version」など)と、skill を読めば用意のしかたが
   分かることを知らせる。サーバーは、理由と setup のコマンドを、標準誤差に
-  1 行書く(ホストの MCP のログに残る)。setup を済ませても、同じセッション
+  書く(ホストの MCP のログに残る。コマンドで 1 行を終え、次の行に新しい
+  セッションのことを書く)。setup を済ませても、同じセッション
   には道具は出ない。新しいセッションから出る
 - `.cf` か索引の無い作業フォルダでは、起動の挨拶の指示は「No
   context-foundation index in this workspace; search with grep.」の 1 文
@@ -450,7 +454,7 @@ python -I "<プラグインのフォルダ>\ctxf.py" where
 | 症状 | 見るもの | 直し方 |
 | --- | --- | --- |
 | 道具の一覧に `context-foundation-search` が出ない | `where` の `PATH python:`。`copilot mcp list` に `context-foundation` があるか | `python` が無い・起動しないなら、PATH に足す(上の「入れ方は 2 つ」)。あれば、下の 2 行を見る |
-| 道具が出ず、始めの 1 文が「the search tool is not set up …」「the search tool is set up with …」 | `where` の `python:` の行の理由と `setup:` の行 | 理由が「not set up」「set up for an older version」「set up with a Python that is no longer installed」なら、`setup:` の行のコマンドを動かし、新しいセッションを始める。プラグインとして入れた人は `ctxf.py setup`、リポジトリを取得した人(隣の `.venv`)は `setup.bat` |
+| 道具が出ず、始めの 1 文が「the search tool is not set up …」「the search tool is set up for …」「the search tool is set up with …」 | `where` の `python:` の行の理由と `setup:` の行 | 理由が「not set up」「set up for an older version」「set up with a Python that is no longer installed」なら、`setup:` の行のコマンドを動かし、新しいセッションを始める。プラグインとして入れた人は `ctxf.py setup`、リポジトリを取得した人(隣の `.venv`)は `setup.bat` |
 | 道具が出ず、検索のコマンドが「set up in a virtual environment whose packages can no longer be loaded」(終了コード 4) | `where` の `model:` の行。この理由は、`where` の `python:` の行(仮想環境の python のパスが出る)にも始めの 1 文にも出ない。`model:` が `unknown (ImportError: …)` などになる。MCP のログにも出る | `setup:` の行のコマンドを動かし、新しいセッションを始める。setup は、読めないパッケージに気づくと、仮想環境を 1 回作り直して入れ直す。それでも直らなければ、文面のとおり仮想環境のフォルダ(リポジトリを取得した人は `.venv`)を消してから、もう一度 setup |
 | setup の後も道具が出ない | 同じセッションのままか | 新しいセッションを始める。動いているセッションには出ない(控えの skill は動く) |
 | 検索が「No context-foundation index」 | `where` の `index:` と `index (COPILOT_SESSION_CWD):` | 作業フォルダで `init` と `index`。アプリで、索引はあるのにこう出るなら、作業フォルダが渡っていない見込み(上の「アプリ」) |
@@ -512,7 +516,8 @@ Linux と macOS で 2 か所に分かれるのは、0.1 のモデルの置き場
 ### 0.4.0(本番に向けた直し)
 
 確かめた日は 2026-11-17 です。Copilot は動かしていません(道具の側だけ
-です)。手元で動かしたのは Windows 11 と Python 3.13 だけです。
+です)。手元で動かしたのは Windows 11 と Python 3.13 です(ほかに、WSL の
+Ubuntu 24.04 と Python 3.12 でテストだけを流しました)。
 
 - 道具の側の直しは、テスト(合成のコーパス)と、手元の Windows で動かして
   確かめた【実測】

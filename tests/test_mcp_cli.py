@@ -16,6 +16,7 @@ from conftest import CASES, CORPUS, write_config
 REPO = Path(__file__).resolve().parents[1]
 ENV = dict(os.environ, CF_TEST_EMBEDDER="hash", PYTHONIOENCODING="utf-8")
 ENV.pop("CF_CONFIG", None)
+ENV.pop("COPILOT_SESSION_CWD", None)       # MCP サーバーは、作業フォルダをこの変数から探す(Copilot のシェルでは入っている)
 # 子のプロセスにも、このフォルダの src を先に読ませる(pyproject の pythonpath はテストのプロセスの中にしか効かない。
 # 無いと、子は editable で入れたときのフォルダのコードを試す。フォルダを動かしたり写したりしたときに混ざる)
 ENV["PYTHONPATH"] = os.pathsep.join(filter(None, [str(REPO / "src"), os.environ.get("PYTHONPATH")]))
