@@ -3,7 +3,7 @@
   python -I ctxf.py setup [--no-model]   初回の用意: 依存の入った仮想環境と、埋め込みモデル
   python -I ctxf.py search "<質問>"      検索(init / index / status などのコマンドも同じ形で渡す)
   python -I ctxf.py session-hint         Copilot の sessionStart の hook 用(標準入力に JSON)
-  python -I ctxf.py where                使う python と置き場を出す
+  python -I ctxf.py where                使う python と置き場、モデル、索引を出す(うまく動かないときの確認)
 
 Python の依存(約 200 MB)は、次のどちらかに置く。プラグインの中には置かない(プラグインを更新しても、
 依存が変わらなければ作り直さないため。プラグインのフォルダは、更新のたびに置き換わる)。
@@ -28,6 +28,9 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 SRC = os.path.join(HERE, "src")
 PYPROJECT = os.path.join(HERE, "pyproject.toml")
 MIN_PYTHON = (3, 11)
+# 確かめた最も新しい版。3.15 には onnxruntime の配布物(wheel)がまだ無く、pip が入れられない。
+# onnxruntime が出したら、CI の版の並び(.github/workflows/ci.yml)と pyproject の requires-python と一緒に上げる
+MAX_PYTHON = (3, 14)
 SETUP_SIZE_NOTE = "about 200 MB of Python packages from PyPI and a 490 MB embedding model from Hugging Face"
 
 
@@ -88,17 +91,72 @@ def _read_stamp():
         return {}
 
 
+def _base_python_missing(venv):
+    """仮想環境を作った python(pyvenv.cfg の home)が、もう無いか(別の版に置き換わったときも含む)。読めない・
+    書き方が違うときは False(今までどおり使えるものとして扱う)。プロセスは起こさない(hook を遅くしないため)。"""
+    try:
+        with open(os.path.join(venv, "pyvenv.cfg"), encoding="utf-8", errors="replace") as f:
+            lines = f.read().splitlines()
+    except OSError:
+        return False
+    cfg = {}
+    for line in lines:
+        key, sep, value = line.partition("=")
+        if sep:
+            cfg.setdefault(key.strip().lower(), value.strip())
+    home = cfg.get("home")
+    if not home:
+        return False
+    if not os.path.isdir(home):
+        return True
+    if os.name != "nt":
+        # 仮想環境の bin/python は元の python へのリンクなので、元が消えればリンクの先が無くなる(_venv_python が
+        # 見つけない)。OS の更新で python3 が別の版(3.12 から 3.13 など)を指すようになると、リンクは切れないが、
+        # 仮想環境の lib/python3.12 は読まれない。リンクの先の名前に版があれば、作ったときの版と比べる
+        return _venv_version_changed(venv, cfg.get("version") or cfg.get("version_info") or "")
+    if os.path.isfile(os.path.join(home, "python.exe")):
+        return False
+    try:                          # 中を読めないフォルダ(Microsoft Store の Python など)は、あるものとみなす
+        names = os.listdir(home)
+    except OSError:
+        return False
+    return "python.exe" not in (n.lower() for n in names)
+
+
+def _venv_version_changed(venv, version):
+    """Windows 以外: 仮想環境の bin/python のリンクの先(python3.13 など)の版が、pyvenv.cfg の版(3.12.3)と違うか。
+    どちらかの版が分からなければ False。"""
+    made = re.match(r"(\d+)\.(\d+)", version)
+    real = re.fullmatch(r"python(\d+)\.(\d+)", os.path.basename(os.path.realpath(os.path.join(venv, "bin", "python"))))
+    return bool(made and real) and made.groups() != real.groups()
+
+
+LOCAL_VENV = "local .venv"
+PYTHON_LOST = "set up with a Python that is no longer installed"
+# 子(--run)が、要るパッケージを読めずに終わったときの終了コード(仮想環境の python が別の版に替わったときなど)
+VENV_IMPORT_FAILED = 104
+PACKAGES_LOST = "set up in a virtual environment whose packages can no longer be loaded (its Python was replaced)"
+
+
 def find_python():
-    """(python のパス, どこのものか, 理由)。使える python が無ければ、パスは None で、理由に次にすべきことを入れる。"""
+    """(python のパス, どこのものか, 理由)。使える python が無ければ、パスは None で、理由に次にすべきことを入れる。
+    隣の .venv が壊れているときは、どこのものかを "local .venv" にして返す(直すコマンドが違うため)。"""
     env = os.environ.get("CF_PYTHON")
     if env:
         return env, "CF_PYTHON", ""
-    local = _venv_python(os.path.join(HERE, ".venv"))
+    local_venv = os.path.join(HERE, ".venv")
+    local = _venv_python(local_venv)
     if local:
-        return local, "local .venv", ""
-    py = _venv_python(os.path.join(runtime_dir(), "venv"))
+        # 隣の .venv が壊れていても、利用者ごとの置き場へは落ちない(直すのは setup.bat。文面もそれを案内する)
+        if _base_python_missing(local_venv):
+            return None, LOCAL_VENV, PYTHON_LOST
+        return local, LOCAL_VENV, ""
+    venv = os.path.join(runtime_dir(), "venv")
+    py = _venv_python(venv)
     if py is None:
         return None, "", "not set up"
+    if _base_python_missing(venv):
+        return None, "", PYTHON_LOST
     stamp = _read_stamp()
     if not stamp.get("deps_hash"):
         return None, "", "not set up completely (the last setup did not finish)"
@@ -108,13 +166,35 @@ def find_python():
     return py, "runtime", ""
 
 
+def entry_command():
+    """この入口の呼び方。子のプロセスには環境変数 CF_ENTRY で渡し、文面が案内するコマンドに使う
+    (`ctxf` は PATH に無く、プラグインの置き場の仮想環境には入っていないため)。"""
+    return 'python -I "' + os.path.join(HERE, "ctxf.py") + '"'
+
+
 def setup_command():
-    return 'python -I "' + os.path.join(HERE, "ctxf.py") + '" setup'
+    return entry_command() + " setup"
 
 
-def not_ready_message(reason):
+def repair_command(kind=""):
+    """用意をやり直すコマンド。隣の .venv(リポジトリを取得した人)は setup.bat で作り直す(`ctxf.py setup` は
+    利用者ごとの置き場に作るだけで、隣の .venv が先に選ばれ続けるため)。"""
+    if kind != LOCAL_VENV:
+        return setup_command()
+    if os.name == "nt":
+        return '"' + os.path.join(HERE, "setup.bat") + '"'
+    return 'cd "' + HERE + '" && python3 -m venv --clear .venv && .venv/bin/python -m pip install -e .'
+
+
+NEW_SESSION_NOTE = ("A Copilot session that is already running does not get the search tool after setup: "
+                    "start a new session (the context-search skill works meanwhile).")
+
+
+def not_ready_message(reason, kind=""):
     return ("context-foundation is " + reason + " on this PC. Search with grep meanwhile. To set it up, ask the user "
-            "first (it downloads " + SETUP_SIZE_NOTE + " and takes a few minutes), then run: " + setup_command() + "\n")
+            "first (it downloads " + SETUP_SIZE_NOTE + " and takes a few minutes), then run: " + repair_command(kind)
+            + "\n"
+            + NEW_SESSION_NOTE + "\n")
 
 
 SESSION_HINT = (
@@ -131,23 +211,38 @@ SESSION_HINT_MCP = (
     "returns ranked passages with source:path:start-end and their text, usually enough to answer and cite. Grep "
     "or open files afterwards only for what the passages do not show. If that tool is not available, load the "
     "context-search skill instead.")
-SESSION_HINT_NOT_READY = (
-    "This workspace has a context-foundation index (.cf folder), but the search tool is not set up on this PC yet. "
-    "If you need to find code or docs without knowing their names, load the context-search skill: it says how to "
-    "set the tool up (ask the user first).")
+
+
+def session_hint_not_ready(reason, kind=""):
+    """索引はあるが、検索の道具が使えないときの 1 文。理由(find_python の理由)をそのまま入れる。隣の .venv が
+    壊れているときは、skill も同じ python で動くので使えない。直すコマンド(setup.bat)を書く。"""
+    if kind == LOCAL_VENV:
+        return ("This workspace has a context-foundation index (.cf folder), but the search tool is " + reason +
+                " on this PC. Search with grep meanwhile. To repair it, ask the user to run " + repair_command(kind) +
+                "; after that, the search tool appears in a new session.")
+    return ("This workspace has a context-foundation index (.cf folder), but the search tool is " + reason +
+            " on this PC. If you need to find code or docs without knowing their names, load the context-search "
+            "skill: it says how to set the tool up (ask the user first). After setup, the search tool appears in a "
+            "new session.")
+
+
+def find_index(cwd):
+    """cwd かその親にある索引(.cf/index.db)のパス。無ければ None。"""
+    d = os.path.abspath(cwd) if isinstance(cwd, str) and cwd else None
+    while d:
+        path = os.path.join(d, ".cf", "index.db")
+        if os.path.isfile(path):
+            return path
+        parent = os.path.dirname(d)
+        if parent == d:
+            return None
+        d = parent
+    return None
 
 
 def has_index(cwd):
     """cwd かその親に、索引(.cf/index.db)があるか。"""
-    d = os.path.abspath(cwd) if isinstance(cwd, str) and cwd else None
-    while d:
-        if os.path.isfile(os.path.join(d, ".cf", "index.db")):
-            return True
-        parent = os.path.dirname(d)
-        if parent == d:
-            return False
-        d = parent
-    return False
+    return find_index(cwd) is not None
 
 
 def session_hint(mcp=False):
@@ -163,9 +258,10 @@ def session_hint(mcp=False):
             data = {}
         cwd = data.get("cwd") if isinstance(data, dict) else None
         if has_index(cwd or os.getcwd()):
-            ready = find_python()[0] is not None
-            hint = SESSION_HINT_MCP if mcp else SESSION_HINT
-            sys.stdout.write(json.dumps({"additionalContext": hint if ready else SESSION_HINT_NOT_READY}))
+            py, kind, reason = find_python()
+            hint = ((SESSION_HINT_MCP if mcp else SESSION_HINT) if py is not None
+                    else session_hint_not_ready(reason, kind))
+            sys.stdout.write(json.dumps({"additionalContext": hint}))
     except BaseException:        # hook はセッションを止めない
         pass
     return 0
@@ -184,6 +280,7 @@ the runtime folder, and downloads the embedding model (about 490 MB from Hugging
 --gpu (Windows) installs onnxruntime-directml instead of onnxruntime, so that building an
 index computes the embeddings on the GPU (any DirectX 12 GPU). The choice is remembered
 for later setups; --cpu switches back.
+Setup needs Python 3.11 to 3.14 (3.15 and later have no onnxruntime build yet).
 """
 SETUP_OPTIONS = ("--no-model", "--gpu", "--cpu")
 ORT_CPU, ORT_GPU = "onnxruntime", "onnxruntime-directml"
@@ -194,7 +291,7 @@ LOCK_STALE_SECONDS = 6 * 3600        # プロセスの生死が分からない�
 
 def _pid_alive(pid):
     """そのプロセスが動いているか。分からなければ None。"""
-    if pid <= 0:
+    if pid <= 0 or pid > 0xFFFFFFFF:   # プロセスの番号になりえない値(Windows の ctypes は、32 ビットを超えると例外)
         return False
     if os.name == "nt":
         try:
@@ -215,7 +312,7 @@ def _pid_alive(pid):
     try:
         os.kill(pid, 0)
         return True
-    except ProcessLookupError:
+    except (ProcessLookupError, OverflowError):
         return False
     except OSError:
         return None
@@ -267,6 +364,24 @@ def _healthy(py, check):
         return False
 
 
+def _import_error(py):
+    """仮想環境の python で依存を読んだときの誤りの 1 行(読めれば空)。"""
+    try:
+        p = subprocess.run([py, "-I", "-X", "utf8", "-c", IMPORT_CHECK], stdout=subprocess.DEVNULL,
+                           stderr=subprocess.PIPE, timeout=120)
+    except (OSError, subprocess.SubprocessError) as e:
+        return str(e)
+    if p.returncode == 0:
+        return ""
+    lines = [x.strip() for x in (p.stderr or b"").decode("utf-8", "replace").splitlines() if x.strip()]
+    return lines[-1] if lines else "exit code %s" % p.returncode
+
+
+# _install の終わり方: pip は 0 で終わったが、入れたパッケージを読めない(Python を同じフォルダのまま別の版に
+# 置き換えた・パッケージが壊れた。pip は dist-info だけを見て「入っている」とみなすので、入れ直さない)
+INSTALLED_BUT_BROKEN = 5
+
+
 def setup(argv):
     """利用者ごとの置き場に、依存の入った仮想環境を作り(依存が変わっていれば入れ直す)、埋め込みモデルを取得する。
     引数を検査してから始める(--help で、何も取得せずに説明だけ出す)。2 つの setup が同時に走らないよう排他する。"""
@@ -305,11 +420,135 @@ def setup(argv):
             pass
 
 
+def python_range_message():
+    """この python では setup ができないときの文面。使える版と、その版で setup を流すコマンドを書く。"""
+    want = "%d.%d" % MAX_PYTHON
+    this = "%d.%d.%d" % tuple(sys.version_info[:3])
+    cmd = ("py -" + want if os.name == "nt" else "python" + want) + ' -I "' + os.path.join(HERE, "ctxf.py") + '" setup'
+    why = (" (onnxruntime, which the search needs, has no build for it yet)" if sys.version_info[:2] > MAX_PYTHON
+           else "")
+    return ("Python %s is not supported%s. Setup needs Python %d.%d to %s. Install Python %s from "
+            "https://www.python.org/downloads/ and run setup with it: %s\n"
+            "(`python` itself may stay as it is: the plugin starts this launcher with it, and the launcher then uses "
+            "the virtual environment that setup made.)" % ((this, why) + MIN_PYTHON + (want, want, cmd)))
+
+
+# 仮想環境の中で、いちばん深いファイルまでの文字数(onnxruntime の中のもの。実測 143 に余裕を足す)。
+# Windows の長いパスが無効(既定)だと、仮想環境のパスにこれを足して 260 を超えると、pip が入れられない
+VENV_DEEPEST = 145
+WINDOWS_MAX_PATH = 259
+
+
+def long_paths_disabled():
+    """Windows で、長いパス(260 文字を超えるもの)が使えない設定か。Windows 以外は False。"""
+    if os.name != "nt":
+        return False
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\FileSystem") as k:
+            return winreg.QueryValueEx(k, "LongPathsEnabled")[0] != 1
+    except OSError:              # 値が無い = 既定の無効
+        return True
+
+
+NETWORK_MARKERS = ("newconnectionerror", "proxyerror", "connecttimeout", "readtimeout", "max retries exceeded",
+                   "sslerror", "certificate verify failed", "name resolution", "getaddrinfo failed",
+                   "connection refused", "connection reset", "timed out")
+NO_BUILD_MARKERS = ("no matching distribution", "could not find a version that satisfies",
+                    "requires a different python")
+LONG_PATH_MARKERS = ("long path", "winerror 206", "filename or extension is too long")
+
+
+def pip_failure_hint(err):
+    """pip の誤りの出力から、利用者が次にすべきことを 1 文で選ぶ(いつも「ネットワーク」とは言わない)。"""
+    text = (err or "").lower()
+    if any(m in text for m in LONG_PATH_MARKERS) or ("oserror" in text and "no such file or directory" in text):
+        return ("A path inside the virtual environment is probably too long for Windows (long paths are off). "
+                "Set the environment variable CF_HOME to a short folder (for example C:\\cf), or turn on long "
+                "paths, then run setup again.")
+    if any(m in text for m in NETWORK_MARKERS):
+        return "pip could not reach PyPI. Check the network or the proxy settings (HTTPS_PROXY), then run setup again."
+    if any(m in text for m in NO_BUILD_MARKERS):
+        import platform          # ここでだけ読む(hook のたびに起動が遅くならないよう、先頭では読まない)
+        return ("pip found no installable build of a package: either it could not reach the package index (network, "
+                "proxy, or a pip index that lacks the package), or the package has no build for Python %s on this "
+                "system (%s). Setup is tested with Python %d.%d to %d.%d on Windows x64 and Linux x64."
+                % ((sys.version.split()[0], platform.machine() or "unknown machine") + MIN_PYTHON + MAX_PYTHON))
+    return "See pip's messages above for the cause, then run setup again."
+
+
+def _pip(pip, args):
+    """pip を動かす。(終了コード, 誤りの出力)。誤りの出力は、そのまま見せたうえで、原因を選ぶのに使う。"""
+    env = dict(os.environ, PYTHONIOENCODING="utf-8")
+    try:
+        p = subprocess.run(pip + args, stderr=subprocess.PIPE, env=env)
+    except OSError as e:
+        return 1, str(e)
+    err = (p.stderr or b"").decode("utf-8", "replace")
+    if err:
+        sys.stderr.write(err)
+        sys.stderr.flush()
+    return p.returncode, err
+
+
+def _ort_requirements(deps, gpu):
+    """依存の一覧のうち、onnxruntime(gpu なら onnxruntime-directml に読み替えたもの)の行。"""
+    pattern = (ORT_GPU if gpu else ORT_CPU) + r"(?![A-Za-z0-9_.-])"
+    return [d for d in install_requirements(deps, gpu) if re.match(pattern, d)]
+
+
+def _ort_name(gpu):
+    return ORT_GPU + " (the GPU build)" if gpu else ORT_CPU + " (the CPU build)"
+
+
+def _install(py, deps, stamp, gpu):
+    """依存を入れる。成功なら 0。CPU 用と GPU 用を入れ替えるときは、入れられることを確かめてから今のものを外し、
+    入れられなかったら前のものに戻す(onnxruntime が無いと、keyword の検索も動かないため)。
+    pip が 0 で終わっても入れたものを読めないとき(戻したほうも読めないとき)は INSTALLED_BUT_BROKEN(文面は出さない。
+    呼ぶ側が仮想環境を作り直す)。"""
+    pip = [py, "-m", "pip", "--disable-pip-version-check"]
+    swap = bool(stamp.get("deps_hash")) and bool(stamp.get("gpu")) != gpu
+    if swap:
+        r, err = _pip(pip, ["install", "--quiet", "--dry-run", "--no-deps", "--ignore-installed",
+                            "--only-binary=:all:", *_ort_requirements(deps, gpu)])
+        if r != 0:
+            _say("  " + _ort_name(gpu) + " cannot be installed on this PC. " + pip_failure_hint(err) +
+                 " Nothing was changed: " + _ort_name(not gpu) + " is kept, and search works as before.")
+            return 1
+        # CPU 用と GPU 用は、同じ名前のモジュールを入れる。入れ替えるときは、先に両方を外す
+        try:
+            os.remove(_stamp_path())
+        except OSError:
+            pass
+        subprocess.call(pip + ["uninstall", "--quiet", "--yes", ORT_CPU, ORT_GPU])
+    r, err = _pip(pip, ["install", "--quiet", *install_requirements(deps, gpu)])
+    if r == 0 and _healthy(py, IMPORT_CHECK):
+        _write_stamp(deps, gpu)
+        return 0
+    hint = pip_failure_hint(err)
+    if swap:
+        r2, _ = _pip(pip, ["install", "--quiet", *install_requirements(deps, not gpu)])
+        if r2 == 0 and _healthy(py, IMPORT_CHECK):
+            _write_stamp(deps, not gpu)
+            _say("  pip could not install %s (exit code %s). %s Put %s back; search works as before."
+                 % (_ort_name(gpu), r, hint, _ort_name(not gpu)))
+            return 1
+        if r == 0 and r2 == 0:
+            return INSTALLED_BUT_BROKEN
+        _say("  pip could not install %s (exit code %s), nor put %s back. %s Search does not work until setup "
+             "succeeds; `%s --cpu` installs the CPU build again." % (_ort_name(gpu), r, _ort_name(not gpu), hint,
+                                                                     setup_command()))
+        return 1
+    if r == 0:
+        return INSTALLED_BUT_BROKEN
+    _say("  pip failed (exit code %s). %s" % (r, hint))
+    return 1
+
+
 def _setup(argv):
     want_model = "--no-model" not in argv
-    if sys.version_info < MIN_PYTHON:
-        _say("Python %d.%d or later is required (this is %s). Install it from https://www.python.org/downloads/ "
-             "and run setup again." % (MIN_PYTHON + (sys.version.split()[0],)))
+    if sys.version_info < MIN_PYTHON or sys.version_info[:2] > MAX_PYTHON:
+        _say(python_range_message())
         return 2
     deps = dependencies()
     if not deps:
@@ -319,41 +558,48 @@ def _setup(argv):
     venv = os.path.join(rt, "venv")
     _say("== context-foundation setup")
     _say("  runtime folder: " + rt)
+    if long_paths_disabled() and len(os.path.abspath(venv)) + VENV_DEEPEST > WINDOWS_MAX_PATH:
+        _say("  note: the runtime folder's path is long (%d characters) and Windows long paths are off, so pip may "
+             "fail with 'No such file or directory'. If it does, set CF_HOME to a short folder (for example C:\\cf), "
+             "or turn on long paths, then run setup again." % len(os.path.abspath(venv)))
+    # GPU の選び方は、覚え書きを消す(仮想環境を作り直す)前に 1 回だけ決める。作り直しで --gpu の選び方を失わないため
+    gpu = wants_gpu(argv, _read_stamp())
     py = _venv_python(venv)
     if py is not None and not _healthy(py, "import pip"):
         _say("  the virtual environment is broken (an earlier setup stopped, or its Python was removed); recreating ...")
         py = None
-    if py is None:
-        _say("  creating the virtual environment ...")
-        try:
-            os.remove(_stamp_path())
-        except OSError:
-            pass
-        r = subprocess.call([sys.executable, "-m", "venv", "--clear", venv])
-        py = _venv_python(venv)
-        if r != 0 or py is None:
-            _say("  could not create the virtual environment (exit code %s)" % r)
-            return 1
-    stamp = _read_stamp()
-    gpu = wants_gpu(argv, stamp)
-    if stamp.get("deps_hash") == deps_hash(deps) and bool(stamp.get("gpu")) == gpu and _healthy(py, IMPORT_CHECK):
-        _say("  Python packages: already installed" + (" (onnxruntime-directml, for the GPU)" if gpu else ""))
-    else:
-        _say("  installing the Python packages from PyPI (about 200 MB the first time) ...")
-        pip = [py, "-m", "pip", "--disable-pip-version-check"]
-        if stamp.get("deps_hash") and bool(stamp.get("gpu")) != gpu:
-            # CPU 用と GPU 用は、同じ名前のモジュールを入れる。入れ替えるときは、先に両方を外す
+    for attempt in (1, 2):
+        if py is None:
+            _say("  creating the virtual environment ...")
             try:
                 os.remove(_stamp_path())
             except OSError:
                 pass
-            subprocess.call(pip + ["uninstall", "--quiet", "--yes", ORT_CPU, ORT_GPU])
-        r = subprocess.call(pip + ["install", "--quiet", *install_requirements(deps, gpu)])
-        if r != 0 or not _healthy(py, IMPORT_CHECK):
-            _say("  pip failed (exit code %s). Check the network or the proxy settings, then run setup again." % r)
+            r = subprocess.call([sys.executable, "-m", "venv", "--clear", venv])
+            py = _venv_python(venv)
+            if r != 0 or py is None:
+                _say("  could not create the virtual environment (exit code %s)" % r)
+                return 1
+        stamp = _read_stamp()
+        if stamp.get("deps_hash") == deps_hash(deps) and bool(stamp.get("gpu")) == gpu and _healthy(py, IMPORT_CHECK):
+            _say("  Python packages: already installed" + (" (onnxruntime-directml, for the GPU)" if gpu else ""))
+            break
+        _say("  installing the Python packages from PyPI (about 200 MB the first time) ...")
+        r = _install(py, deps, stamp, gpu)
+        if r == 0:
+            _say("  Python packages: installed" + (" (onnxruntime-directml, for the GPU)" if gpu else ""))
+            break
+        if r != INSTALLED_BUT_BROKEN:
             return 1
-        _write_stamp(deps, gpu)
-        _say("  Python packages: installed" + (" (onnxruntime-directml, for the GPU)" if gpu else ""))
+        why = _import_error(py)
+        if attempt == 2:
+            _say("  pip installed the Python packages, but they cannot be loaded (%s). Delete the folder %s, then run "
+                 "setup again; if that does not help, reinstall Python." % (why, venv))
+            return 1
+        # pip は dist-info だけを見て「入っている」とみなすので、入れ直さない。仮想環境ごと作り直す(1 回だけ)
+        _say("  the installed packages cannot be loaded (%s; its Python was probably replaced); recreating the "
+             "virtual environment ..." % why)
+        py = None
     if gpu and not _healthy(py, GPU_CHECK):
         _say("  note: onnxruntime-directml is installed, but it reports no DirectML provider on this PC. "
              "Building an index will use the CPU.")
@@ -361,28 +607,35 @@ def _setup(argv):
         _say("  embedding model: checking (downloads about 490 MB the first time) ...")
         r = subprocess.call([py, "-I", os.path.abspath(__file__), "--run", "model", "download"])
         if r != 0:
-            _say("  the model download failed; search still works keyword-only. Run setup again to retry.")
+            _say("  the model download failed (the message above says why); search still works keyword-only. "
+                 "Run setup again once that is fixed.")
             return 1
     _say("Setup is done. Next, build an index in the workspace: "
-         'python -I "' + os.path.join(HERE, "ctxf.py") + '" init <folder> [<folder> ...], then the same with index')
+         + entry_command() + " init <folder> [<folder> ...], then the same with index\n" + NEW_SESSION_NOTE)
     return 0
 
 
-def serve_not_ready():
+def serve_not_ready(reason="not set up", kind=""):
     """用意(setup)が済んでいない PC で、MCP サーバーとして起動されたとき。
 
     プラグインは MCP サーバーも一緒に登録するので、用意の前でも起動される。ここで誤りの文を標準出力に書いて
     終わると、エージェントの側では「サーバーが壊れている」としか見えない。そこで、道具を 1 つも出さない
     サーバーとして答え続ける(用意のしかたは、始めの 1 文と skill が伝える)。標準ライブラリだけで動く。
+    理由は、標準エラー(ホストの MCP のログに残る)と、道具を呼ばれたときの誤りの文に書く。
     """
+    # コマンドの直後に句点を置かない(POSIX の直し方は `pip install -e .` で終わり、`-e ..` と読めてしまう)
+    text = ("context-foundation is " + reason + " on this PC. Ask the user, then run: " + repair_command(kind) +
+            "\nThe search tool appears in a new session after that.")
+    sys.stderr.write(text + "\n")
+    sys.stderr.flush()
     stdin, stdout = sys.stdin.buffer, sys.stdout.buffer
     while True:
         line = stdin.readline()
         if not line:
             return 0
-        try:
-            msg = json.loads(line.decode("utf-8"))
-        except ValueError:
+        try:                                          # NaN・Infinity は JSON ではない。深い入れ子の行でも落ちない
+            msg = json.loads(line.decode("utf-8"), parse_constant=_not_json)
+        except (ValueError, RecursionError):
             continue
         if not isinstance(msg, dict) or msg.get("id") is None or not msg.get("method"):
             continue                                  # 通知には答えない
@@ -398,25 +651,162 @@ def serve_not_ready():
         elif method == "tools/list":
             reply["result"] = {"tools": []}
         else:
-            reply["error"] = {"code": -32601, "message": "context-foundation is not set up on this PC yet"}
-        stdout.write(json.dumps(reply).encode("utf-8") + b"\n")
+            reply["error"] = {"code": -32601, "message": text}
+        try:                                          # 標準出力には JSON の行だけを書く(id が 1e999 などなら答えない)
+            out = json.dumps(reply, allow_nan=False).encode("utf-8")
+        except (ValueError, RecursionError):
+            continue
+        stdout.write(out + b"\n")
         stdout.flush()
 
 
+def _not_json(name):
+    raise ValueError("not JSON: " + name)
+
+
+def which_on_path(name):
+    """PATH の項目だけを順に見て、実行ファイル name を探す。shutil.which と違い、Windows でも今のフォルダを見ない
+    (作業フォルダに置かれた python.bat などを起動しないため)。空の項目と相対の項目も飛ばす。"""
+    exts = [""]
+    if os.name == "nt":
+        pathext = [e for e in os.environ.get("PATHEXT", ".COM;.EXE;.BAT;.CMD").split(os.pathsep) if e]
+        if os.path.splitext(name)[1].lower() not in [e.lower() for e in pathext]:
+            exts = pathext
+    for folder in os.environ.get("PATH", "").split(os.pathsep):
+        if not folder or not os.path.isabs(folder):
+            continue
+        for ext in exts:
+            p = os.path.join(folder, name + ext)
+            if os.path.exists(p) and not os.path.isdir(p) and os.access(p, os.X_OK):
+                return p
+    return None
+
+
+def _python_version(exe):
+    """その python の版("3.13.1")。起動できなければ None。"""
+    try:
+        p = subprocess.run([exe, "-I", "-c", "import sys; print('%d.%d.%d' % sys.version_info[:3])"],
+                           capture_output=True, text=True, timeout=20)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    out = (p.stdout or "").strip()
+    return out if p.returncode == 0 and re.fullmatch(r"\d+\.\d+\.\d+", out) else None
+
+
+# where から、仮想環境の python で動かす: 今のフォルダの設定で使うモデルが、手元にあるか
+MODEL_CHECK = r"""
+import sys
+sys.path.insert(0, sys.argv[1])
+try:
+    from context_foundation.config import EmbeddingConfig, find_config, load_config
+    from context_foundation.embed import ModelUnavailable, model_files, model_folder, resolve_model
+    path = find_config(None)
+    emb = load_config(path).embedding if path else EmbeddingConfig()
+    if not emb.enabled:
+        print("not used (embedding is off in " + str(path) + ")")
+        raise SystemExit(0)
+    spec = resolve_model(emb)
+    try:
+        model_files(spec)
+        print("present: " + spec.name + "  " + str(model_folder(spec)))
+    except ModelUnavailable:
+        print("missing: " + spec.name + "  " + str(model_folder(spec)) +
+              "  (setup downloads it; without it, search is keyword-only)")
+except SystemExit:
+    raise
+except Exception as e:
+    print("unknown (" + type(e).__name__ + ": " + (str(e).splitlines() or [""])[0] + ")")
+"""
+
+
+def _model_state(py):
+    # -I は PYTHONIOENCODING を見ないので、子の標準出力は -X utf8 で UTF-8 にする(日本語の設定の誤りやパスを読めるように)
+    try:
+        p = subprocess.run([py, "-I", "-X", "utf8", "-c", MODEL_CHECK, SRC], capture_output=True, timeout=120)
+    except (OSError, subprocess.SubprocessError) as e:
+        return "unknown (" + str(e) + ")"
+    out = (p.stdout or b"").decode("utf-8", "replace").strip()
+    return out or "unknown (exit code %s)" % p.returncode
+
+
+def _index_state(start):
+    path = find_index(start)
+    if path is None:
+        return "none (no .cf" + os.sep + "index.db in " + os.path.abspath(start) + " or above it)"
+    try:
+        built = time.strftime("%Y-%m-%d %H:%M", time.localtime(os.path.getmtime(path)))
+    except OSError:
+        built = "?"
+    return path + "  (written " + built + ")"
+
+
 def where():
+    """使う python と置き場、モデル、索引を 1 回で出す(検索の道具が出ない・効かないときに確かめる)。"""
     py, kind, reason = find_python()
     _say("ctxf.py:   " + os.path.abspath(__file__))
+    _say("launcher:  " + sys.executable + "  (Python " + sys.version.split()[0] + ")")
+    on_path = which_on_path("python")
+    if on_path:
+        ver = _python_version(on_path)
+        _say("PATH python: " + on_path + "  (" + ("Python " + ver if ver else "does not start") + ")")
+    else:
+        _say("PATH python: none. The Copilot MCP server and session hook start with `python`; add Python to PATH.")
     _say("python:    " + (py + "  (" + kind + ")" if py else "none: " + reason))
-    _say("runtime:   " + runtime_dir())
-    _say("setup:     " + setup_command())
+    stamp = _read_stamp()
+    rt = runtime_dir()
+    if stamp.get("deps_hash"):
+        rt += "  (set up with Python " + str(stamp.get("python") or "?") + ", " + _ort_name(bool(stamp.get("gpu"))) + ")"
+    _say("runtime:   " + rt)
+    _say("model:     " + (_model_state(py) if py else "unknown (needs the setup first)"))
+    _say("index:     " + _index_state(os.getcwd()))
+    session = os.environ.get("COPILOT_SESSION_CWD")
+    if session:
+        _say("index (COPILOT_SESSION_CWD): " + _index_state(session))
+    _say("setup:     " + repair_command(kind))
     return 0 if py else 4
 
 
+LAUNCHER_HELP = """context-foundation launcher. Its own commands:
+  setup [--no-model] [--gpu | --cpu]   install the Python packages and the model (setup --help says more)
+  where                                show the Python, runtime folder, model and index in use (troubleshooting)
+  session-hint [--mcp]                 used by the Copilot sessionStart hook
+Every other command goes to the tool:"""
+# Windows の仮想環境の python.exe が、仮想環境を作った python を見つけられないときの終了コード
+VENV_LAUNCHER_LOST = 103
+
+
 def run_inner(argv):
-    """仮想環境の python で動いているとき: 隣の src からパッケージを読み、CLI を動かす。"""
+    """仮想環境の python で動いているとき: 隣の src からパッケージを読み、CLI を動かす。
+    .bat から直接 --run で呼ばれたときは、文面が案内するコマンドを、この python とこの入口の形にする。"""
+    os.environ.setdefault("CF_ENTRY", '"' + sys.executable + '" -I "' + os.path.abspath(__file__) + '" --run')
     sys.path.insert(0, SRC)
-    from context_foundation.cli import main as cli_main
-    return cli_main(argv)
+    try:
+        from context_foundation.cli import main as cli_main
+    except ImportError as e:
+        if _own_import_error(e):
+            raise
+        return _import_failed(e)
+    if argv[:1] == ["serve"]:
+        return cli_main(argv)    # serve は、標準入力を読む前の import の失敗だけを、自分で VENV_IMPORT_FAILED にする
+    try:
+        return cli_main(argv)
+    except ImportError as e:     # 依存のパッケージを読めない(仮想環境の python が別の版に替わったなど)
+        if _own_import_error(e):
+            raise
+        return _import_failed(e)
+
+
+def _own_import_error(e):
+    """隣の src にある道具そのものの import の誤り(名前の取り違えなど)か。依存を読めないのではないので、
+    「用意をやり直す」とは言わずに traceback を残す。"""
+    return ((getattr(e, "name", None) or "").split(".")[0] == "context_foundation"
+            and os.path.isdir(os.path.join(SRC, "context_foundation")))
+
+
+def _import_failed(e):
+    sys.stderr.write("context-foundation cannot load a package it needs (" + type(e).__name__ + ": " + str(e) + ")\n")
+    sys.stderr.flush()
+    return VENV_IMPORT_FAILED
 
 
 def main():
@@ -428,23 +818,50 @@ def main():
     argv = sys.argv[1:]
     if argv[:1] == ["--run"]:
         return run_inner(argv[1:])
+    os.environ["CF_ENTRY"] = entry_command()     # 子が出す文面は、この入口の呼び方でコマンドを案内する
     if argv[:1] == ["session-hint"]:
         return session_hint(mcp="--mcp" in argv[1:])
     if argv[:1] == ["setup"]:
         return setup(argv[1:])
     if argv[:1] == ["where"]:
         return where()
-    py, _kind, reason = find_python()
+    if not argv or argv[0] in ("-h", "--help"):
+        _say(LAUNCHER_HELP)
+        argv = ["--help"]
+    py, kind, reason = find_python()
     if py is None:
         if argv[:1] == ["serve"]:
-            return serve_not_ready()
-        sys.stdout.write(not_ready_message(reason))
+            return serve_not_ready(reason, kind)
+        sys.stdout.write(not_ready_message(reason, kind))
         return 4
     try:
-        return subprocess.call([py, "-I", os.path.abspath(__file__), "--run"] + argv)
+        child = subprocess.Popen([py, "-I", os.path.abspath(__file__), "--run"] + argv)
     except OSError as e:
         sys.stdout.write("context-foundation could not start (" + str(e) + "). Search with grep meanwhile.\n")
         return 4
+    try:
+        rc = child.wait()
+    except KeyboardInterrupt:
+        # Ctrl+C は子にも届いている。子を止めずに後始末(途中までの埋め込みを書き残すなど)を待ち、子の終了コード
+        # (130)を返す。2 回目の Ctrl+C では、子を残さないように止めてから上げる
+        try:
+            rc = child.wait()
+        except KeyboardInterrupt:
+            child.kill()
+            child.wait()
+            raise
+    lost = None
+    if rc == VENV_LAUNCHER_LOST and os.name == "nt":
+        lost = PYTHON_LOST       # 仮想環境を作った python が消えた(pyvenv.cfg から前もって気づけなかった)
+    elif rc == VENV_IMPORT_FAILED:
+        lost = PACKAGES_LOST     # 子が、要るパッケージを読めなかった(理由は子が標準エラーに書いた)
+    if lost and kind != "CF_PYTHON":
+        # どちらのときも、子は標準入力を読む前に終わっている
+        if argv[:1] == ["serve"]:
+            return serve_not_ready(lost, kind)
+        sys.stdout.write(not_ready_message(lost, kind))
+        return 4
+    return rc
 
 
 if __name__ == "__main__":

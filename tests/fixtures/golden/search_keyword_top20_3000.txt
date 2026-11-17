@@ -1,0 +1,59 @@
+context-foundation search: 9 passages, mode keyword, index of <CREATED_AT> (33 passages)
+
+[1] ws:engine/Render/BufferPool.cpp:14-26  (function)
+scope: kes::render::BufferPool
+```
+    BufferPool::BufferPool(uint32_t reuseDelayFrames)
+        : m_reuseDelayFrames(reuseDelayFrames)
+    {
+    }
+
+    BufferPool::~BufferPool()
+    {
+        for (Buffer* buffer : m_free)
+        {
+            Device::Get().DestroyBuffer(buffer->gpuHandle);
+            delete buffer;
+        }
+    }
+```
+
+[2] ws:engine/Render/BufferPool.cpp:28-51  (function)
+scope: kes::render::BufferPool
+```
+    Buffer* BufferPool::Acquire(const BufferDesc& desc)
+    {
+        // Prefer a retired buffer over a fresh allocation: creating GPU
+        // memory is slow and fragments the heap.
+        if (Buffer* reused = FindReusable(desc))
+        {
+            ++m_liveCount;
+            return reused;
+        }
+        Buffer* created = new Buffer();
+        created->desc = desc;
+        created->gpuHandle = Device::Get().CreateBuffer(desc.byteSize, desc.usageFlags);
+        ++m_liveCount;
+        return created;
+    }
+
+    void BufferPool::Release(Buffer* buffer)
+    {
+        // The GPU may still read the buffer for the frames in flight, so
+        // it only becomes reusable after m_reuseDelayFrames.
+        buffer->retiredAtFrame = m_currentFrame;
+        m_free.push_back(buffer);
+        --m_liveCount;
+    }
+```
+
+More matches (text not shown):
+[3] ws:engine/Render/BufferPool.cpp:53-69  (function)  Buffer* BufferPool::FindReusable(const BufferDesc& desc)
+[4] ws:engine/Render/BufferPool.h:1-51  (class)  class BufferPool final
+[5] ws:engine/Render/BufferPool.cpp:71-90  (function)  void BufferPool::CollectGarbage(uint32_t frameIndex)
+[6] ws:engine/Render/BufferPool.cpp:1-12  (declaration)  constexpr uint32_t kMaxIdleFrames = 120;
+[7] ws:docs/rendering.md:13-26  (heading)  Reuse delay
+[8] ws:docs/rendering.md:1-11  (heading)  Rendering design notes
+[9] ws:engine/Core/Reflection.h:1-37  (function)  inline const char* ToString(BlendMode mode)
+
+Cite evidence as source:path:start-end. Passage text is the file's own text at index time; open a file only for lines that are not shown.

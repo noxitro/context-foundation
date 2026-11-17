@@ -4,6 +4,12 @@ on:
   pull_request:
   push:
     branches: [main]
+  # Setup installs whatever PyPI serves on the day it runs, so the tests also
+  # run every Monday, even when nothing was pushed, to notice a new release of
+  # a dependency (or of Python) that breaks the tool.
+  schedule:
+    - cron: "0 3 * * 1"
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -43,7 +49,9 @@ jobs:
       fail-fast: false
       matrix:
         os: [windows-latest, ubuntu-latest]
-        python: ["3.11", "3.13"]
+        # Every version of the supported range (pyproject.toml
+        # requires-python, ctxf.py MIN_PYTHON and MAX_PYTHON).
+        python: ["3.11", "3.12", "3.13", "3.14"]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -58,7 +66,96 @@ jobs:
       - name: Install the package and pytest
         run: python -m pip install -e ".[dev]"
 
-      # Tests that need the real embedding model are skipped when the model
-      # is not on the machine, so this job downloads no model.
+      # The tests use a stand-in for the embedding model (tests/conftest.py).
+      # The few tests marked `model` (tests/test_model.py) use the real model
+      # and are skipped when it is not on the machine. This job downloads no
+      # model, so they are skipped here; smoke.yml runs the real model.
       - name: Run tests
         run: python -m pytest
+
+  lowest:
+    name: Tests at the lowest declared versions (${{ matrix.os }}, Python 3.11)
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.11"
+
+      # Every dependency at the lower bound that pyproject.toml declares, so
+      # that a bound that is no longer true shows up here. Python 3.11, since
+      # the lowest numpy (2.0.0) has no build for newer Pythons.
+      - name: Pin the dependencies to their lowest declared versions
+        shell: bash
+        run: |
+          python .github/scripts/lowest_constraints.py > "$RUNNER_TEMP/lowest.txt"
+          cat "$RUNNER_TEMP/lowest.txt"
+
+      - name: Install the package and pytest at those versions
+        shell: bash
+        run: python -m pip install -c "$RUNNER_TEMP/lowest.txt" -e ".[dev]"
+
+      - name: Run tests
+        run: python -m pytest
+
+  package:
+    name: Build and use the wheel and the sdist
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+
+      # The sdist must hold exactly the files that git tracks (MANIFEST.in
+      # names them). Files that git ignores, such as third-party documents,
+      # private measurements, an index (.cf) or a local config, must never
+      # get in: put such files in place first, so that the check fails when
+      # MANIFEST.in would pick them up.
+      - name: Build the wheel and the sdist
+        run: |
+          mkdir -p bench/local bench/runs examples/o3de/.cf tests/fixtures/.cf
+          touch docs/third-party.pdf docs/local-notes.md bench/local/cases.jsonl bench/runs/run.json \
+            examples/o3de/.cf/index.db examples/o3de/config.toml tests/fixtures/.cf/index.db
+          python -m pip install build
+          python -m build --outdir "$RUNNER_TEMP/dist"
+          python .github/scripts/check_sdist.py "$RUNNER_TEMP"/dist/*.tar.gz
+
+      # The installed package alone, outside this checkout: index and search
+      # the test corpus with the stand-in embedding model.
+      - name: Install the wheel in a clean virtual environment and use it
+        env:
+          CF_TEST_EMBEDDER: hash
+          CF_HOME: ${{ runner.temp }}/cf-home
+        run: |
+          python -m venv "$RUNNER_TEMP/wheel-venv"
+          . "$RUNNER_TEMP/wheel-venv/bin/activate"
+          python -m pip install "$RUNNER_TEMP"/dist/*.whl
+          ctxf --version
+          mkdir "$RUNNER_TEMP/ws"
+          cd "$RUNNER_TEMP/ws"
+          ctxf init "$GITHUB_WORKSPACE/tests/fixtures/corpus/engine" "$GITHUB_WORKSPACE/tests/fixtures/corpus/docs"
+          ctxf index --quiet
+          ctxf search --format agent "pool of GPU buffers that are reused" | tee out.txt
+          grep -q "BufferPool.cpp" out.txt
+
+      - name: Run the tests from the unpacked sdist
+        run: |
+          mkdir "$RUNNER_TEMP/sdist"
+          tar xzf "$RUNNER_TEMP"/dist/*.tar.gz -C "$RUNNER_TEMP/sdist"
+          . "$RUNNER_TEMP/wheel-venv/bin/activate"
+          python -m pip install pytest
+          cd "$RUNNER_TEMP"/sdist/*/
+          python -m pytest

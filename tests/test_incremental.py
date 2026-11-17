@@ -8,16 +8,19 @@
 """
 from __future__ import annotations
 
+import gc
+import os
 from contextlib import closing
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from context_foundation.cli import main as cli_main
 from context_foundation.config import load_config
 from context_foundation.indexer import build_index
 from context_foundation.search import Searcher
-from context_foundation.store import load_vectors, open_readonly, read_meta, unpack_text
+from context_foundation.store import IndexError_, load_meta, load_vectors, open_readonly, read_meta, unpack_text
 
 from conftest import write_config
 
@@ -133,3 +136,46 @@ def test_cli_full_flag_reembeds_everything(tmp_path, corpus_copy, capsys, monkey
     assert cli_main(["index", "--quiet", "--json"]) == 0
     out = json.loads(capsys.readouterr().out)
     assert out["timings"]["embedded_passages"] == 0
+
+
+@pytest.mark.parametrize("damage", ["garbage", "truncated", "empty"])
+def test_rebuild_over_unreadable_index(tmp_path, corpus_copy, damage):
+    """壊れた索引の上に作り直せる(読めなかった索引を、同じプロセスが開いたままにしない)。"""
+    _build(tmp_path, corpus_copy)
+    dest = tmp_path / ".cf" / "index.db"
+    damaged = {"garbage": b"not a database\n" * 100, "truncated": dest.read_bytes()[:4096], "empty": b""}[damage]
+    dest.write_bytes(damaged)
+    gc.disable()          # 置き去りの接続を、ごみ集めで閉じさせない
+    try:
+        with pytest.raises(IndexError_):
+            open_readonly(dest)
+        other = tmp_path / "other.db"
+        other.write_bytes(b"x")
+        os.replace(other, dest)                       # 開いたままなら、Windows ではここで断られる
+        dest.write_bytes(damaged)
+        _build(tmp_path, corpus_copy)
+        assert load_meta(dest)["embedding"]
+        dest.write_bytes(damaged)
+        _build(tmp_path, corpus_copy, use_embedding=False)
+        assert load_meta(dest)["embedding"] is None
+    finally:
+        gc.enable()
+
+
+def test_readonly_uri_escapes_and_keeps_unc_paths():
+    from context_foundation.store import readonly_uri
+    assert readonly_uri(Path("//server/share/a b/index.db")) == "file:////server/share/a%20b/index.db?mode=ro"
+    assert readonly_uri(Path("/x/100%/i#1?.db")).endswith("/x/100%25/i%231%3F.db?mode=ro")
+
+
+def test_open_failure_of_sqlite_becomes_an_index_error(tmp_path, corpus_copy, monkeypatch):
+    import sqlite3
+
+    from context_foundation import store
+    _build(tmp_path, corpus_copy)
+
+    def refuse(*a, **kw):
+        raise sqlite3.OperationalError("unable to open database file")
+    monkeypatch.setattr(store.sqlite3, "connect", refuse)
+    with pytest.raises(IndexError_, match="unable to open database file"):
+        open_readonly(tmp_path / ".cf" / "index.db")

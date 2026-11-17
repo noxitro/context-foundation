@@ -1,0 +1,55 @@
+[
+ {
+  "name": "search",
+  "description": "Find where something is implemented or documented in this workspace. Searches a local index of the code and design docs by meaning and by keywords, and returns ranked passages as source:path:start-end with scope, signature and text - usually enough to answer and cite without opening files. Call it before grep.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "query": {
+     "type": "string",
+     "description": "What to find: what the code does, in English, plus identifiers you expect (function, class or file names)."
+    },
+    "top_k": {
+     "type": "integer",
+     "minimum": 1,
+     "maximum": 20,
+     "description": "Passages to return (8)."
+    },
+    "mode": {
+     "type": "string",
+     "enum": [
+      "hybrid",
+      "keyword",
+      "semantic"
+     ],
+     "description": "Default hybrid."
+    },
+    "source_id": {
+     "type": "string",
+     "description": "Limit to one source (see status)."
+    }
+   },
+   "required": [
+    "query"
+   ],
+   "additionalProperties": false
+  },
+  "annotations": {
+   "readOnlyHint": true,
+   "openWorldHint": false
+  }
+ },
+ {
+  "name": "status",
+  "description": "Index version, sources, passage counts and build time.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {},
+   "additionalProperties": false
+  },
+  "annotations": {
+   "readOnlyHint": true,
+   "openWorldHint": false
+  }
+ }
+]

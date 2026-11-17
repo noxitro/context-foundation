@@ -90,6 +90,12 @@ def _model_ready(cfg) -> bool:
         return False
 
 
+def _had_embeddings(cfg) -> bool:
+    """前の索引(置き換えられずに残ったものを含む)に埋め込みがあるか。"""
+    from .indexer import previous_had_embeddings
+    return previous_had_embeddings(cfg.index_path)
+
+
 def _offer_model(embedding_cfg) -> bool:
     """埋め込みモデルが無ければ、取得するかを尋ねる。使える状態なら True。"""
     from .embed import MODEL_PRESETS, ModelUnavailable, download_model, model_files, resolve_model
@@ -186,6 +192,13 @@ def wizard_index() -> int:
     use_embedding = None
     if cfg.embedding.enabled and not _offer_model(cfg.embedding):
         use_embedding = False
+        if _had_embeddings(cfg):
+            print("  前の索引には埋め込みがあります。keyword だけの索引に置き換えると、次に埋め込みつきで作るときに、"
+                  "すべての passage を埋め込み直すことになります(時間がかかります)")
+            # 入力が閉じられているときは、置き換えない(尋ねずに埋め込みを捨てない)
+            if not yes("keyword だけの索引に置き換えますか", default=False, when_closed=False):
+                print("やめました。前の索引はそのまま使えます。モデルは setup.bat から取得できます")
+                return 2
     print()
     print("索引を作ります。大きなコードでは時間がかかります(埋め込みは 1 秒に 50 件ほど)。")
     build_index(cfg, use_embedding=use_embedding)
@@ -269,3 +282,11 @@ def main(args) -> int:
     except FileNotFoundError as e:
         print(e)
         return 2
+    except Exception as e:
+        # 索引づくりの、利用者に見せる失敗(モデルを読めない・ファイルが無い・置き換えられない)
+        from .embed import ModelUnavailable
+        from .indexer import BuildError, ReplaceError
+        if not isinstance(e, (ModelUnavailable, BuildError)):
+            raise
+        print(e)
+        return 1 if isinstance(e, ReplaceError) else 2

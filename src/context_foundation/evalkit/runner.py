@@ -14,7 +14,7 @@ import sys
 import time
 from pathlib import Path
 
-from .. import __version__
+from .. import __version__, command_hint
 from ..config import MODES, find_config, load_config
 from ..render import to_agent
 from ..sysinfo import host_info
@@ -43,6 +43,13 @@ def glossary_info(searcher) -> dict | None:
     return {"builtin": "builtin" in g.sources, "workspace_files": files, "skipped_lines": len(g.problems)}
 
 
+def _callable_name(fn) -> str | None:
+    """reranker の名前(モジュール:関数)。使っていなければ None。"""
+    if fn is None:
+        return None
+    return f"{getattr(fn, '__module__', '?')}:{getattr(fn, '__qualname__', type(fn).__name__)}"
+
+
 def run_metadata(run_id: str, searcher, methods: list[str], top_k: int, corpus_revision: str, search_cfg,
                  candidates: list[str]) -> dict:
     st = searcher.status()
@@ -55,7 +62,7 @@ def run_metadata(run_id: str, searcher, methods: list[str], top_k: int, corpus_r
                         "rrf_k": search_cfg.rrf_k, "hybrid_weighting": search_cfg.hybrid_weighting,
                         "bm25_weights": {"body": search_cfg.weight_body, "symbols": search_cfg.weight_symbols,
                                          "path": search_cfg.weight_path},
-                        "reranker": search_cfg.reranker or None,
+                        "reranker": _callable_name(getattr(searcher, "_reranker", None)),
                         "glossary": glossary_info(searcher)} for m in methods},
         "corpus": {"files": stats["files"], "lines": stats["lines"], "chunks": stats["chunks"],
                    "sources": [{"source_id": s["id"], "files": s["files"], "lines": s["lines"], "chunks": s["chunks"]}
@@ -127,7 +134,7 @@ def main(args) -> int:
     if errors:
         for i in errors:
             print(i.format(), file=sys.stderr)
-        sys.stderr.write("cases.jsonl に誤りがあります。`ctxf validate --cases ...` で確かめて直してください\n")
+        sys.stderr.write(f"cases.jsonl に誤りがあります。`{command_hint('validate --cases ...')}` で確かめて直してください\n")
         return 1
     if not cases:
         sys.stderr.write(f"cases.jsonl に、split が {split} の質問がありません\n")

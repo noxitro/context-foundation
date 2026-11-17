@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 import subprocess
 import sys
 import tomllib
@@ -28,6 +29,63 @@ def load_launcher(monkeypatch, cf_home: Path):
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
+
+
+def test_versions_agree_and_changelog_has_the_current_version():
+    # 版は 4 か所でそろえ、変更履歴の一番上の見出しが今の版になっている(版を上げたら、変更履歴も書く)
+    plugin = json.loads((REPO / "plugin.json").read_text(encoding="utf-8"))
+    (entry,) = json.loads((REPO / ".github" / "plugin" / "marketplace.json").read_text(encoding="utf-8"))["plugins"]
+    project = tomllib.loads((REPO / "pyproject.toml").read_text(encoding="utf-8"))["project"]
+    assert plugin["version"] == entry["version"] == project["version"] == __version__
+    changelog = (REPO / "CHANGELOG.md").read_text(encoding="utf-8")
+    versions = re.findall(r"^## (\d+\.\d+\.\d+)", changelog, re.M)
+    assert versions and versions[0] == __version__
+    latest = changelog.split("\n## ")[1]
+    assert "### 更新のあとにすること" in latest
+    # チームの Marketplace に載せる例の版も、今の版
+    assert f'"version": "{__version__}"' in (REPO / "docs" / "copilot.md").read_text(encoding="utf-8")
+
+
+def _section(text: str, heading: str) -> str:
+    return text.split(f"\n## {heading}\n", 1)[1].split("\n## ", 1)[0]
+
+
+def test_reporting_sections_ask_to_mask_the_paths_of_the_where_output():
+    # where の出力は、利用者の名前を含む絶対パスを出す。issue は公開されるので、どちらの README も伏せるよう求める
+    en = _section((REPO / "README.md").read_text(encoding="utf-8"), "Reporting problems")
+    ja = _section((REPO / "README.ja.md").read_text(encoding="utf-8"), "不具合の報告")
+    assert "where" in en and "mask" in en
+    assert "where" in ja and "伏せ" in ja
+
+
+def test_documented_index_exit_codes_match_the_code():
+    # 無人で流す index の終了コードの説明に、コードが返す値がすべてある(用意ができていない 4 を含む)
+    from context_foundation import cli
+    import re
+    codes = {0, 1, cli.EXIT_USAGE, cli.EXIT_NO_INDEX, 4, 130}
+    for name, heading in (("README.ja.md", "コマンド"), ("docs/copilot.md", "索引を更新する")):
+        part = _section((REPO / name).read_text(encoding="utf-8"), heading)
+        para = part[part.index("終了コードは"):].split("\n\n", 1)[0]
+        # 「130 が」の中の「0 が」に当てない(0 の説明が消えたら落ちる)。書いてある値と、コードの値が同じ
+        assert {int(c) for c in re.findall(r"(?<!\d)(\d+) が", para)} == codes, name
+
+
+def test_copilot_doc_names_the_default_surface():
+    # アプリでの確かめ方は、既定の出し方(MCP の道具)を見るように書いてある
+    doc = (REPO / "docs" / "copilot.md").read_text(encoding="utf-8")
+    app = doc.split("\n### アプリ\n", 1)[1].split("\n### ", 1)[0]
+    assert "context-foundation-search" in app
+
+
+def test_documented_storage_paths_match_the_code(monkeypatch, tmp_path):
+    # 「保存されるものと消し方」の表に、コードが使う置き場の名前が出ている
+    from context_foundation import embed, wizard
+    launcher = load_launcher(monkeypatch, tmp_path / "home")
+    doc = (REPO / "docs" / "copilot.md").read_text(encoding="utf-8")
+    names = [Path(launcher.runtime_dir()).name, Path(launcher.runtime_dir()).name + "\\venv",
+             Path(launcher._stamp_path()).name, embed.default_cache_dir().name, wizard._state_file().name,
+             ".local/share/context-foundation", ".cache/context-foundation", "index.db.partial", "index.db.new"]
+    assert [n for n in names if n not in doc] == []
 
 
 def test_plugin_manifest_marketplace_and_hook_agree():
@@ -228,10 +286,13 @@ def test_mcp_server_stays_up_without_tools_when_the_tool_is_not_set_up(tmp_path)
     r = subprocess.run([sys.executable, "-I", str(plugin / "ctxf.py"), "serve"], capture_output=True,
                        input="".join(json.dumps(m) + "\n" for m in lines) + "not json" + "\n", text=True,
                        encoding="utf-8", env=env, timeout=60)
-    assert r.returncode == 0 and r.stderr == ""
+    assert r.returncode == 0
+    # 理由と用意のしかたは、標準エラー(ホストの MCP のログ)に 1 行。標準出力は JSON-RPC の行だけ
+    assert "not set up" in r.stderr and "ctxf.py\" setup" in r.stderr and "new session" in r.stderr
     replies = [json.loads(line) for line in r.stdout.splitlines()]
     assert [m["id"] for m in replies] == [1, 2, 3]                 # 通知と、壊れた行には答えない
     assert replies[0]["result"]["protocolVersion"] == "2025-06-18"
     assert replies[0]["result"]["serverInfo"]["name"] == "context-foundation"
     assert replies[1]["result"] == {"tools": []}
-    assert "not set up" in replies[2]["error"]["message"]
+    message = replies[2]["error"]["message"]
+    assert "not set up" in message and "ctxf.py\" setup" in message and "new session" in message

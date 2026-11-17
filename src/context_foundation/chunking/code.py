@@ -415,19 +415,28 @@ class _Ctx:
             out.append(Item(r1, r1, "preproc", scope, self.li.first_line(r1, r1, 160)))   # `#endif` や `}` の行
 
     def tiles(self, node, r0: int, r1: int, out: list[tuple[int, int]]) -> None:
-        """node の子ノードの行の範囲を out に足す。大きめの子(上限の 1/3 より大きい)には下りて、細かくする。"""
+        """node の子ノードの行の範囲を out に足す。大きめの子(上限の 1/3 より大きい)には下りて、細かくする。
+
+        下りるのは、再帰ではなく自前の積み上げで行う(長い else if の連なりは、1 つ下りるごとに 1 段深くなり、
+        500 段ほどで Python の再帰の上限に当たるため)。"""
         li, cfg = self.li, self.cfg
-        for k in node.named_children:
+        # (子の並び, 範囲の上と下, 下りた子の (out の長さ, 行の範囲)。中から何も出なければ、子の範囲をそのまま足す)
+        stack = [(iter(node.named_children), r0, r1, None)]
+        while stack:
+            kids, a0, a1, pending = stack[-1]
+            k = next(kids, None)
+            if k is None:
+                stack.pop()
+                if pending is not None and len(out) == pending[0]:
+                    out.append(pending[1])
+                continue
             k0, k1 = self.rows(k)
-            k0, k1 = max(k0, r0), min(k1, r1)
+            k0, k1 = max(k0, a0), min(k1, a1)
             if k1 < k0:
                 continue
             size = li.size(k0, k1)
             if size > cfg.max_bytes // 3 and k.named_child_count and k1 > k0:
-                before = len(out)
-                self.tiles(k, k0, k1, out)
-                if len(out) == before:
-                    out.append((k0, k1))
+                stack.append((iter(k.named_children), k0, k1, (len(out), (k0, k1))))
             elif size > cfg.max_bytes:
                 out.extend(split_rows(li, k0, k1, cfg.max_bytes, 10 ** 9))
             else:

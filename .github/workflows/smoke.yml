@@ -19,6 +19,10 @@ on:
       - ".github/workflows/smoke.yml"
   push:
     branches: [main]
+  # Every Monday as well: setup installs the newest packages from PyPI (and
+  # the model from Hugging Face), which can break the tool between pushes.
+  schedule:
+    - cron: "0 4 * * 1"
   workflow_dispatch:
 
 permissions:

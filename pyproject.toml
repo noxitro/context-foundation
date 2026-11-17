@@ -4,24 +4,29 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "context-foundation"
-version = "0.3.1"
+version = "0.4.0"
 description = "Retrieval-only proof of concept: find evidence passages in large codebases and design documents from natural-language questions."
 readme = "README.md"
 license = "MIT"
-requires-python = ">=3.11"
+# 3.15 には onnxruntime の配布物(wheel)がまだ無い。上げるときは ctxf.py の MAX_PYTHON と CI の版も
+requires-python = ">=3.11,<3.15"
 dependencies = [
     # 構文の単位で分けるための解析器(C・C++・C#)
     "tree-sitter>=0.25",
     "tree-sitter-c>=0.23",
     "tree-sitter-cpp>=0.23",
     "tree-sitter-c-sharp>=0.23",
-    # 手元で計算する埋め込み(ONNX)と、ベクトルの総当たり
-    "numpy>=2.0",
-    "onnxruntime>=1.20",
+    # 手元で計算する埋め込み(ONNX)と、ベクトルの総当たり。
+    # 上限は、次の大きな版(major)の手前。大きな版で壊れたことがあるもの(numpy 1→2、huggingface_hub 0→1、
+    # jsonschema 3→4)と、索引を作る onnxruntime に付ける。版を固定した一覧(lock)は持たない(OS と Python の版ごとに
+    # 配布物が違い、保つ手間が大きい)。PyPI の新しい版で壊れたことは、CI の週 1 回の実行で気づく
+    "numpy>=2.0,<3",
+    "onnxruntime>=1.20,<2",
     "tokenizers>=0.21",
-    "huggingface_hub>=0.30",
+    # 0.36 より前は、Windows で長いパス(260 文字を超える)のモデルの取得が失敗する
+    "huggingface_hub>=0.36,<3",
     # cases.jsonl / results.jsonl の検査
-    "jsonschema>=4.20",
+    "jsonschema>=4.20,<5",
 ]
 
 [project.optional-dependencies]
@@ -38,6 +43,10 @@ context_foundation = ["schemas/*.json", "glossary_ja.tsv"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# このフォルダの src を先に読む(フォルダを動かしたり写したりしても、入れたときのフォルダのものを読まないように)。
+# 効くのはテストのプロセスの中だけ。子のプロセスで動かすテストは、環境変数 PYTHONPATH で同じことをする
+# (tests/test_mcp_cli.py の ENV)
+pythonpath = ["src"]
 addopts = "-q"
 markers = [
     "model: 埋め込みモデルの実物が要るテスト(モデルが手元に無ければ飛ばす)",

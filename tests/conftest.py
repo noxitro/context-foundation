@@ -33,6 +33,25 @@ def _hash_embedder(monkeypatch):
     monkeypatch.delenv("CF_CONFIG", raising=False)
 
 
+def workspace_above(path: Path) -> Path | None:
+    """path の上のフォルダのうち、作業フォルダ(.cf に設定か索引があるもの)。無ければ None。"""
+    for d in Path(path).resolve().parents:
+        if (d / ".cf" / "config.toml").is_file() or (d / ".cf" / "index.db").is_file():
+            return d
+    return None
+
+
+@pytest.fixture
+def outside_any_workspace(tmp_path):
+    """「索引も設定も無い」場所を前提にするテスト用。設定と索引は上のフォルダへたどって探すので、一時フォルダの
+    上に作業フォルダがあると(ホームを作業フォルダにしているときなど)、そこが見つかってしまう。そのときは、理由を
+    付けて飛ばす。"""
+    found = workspace_above(tmp_path)
+    if found is not None:
+        pytest.skip(f"一時フォルダの上に作業フォルダ(.cf)がある: {found}。pytest の --basetemp で、"
+                    "作業フォルダの外を指すと確かめられます")
+
+
 @pytest.fixture(scope="session")
 def indexed_workspace(tmp_path_factory) -> Path:
     """フィクスチャのコーパスの索引を作った作業フォルダ(テスト全体で 1 回だけ作る)。"""

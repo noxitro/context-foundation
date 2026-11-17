@@ -16,9 +16,11 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import sys
 import threading
+import traceback
 from pathlib import Path
 
 from . import __version__
@@ -31,6 +33,12 @@ INSTRUCTIONS = (
     "Describe what the code does in English and add identifiers you expect. It returns ranked passages with "
     "source:path:start-end and their text, usually enough to answer and cite; grep or open files afterwards only "
     "for what the passages do not show.")
+# 索引の無い作業フォルダ(プラグインは利用者ごとに入るので、どの作業フォルダでもサーバーが起動する)での挨拶。
+# 検索を grep より先に呼ぶようには促さない(呼んでも、索引が無いという誤りが返るだけ)
+INSTRUCTIONS_NO_INDEX = "No context-foundation index in this workspace; search with grep."
+# 質問の長さの上限(UTF-8 のバイト数)。自然文の質問は数百バイト。長いコードを貼られても、keyword の側は
+# 先頭の 256 語しか使わず、意味検索の側も 512 トークンで切れる
+MAX_QUERY_BYTES = 8_192
 
 TOOLS = [
     {
@@ -105,6 +113,16 @@ class _State:
         return hit[1], hit[2]
 
 
+def has_index(state: _State) -> bool:
+    """エージェントの作業フォルダ(か、その親)に、索引があるか。設定が読めないときは、あるとみなす
+    (誤りは、道具を呼んだときに文面で返す)。"""
+    try:
+        path = find_config(state.config, start=session_dir())
+        return path is not None and load_config(path).index_path.is_file()
+    except Exception:
+        return True
+
+
 def _glossary_mtime(cf_dir: Path, cfg) -> int | None:
     """作業フォルダの用語の対応表の更新時刻(無ければ None)。設定で場所を変えていれば、そのファイル。"""
     setting = cfg.search.glossary
@@ -158,6 +176,10 @@ def _call_tool(state: _State, name: str, args: dict) -> tuple[bool, str]:
         query = args.get("query")
         if not isinstance(query, str) or not query.strip():
             return True, "search needs a non-empty string `query`."
+        size = len(query.encode("utf-8", "surrogatepass"))
+        if size > MAX_QUERY_BYTES:
+            return True, (f"query too long ({size:,} bytes; the limit is {MAX_QUERY_BYTES:,}): describe what you are "
+                          "looking for in a sentence or two, plus the identifiers you expect.")
         top_k = args.get("top_k")
         if top_k is not None and (isinstance(top_k, bool) or not isinstance(top_k, int)):
             return True, "`top_k` must be an integer."
@@ -180,9 +202,11 @@ def _call_tool(state: _State, name: str, args: dict) -> tuple[bool, str]:
 
 def handle(state: _State, msg: dict) -> dict | None:
     """1 つの JSON-RPC の要求に答える。通知(id が無い)には何も返さない。"""
-    mid, method, params = msg.get("id"), msg.get("method"), msg.get("params") or {}
+    mid, method, params = msg.get("id"), msg.get("method"), msg.get("params")
     if method is None or mid is None:
         return None
+    if isinstance(mid, float) and not math.isfinite(mid):     # 1e999 は inf になる。JSON に書き戻せない
+        return {"jsonrpc": "2.0", "id": None, "error": {"code": -32600, "message": "Invalid Request"}}
 
     def ok(result: dict) -> dict:
         return {"jsonrpc": "2.0", "id": mid, "result": result}
@@ -190,13 +214,17 @@ def handle(state: _State, msg: dict) -> dict | None:
     def err(code: int, message: str) -> dict:
         return {"jsonrpc": "2.0", "id": mid, "error": {"code": code, "message": message}}
 
+    if not params:
+        params = {}
+    elif not isinstance(params, dict):          # 位置で渡す形(配列)は、この道具には無い
+        return err(-32602, "`params` must be an object")
     if method == "initialize":
         start_warm_up(state)
         want = params.get("protocolVersion")
         return ok({"protocolVersion": want if want in PROTOCOL_VERSIONS else PROTOCOL_VERSIONS[0],
                    "capabilities": {"tools": {"listChanged": False}},
                    "serverInfo": {"name": "context-foundation", "version": __version__},
-                   "instructions": INSTRUCTIONS})
+                   "instructions": INSTRUCTIONS if has_index(state) else INSTRUCTIONS_NO_INDEX})
     if method == "ping":
         return ok({})
     if method == "tools/list":
@@ -212,6 +240,35 @@ def handle(state: _State, msg: dict) -> dict | None:
     return err(-32601, f"Method not found: {method}")
 
 
+def _handle_safely(state: _State, msg: dict) -> dict | None:
+    """handle で思わぬ例外が出ても、サーバーを落とさずに -32603 で答える(traceback は標準エラーへ)。"""
+    try:
+        return handle(state, msg)
+    except Exception:
+        traceback.print_exc(file=sys.stderr)
+        mid = msg.get("id")
+        if mid is None:
+            return None
+        return {"jsonrpc": "2.0", "id": mid, "error": {"code": -32603, "message": "Internal error"}}
+
+
+# 返事を JSON にできなかったときに書く、決まった 1 行(標準出力には JSON-RPC の行だけを書く)
+ENCODE_FAILED = b'{"jsonrpc": "2.0", "id": null, "error": {"code": -32603, "message": "Internal error"}}\n'
+
+
+def _reject_constant(name: str):
+    raise ValueError(f"not JSON: {name}")
+
+
+def _encode(reply) -> bytes:
+    """返事を 1 行のバイト列にする。対になっていないサロゲート(JSON の \\ud83d など)が混ざっていても落ちないように、
+    そのときは ASCII に逃がした形で書く(JSON としては同じ文字列)。NaN・Infinity は書かない(JSON ではない)。"""
+    try:
+        return json.dumps(reply, ensure_ascii=False, allow_nan=False).encode("utf-8") + b"\n"
+    except UnicodeEncodeError:
+        return json.dumps(reply, allow_nan=False).encode("ascii") + b"\n"
+
+
 def serve(config: str | None = None, stdin=None, stdout=None) -> int:
     stdin = stdin or sys.stdin.buffer
     stdout = stdout or sys.stdout.buffer
@@ -224,17 +281,22 @@ def serve(config: str | None = None, stdin=None, stdout=None) -> int:
         if not line:
             continue
         try:
-            msg = json.loads(line.decode("utf-8"))
-        except (ValueError, UnicodeDecodeError):
+            msg = json.loads(line.decode("utf-8"), parse_constant=_reject_constant)   # NaN・Infinity は受けない
+        except (ValueError, UnicodeDecodeError, RecursionError):
             reply = {"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "Parse error"}}
         else:
             if isinstance(msg, list):       # まとめて送る形は、順に答える
-                replies = [r for r in (handle(state, m) for m in msg if isinstance(m, dict)) if r is not None]
+                replies = [r for r in (_handle_safely(state, m) for m in msg if isinstance(m, dict)) if r is not None]
                 reply = replies or None
             elif isinstance(msg, dict):
-                reply = handle(state, msg)
+                reply = _handle_safely(state, msg)
             else:
                 reply = {"jsonrpc": "2.0", "id": None, "error": {"code": -32600, "message": "Invalid Request"}}
         if reply is not None:
-            stdout.write(json.dumps(reply, ensure_ascii=False).encode("utf-8") + b"\n")
+            try:
+                data = _encode(reply)
+            except Exception:
+                traceback.print_exc(file=sys.stderr)
+                data = ENCODE_FAILED
+            stdout.write(data)
             stdout.flush()

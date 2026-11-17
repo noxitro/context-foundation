@@ -84,8 +84,6 @@ class SearchConfig:
     weight_body: float = 1.0           # BM25 の列ごとの重み
     weight_symbols: float = 4.0
     weight_path: float = 2.0
-    reranker: str = ""                 # "モジュール:関数"。空なら使わない
-    rerank_candidates: int = 30
     max_output_bytes: int = 12_000     # エージェント向けの出力の上限
     glossary: str = ""                 # 用語の対応表(.cf からの相対か絶対パス)。空なら .cf/glossary.tsv があれば使う
     builtin_glossary: bool = True      # 既定の対応表(日本語 → 英語の一般の語)も使うか
@@ -108,8 +106,7 @@ class Config:
 
     @property
     def index_path(self) -> Path:
-        p = self.index.path
-        return p if p.is_absolute() else self.cf_dir / p
+        return self.cf_dir / self.index.path
 
     def source(self, source_id: str) -> SourceConfig | None:
         for s in self.sources:
@@ -167,10 +164,37 @@ def _str_list(table: dict, name: str) -> list[str]:
     return list(v)
 
 
+# 0.4.0 で外した項目。作業フォルダの設定は、誰が書いたか分からない(取ってきたリポジトリに入っていることもある)
+# ので、Python のコードを読み込ませる項目は持たない。reranker は Searcher(reranker=関数)で渡す
+_REMOVED_KEYS = {"search": ("reranker", "rerank_candidates")}
+
+
 def _check_keys(table: dict, allowed: set[str], where: str) -> None:
+    if not isinstance(table, dict):
+        raise ConfigError(f"設定 [{where}] は表([{where}] の見出しの下に項目を並べる形)で書いてください")
+    removed = [k for k in _REMOVED_KEYS.get(where, ()) if k in table]
+    if removed:
+        raise ConfigError(f"設定 [{where}] の {', '.join(removed)} は 0.4.0 で無くなりました"
+                          "(作業フォルダの設定からコードを読み込ませないため)。設定ファイルから消してください")
     unknown = sorted(set(table) - allowed)
     if unknown:
         raise ConfigError(f"設定 [{where}] に知らない項目があります: {', '.join(unknown)}")
+
+
+def _index_file(value: str, cf_dir: Path) -> Path:
+    """[index] path を確かめる。索引は .cf の中にだけ置ける(作業フォルダの外のファイルを、索引で上書きしないため)。"""
+    p = Path(value)
+    parts = Path(os.path.normpath(value)).parts if value else ()
+    if not parts or p.is_absolute() or p.drive or p.root or ".." in parts:
+        raise ConfigError(f"[index] path は .cf の中のファイル名にしてください(絶対パスと .. は使えません): {value!r}")
+    target = cf_dir / p
+    try:
+        inside = target.parent.resolve().is_relative_to(cf_dir.resolve())
+    except OSError:
+        inside = False
+    if not inside:
+        raise ConfigError(f"[index] path が .cf の外を指しています: {value!r}")
+    return p
 
 
 def load_config(path: str | os.PathLike) -> Config:
@@ -182,6 +206,10 @@ def load_config(path: str | os.PathLike) -> Config:
         raise ConfigError(f"設定ファイルがありません: {path}") from None
     except tomllib.TOMLDecodeError as e:
         raise ConfigError(f"設定ファイルを読めません({path}): {e}") from None
+    except UnicodeDecodeError:
+        raise ConfigError(f"設定ファイルが UTF-8 ではありません({path})。UTF-8(BOM なし)で保存し直してください") from None
+    except OSError as e:
+        raise ConfigError(f"設定ファイルを開けません({path}): {e.strerror or e}") from None
 
     _check_keys(data, {"source", "index", "chunk", "embedding", "search"}, "全体")
     cf_dir = path.parent
@@ -218,7 +246,7 @@ def load_config(path: str | os.PathLike) -> Config:
     t = data.get("index", {})
     _check_keys(t, {"path", "max_file_bytes", "max_line_chars", "skip_generated"}, "index")
     cfg.index = IndexConfig(
-        path=Path(_take(t, "path", str, INDEX_FILE_NAME)),
+        path=_index_file(_take(t, "path", str, INDEX_FILE_NAME), cf_dir),
         max_file_bytes=_take(t, "max_file_bytes", int, 1_000_000),
         max_line_chars=_take(t, "max_line_chars", int, 5_000),
         skip_generated=_take(t, "skip_generated", bool, True))
@@ -254,15 +282,13 @@ def load_config(path: str | os.PathLike) -> Config:
 
     t = data.get("search", {})
     _check_keys(t, {"mode", "top_k", "candidates", "rrf_k", "hybrid_weighting", "weight_body", "weight_symbols",
-                    "weight_path", "glossary", "builtin_glossary", "preload",
-                    "reranker", "rerank_candidates", "max_output_bytes"}, "search")
+                    "weight_path", "glossary", "builtin_glossary", "preload", "max_output_bytes"}, "search")
     cfg.search = SearchConfig(
         mode=_take(t, "mode", str, "hybrid"), top_k=_take(t, "top_k", int, 8),
         candidates=_take(t, "candidates", int, 50), rrf_k=_take(t, "rrf_k", int, 60),
         hybrid_weighting=_take(t, "hybrid_weighting", str, "coverage"),
         weight_body=_take(t, "weight_body", float, 1.0), weight_symbols=_take(t, "weight_symbols", float, 4.0),
-        weight_path=_take(t, "weight_path", float, 2.0), reranker=_take(t, "reranker", str, ""),
-        rerank_candidates=_take(t, "rerank_candidates", int, 30),
+        weight_path=_take(t, "weight_path", float, 2.0),
         max_output_bytes=_take(t, "max_output_bytes", int, 12_000),
         glossary=_take(t, "glossary", str, ""), builtin_glossary=_take(t, "builtin_glossary", bool, True),
         preload=_take(t, "preload", bool, True))
