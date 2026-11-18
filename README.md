@@ -76,6 +76,13 @@ the local machine and nothing is sent to an external service. An agent that
 uses the tool is a separate matter. The passages it reads, like the files it
 opens, go to the model provider the agent host is configured with. Decide
 which provider may receive a private corpus before running agents on it.
+When a source root lies outside the workspace folder, its absolute path
+(which may contain your user name) appears in the `roots:` line of every
+search result and in `status`, so it reaches the model too.
+
+Create the `.cf` folder yourself. If a fetched repository comes with a
+`.cf` folder, delete it and build your own: the configuration can point at
+folders outside the workspace (source roots, a model folder, a glossary).
 
 Keep the questions, annotations, paths, and search results of a private
 corpus out of this public repository. The specification uses generic field
@@ -108,6 +115,7 @@ The first proof of concept does not include:
 | `tests` | Tests and a small synthetic corpus (C++, C#, Markdown) |
 | `examples/o3de` | Worked evaluation example on a public C++ game engine: questions, answer locations, measured results |
 | `docs` | Evaluation specification, design notes, Copilot setup, comparison runbook |
+| `CHANGELOG.md` | Changes per version and what to do after updating |
 | `*.bat` | Double-click entry points for Windows |
 
 ## Status
@@ -145,11 +153,55 @@ questions do not ask for; with the reviewed key the figures are 93.1% and
 88.5%, and the agent with this tool meets the thresholds set for it. The
 reviewed key is the one taken for the verdict on Godot. The search-only
 method does not meet its threshold (50% of questions with a relevant passage
-in the top five). It has not been run on a private
-corpus. Everything here has been exercised on the synthetic corpus and on
-public codebases only.
+in the top five). The comparison has not been run on a private corpus:
+the retrieval evaluations and the comparisons with the existing workflow
+use the synthetic corpus and public codebases only. Index build time and
+search latency were also measured on part of a larger engine codebase that
+is not public (245,457 passages).
 What has been measured so far, and what has not, is listed in
 [docs/benchmarks.md](docs/benchmarks.md) (in Japanese).
+
+Version 0.4.0 hardens the tool for production use (safety of the workspace
+configuration, ingest rules, resuming an interrupted build, an output that
+fits its budget, clearer setup failures). The changes, and what to do
+after updating, are in [CHANGELOG.md](CHANGELOG.md) (in Japanese). They were
+run by hand on Windows with Python 3.13; other systems and Python versions
+are covered by the CI tests (and the tests were also run on Ubuntu under WSL
+with Python 3.12), and version 0.4.0 has not been tried in Copilot yet.
+
+## Supported environments
+
+| | Supported | Verified |
+| --- | --- | --- |
+| OS | Windows; the Python part also runs on Linux (the `.bat` files are for Windows) | Windows 11 by hand; Windows and Ubuntu in CI |
+| Python | 3.11 to 3.14 (onnxruntime has no build for 3.15 yet) | 3.13 by hand; 3.11, 3.12, 3.13 and 3.14 in CI |
+| Agent host | GitHub Copilot CLI and the Copilot app | Copilot CLI 1.0.112 (up to version 0.3); the app has not been tried |
+
+The plugin starts its MCP server and hook with a command named `python`,
+which must be on `PATH`. Systems that only have `python3` need a `python`
+command as well. The fallback skill is written for PowerShell. Setup,
+troubleshooting, what is stored where and how to remove it are in
+[docs/copilot.md](docs/copilot.md) (in Japanese).
+
+Setup installs the Python packages with pip, so `HTTPS_PROXY` and
+`PIP_INDEX_URL` (a PyPI mirror) apply. On a PC without internet access,
+download the packages on a connected PC with the same OS and Python version
+(`pip download -d <wheels> <the dependencies in pyproject.toml>`), copy the
+folder, and run setup with `PIP_NO_INDEX=1` and `PIP_FIND_LINKS=<wheels>`.
+The model folder can be copied from another PC; the runtime virtual
+environment cannot, because it records the path of its base Python.
+
+## Reporting problems
+
+Open an issue at <https://github.com/noxitro/context-foundation/issues>, with
+the output of `python -I <plugin folder>/ctxf.py where` and the tool version.
+The `where` output contains absolute paths (your user name, the workspace
+folder); mask them before posting. Never paste source code, search results,
+indexes or evaluation questions from a private corpus into an issue: issues
+are public. Use the synthetic corpus under `tests/fixtures` or public code to
+reproduce a problem. For a problem that could leak secrets, do not describe it
+in an issue; use the repository's Security tab to report it privately, or open
+an issue that only says you have something to report privately.
 
 On the worked example for a public C++ game engine
 ([`examples/o3de`](examples/o3de/README.md)), the retrieval-only methods do

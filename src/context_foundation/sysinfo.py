@@ -50,3 +50,39 @@ def cpu_name() -> str:
 def host_info() -> dict:
     return {"os": platform.system(), "os_release": platform.release(), "cpu": cpu_name(),
             "cpu_count": os.cpu_count(), "python": platform.python_version()}
+
+
+def pid_alive(pid: int) -> bool | None:
+    """そのプロセスが動いているか。分からなければ None(ctxf.py の _pid_alive と同じ判定)。"""
+    if pid <= 0:
+        return False
+    if os.name == "nt":
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            k32.OpenProcess.restype = wintypes.HANDLE
+            k32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+            k32.GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+            k32.CloseHandle.argtypes = [wintypes.HANDLE]
+            h = k32.OpenProcess(0x1000, False, pid)       # PROCESS_QUERY_LIMITED_INFORMATION
+            if not h:
+                # 権限が足りないだけのこともある(ERROR_ACCESS_DENIED)。そのときは分からない
+                return None if ctypes.get_last_error() == 5 else False
+            try:
+                code = wintypes.DWORD()
+                if not k32.GetExitCodeProcess(h, ctypes.byref(code)):
+                    return None
+                return code.value == 259                  # STILL_ACTIVE
+            finally:
+                k32.CloseHandle(h)
+        except (AttributeError, OSError):
+            return None
+    try:
+        os.kill(pid, 0)
+        return True
+    except (ProcessLookupError, OverflowError):          # OverflowError: pid として大きすぎる数
+        return False
+    except OSError:                                       # 権限が無いなど
+        return None

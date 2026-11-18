@@ -11,14 +11,16 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
+import urllib.parse
 import zlib
 from contextlib import closing
 from pathlib import Path
 
 import numpy as np
 
-from . import INDEX_SCHEMA_VERSION
+from . import INDEX_SCHEMA_VERSION, command_hint
 
 VECTOR_BLOCK = 4096    # 1 行にまとめるベクトルの数
 
@@ -57,7 +59,7 @@ class IndexWriter:
     def __init__(self, path: Path):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        if self.path.exists():
+        if os.path.lexists(self.path):          # リンクなら、リンクだけを消す(指す先に索引を書かない)
             self.path.unlink()
         self.db = sqlite3.connect(str(self.path))
         self.db.executescript("PRAGMA journal_mode=OFF; PRAGMA synchronous=OFF; PRAGMA page_size=8192;")
@@ -118,22 +120,37 @@ class IndexWriter:
 def open_readonly(path: Path) -> sqlite3.Connection:
     path = Path(path)
     if not path.is_file():
-        raise IndexError_(f"索引がありません: {path}\n作るには `ctxf index`(index.bat でも作れます)")
-    uri = "file:" + path.as_posix().replace("?", "%3f").replace("#", "%23") + "?mode=ro"
+        raise IndexError_(f"索引がありません: {path}\n作るには `{command_hint('index')}`")
     try:
-        db = sqlite3.connect(uri, uri=True)
+        db = sqlite3.connect(readonly_uri(path), uri=True)
+    except sqlite3.Error as e:
+        raise IndexError_(f"索引を開けません({path}): {e}") from None
+    try:
         db.execute("SELECT 1 FROM meta LIMIT 1")
     except sqlite3.Error as e:
+        # 開いたままにすると、Windows では同じプロセスがこのファイルを置き換えられない(作り直しが失敗する)
+        db.close()
         raise IndexError_(f"索引を開けません({path}): {e}") from None
     return db
 
 
-def read_meta(db: sqlite3.Connection) -> dict:
+def readonly_uri(path: Path) -> str:
+    """読み取り専用で開く SQLite の URI。パスの % ? # などは %XX にする(フォルダ名の %20 を空白と読まないように)。
+    UNC のパス(//server/share/...)は、権限の部分を空にした file:////server/share/... にする。"""
+    posix = Path(path).as_posix()
+    quoted = urllib.parse.quote(posix, safe="/:")
+    if posix.startswith("//"):
+        quoted = "//" + quoted
+    return "file:" + quoted + "?mode=ro"
+
+
+def read_meta(db: sqlite3.Connection, check_version: bool = True) -> dict:
+    """索引の meta。check_version が偽なら、形式の版が違っても読む(前の索引の埋め込みを使い回すとき)。"""
     meta = {k: json.loads(v) for k, v in db.execute("SELECT key, value FROM meta")}
-    if meta.get("schema_version") != INDEX_SCHEMA_VERSION:
+    if check_version and meta.get("schema_version") != INDEX_SCHEMA_VERSION:
         raise IndexError_(
             f"索引の形式の版が合いません(索引 {meta.get('schema_version')}、この道具 {INDEX_SCHEMA_VERSION})。"
-            "`ctxf index` で作り直してください")
+            f"`{command_hint('index')}` で作り直してください")
     return meta
 
 
@@ -152,7 +169,7 @@ def load_vectors(db: sqlite3.Connection, dim: int, dtype: str) -> np.ndarray:
     pos = 0
     for first_id, count, data in rows:
         if first_id != pos + 1:
-            raise IndexError_("索引のベクトルの並びが壊れています。`ctxf index` で作り直してください")
+            raise IndexError_(f"索引のベクトルの並びが壊れています。`{command_hint('index')}` で作り直してください")
         out[pos:pos + count] = np.frombuffer(data, dtype=dtype).reshape(count, dim)
         pos += count
     return out

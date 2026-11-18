@@ -32,6 +32,9 @@ into over under about any all each some no yes via per vs
 """.split()
 
 MAX_TOKEN_LEN = 64
+# 質問から取る語の数の上限(重なりを除いて、先頭から)。語ごとに FTS5 の OR の項と SQL の変数が 1 つ増えるので、
+# 長すぎる質問は SQLite が断るか、式を組むのに何分もかかる。ふつうの質問はこれよりずっと少ない
+MAX_QUERY_TOKENS = 256
 
 
 def _stem(word: str) -> str:
@@ -95,16 +98,23 @@ def tokenize(text: str) -> list[str]:
 
 
 def query_tokens(text: str) -> list[str]:
-    """質問から、検索に使う語を取り出す(重なりを除く・出現順)。"""
+    """質問から、検索に使う語を取り出す(重なりを除く・出現順。先頭の MAX_QUERY_TOKENS 個まで)。"""
+    return query_tokens_cut(text)[0]
+
+
+def query_tokens_cut(text: str) -> tuple[list[str], bool]:
+    """query_tokens と同じ語の並びと、上限で後ろの語を落としたか。"""
     seen: set[str] = set()
     out: list[str] = []
     for t in tokenize(text):
         if t in STOPWORDS or (len(t) < 2 and t.isascii()) or _HIRAGANA.search(t):
             continue
         if t not in seen:
+            if len(out) >= MAX_QUERY_TOKENS:
+                return out, True
             seen.add(t)
             out.append(t)
-    return out
+    return out, False
 
 
 def fts_text(text: str) -> str:

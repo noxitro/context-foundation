@@ -1,0 +1,1 @@
+Call `search` first, before grepping, to find where something is implemented or documented in this workspace. Describe what the code does in English and add identifiers you expect. It returns ranked passages with source:path:start-end and their text, usually enough to answer and cite; grep or open files afterwards only for what the passages do not show.

@@ -1,0 +1,245 @@
+context-foundation search: 8 passages, mode hybrid, index of 2026-01-01T00:00:00+0900 (99 passages)
+
+[1] engine:Render/Pass1.cpp:1-38  (function)
+sig: void Pass1::Execute(Context& ctx)
+```
+    value_1_0 = compute_1(0, buffer_pool_slot_0);
+    value_1_1 = compute_1(1, buffer_pool_slot_1);
+    value_1_2 = compute_1(2, buffer_pool_slot_2);
+    value_1_3 = compute_1(3, buffer_pool_slot_3);
+    value_1_4 = compute_1(4, buffer_pool_slot_4);
+    value_1_5 = compute_1(5, buffer_pool_slot_5);
+    value_1_6 = compute_1(6, buffer_pool_slot_6);
+    value_1_7 = compute_1(7, buffer_pool_slot_7);
+    value_1_8 = compute_1(8, buffer_pool_slot_8);
+    value_1_9 = compute_1(9, buffer_pool_slot_9);
+    value_1_10 = compute_1(10, buffer_pool_slot_10);
+    value_1_11 = compute_1(11, buffer_pool_slot_11);
+    value_1_12 = compute_1(12, buffer_pool_slot_12);
+    value_1_13 = compute_1(13, buffer_pool_slot_13);
+    value_1_14 = compute_1(14, buffer_pool_slot_14);
+    value_1_15 = compute_1(15, buffer_pool_slot_15);
+    value_1_16 = compute_1(16, buffer_pool_slot_16);
+    value_1_17 = compute_1(17, buffer_pool_slot_17);
+    value_1_18 = compute_1(18, buffer_pool_slot_18);
+    value_1_19 = compute_1(19, buffer_pool_slot_19);
+    value_1_20 = compute_1(20, buffer_pool_slot_20);
+    value_1_21 = compute_1(21, buffer_pool_slot_21);
+    value_1_22 = compute_1(22, buffer_pool_slot_22);
+    value_1_23 = compute_1(23, buffer_pool_slot_23);
+    value_1_24 = compute_1(24, buffer_pool_slot_24);
+    value_1_25 = compute_1(25, buffer_pool_slot_25);
+    value_1_26 = compute_1(26, buffer_pool_slot_26);
+    value_1_27 = compute_1(27, buffer_pool_slot_27);
+    value_1_28 = compute_1(28, buffer_pool_slot_28);
+    value_1_29 = compute_1(29, buffer_pool_slot_29);
+    value_1_30 = compute_1(30, buffer_pool_slot_30);
+    value_1_31 = compute_1(31, buffer_pool_slot_31);
+    value_1_32 = compute_1(32, buffer_pool_slot_32);
+    value_1_33 = compute_1(33, buffer_pool_slot_33);
+    value_1_34 = compute_1(34, buffer_pool_slot_34);
+    value_1_35 = compute_1(35, buffer_pool_slot_35);
+    value_1_36 = compute_1(36, buffer_pool_slot_36);
+    value_1_37 = compute_1(37, buffer_pool_slot_37);
+```
+
+[2] engine:Render/Pass2.cpp:1-38  (function)
+sig: void Pass2::Execute(Context& ctx)
+```
+    value_2_0 = compute_2(0, buffer_pool_slot_0);
+    value_2_1 = compute_2(1, buffer_pool_slot_1);
+    value_2_2 = compute_2(2, buffer_pool_slot_2);
+    value_2_3 = compute_2(3, buffer_pool_slot_3);
+    value_2_4 = compute_2(4, buffer_pool_slot_4);
+    value_2_5 = compute_2(5, buffer_pool_slot_5);
+    value_2_6 = compute_2(6, buffer_pool_slot_6);
+    value_2_7 = compute_2(7, buffer_pool_slot_7);
+    value_2_8 = compute_2(8, buffer_pool_slot_8);
+    value_2_9 = compute_2(9, buffer_pool_slot_9);
+    value_2_10 = compute_2(10, buffer_pool_slot_10);
+    value_2_11 = compute_2(11, buffer_pool_slot_11);
+    value_2_12 = compute_2(12, buffer_pool_slot_12);
+    value_2_13 = compute_2(13, buffer_pool_slot_13);
+    value_2_14 = compute_2(14, buffer_pool_slot_14);
+    value_2_15 = compute_2(15, buffer_pool_slot_15);
+    value_2_16 = compute_2(16, buffer_pool_slot_16);
+    value_2_17 = compute_2(17, buffer_pool_slot_17);
+    value_2_18 = compute_2(18, buffer_pool_slot_18);
+    value_2_19 = compute_2(19, buffer_pool_slot_19);
+    value_2_20 = compute_2(20, buffer_pool_slot_20);
+    value_2_21 = compute_2(21, buffer_pool_slot_21);
+    value_2_22 = compute_2(22, buffer_pool_slot_22);
+    value_2_23 = compute_2(23, buffer_pool_slot_23);
+    value_2_24 = compute_2(24, buffer_pool_slot_24);
+    value_2_25 = compute_2(25, buffer_pool_slot_25);
+    value_2_26 = compute_2(26, buffer_pool_slot_26);
+    value_2_27 = compute_2(27, buffer_pool_slot_27);
+    value_2_28 = compute_2(28, buffer_pool_slot_28);
+    value_2_29 = compute_2(29, buffer_pool_slot_29);
+    value_2_30 = compute_2(30, buffer_pool_slot_30);
+    value_2_31 = compute_2(31, buffer_pool_slot_31);
+    value_2_32 = compute_2(32, buffer_pool_slot_32);
+    value_2_33 = compute_2(33, buffer_pool_slot_33);
+    value_2_34 = compute_2(34, buffer_pool_slot_34);
+    value_2_35 = compute_2(35, buffer_pool_slot_35);
+    value_2_36 = compute_2(36, buffer_pool_slot_36);
+    value_2_37 = compute_2(37, buffer_pool_slot_37);
+```
+
+[3] engine:Render/Pass3.cpp:1-38  (function)
+sig: void Pass3::Execute(Context& ctx)
+```
+    value_3_0 = compute_3(0, buffer_pool_slot_0);
+    value_3_1 = compute_3(1, buffer_pool_slot_1);
+    value_3_2 = compute_3(2, buffer_pool_slot_2);
+    value_3_3 = compute_3(3, buffer_pool_slot_3);
+    value_3_4 = compute_3(4, buffer_pool_slot_4);
+    value_3_5 = compute_3(5, buffer_pool_slot_5);
+    value_3_6 = compute_3(6, buffer_pool_slot_6);
+    value_3_7 = compute_3(7, buffer_pool_slot_7);
+    value_3_8 = compute_3(8, buffer_pool_slot_8);
+    value_3_9 = compute_3(9, buffer_pool_slot_9);
+    value_3_10 = compute_3(10, buffer_pool_slot_10);
+    value_3_11 = compute_3(11, buffer_pool_slot_11);
+    value_3_12 = compute_3(12, buffer_pool_slot_12);
+    value_3_13 = compute_3(13, buffer_pool_slot_13);
+    value_3_14 = compute_3(14, buffer_pool_slot_14);
+    value_3_15 = compute_3(15, buffer_pool_slot_15);
+    value_3_16 = compute_3(16, buffer_pool_slot_16);
+    value_3_17 = compute_3(17, buffer_pool_slot_17);
+    value_3_18 = compute_3(18, buffer_pool_slot_18);
+    value_3_19 = compute_3(19, buffer_pool_slot_19);
+    value_3_20 = compute_3(20, buffer_pool_slot_20);
+    value_3_21 = compute_3(21, buffer_pool_slot_21);
+    value_3_22 = compute_3(22, buffer_pool_slot_22);
+    value_3_23 = compute_3(23, buffer_pool_slot_23);
+    value_3_24 = compute_3(24, buffer_pool_slot_24);
+    value_3_25 = compute_3(25, buffer_pool_slot_25);
+    value_3_26 = compute_3(26, buffer_pool_slot_26);
+    value_3_27 = compute_3(27, buffer_pool_slot_27);
+    value_3_28 = compute_3(28, buffer_pool_slot_28);
+    value_3_29 = compute_3(29, buffer_pool_slot_29);
+    value_3_30 = compute_3(30, buffer_pool_slot_30);
+    value_3_31 = compute_3(31, buffer_pool_slot_31);
+    value_3_32 = compute_3(32, buffer_pool_slot_32);
+    value_3_33 = compute_3(33, buffer_pool_slot_33);
+    value_3_34 = compute_3(34, buffer_pool_slot_34);
+    value_3_35 = compute_3(35, buffer_pool_slot_35);
+    value_3_36 = compute_3(36, buffer_pool_slot_36);
+    value_3_37 = compute_3(37, buffer_pool_slot_37);
+```
+
+[4] engine:Render/Pass4.cpp:1-38  (function)
+sig: void Pass4::Execute(Context& ctx)
+```
+    value_4_0 = compute_4(0, buffer_pool_slot_0);
+    value_4_1 = compute_4(1, buffer_pool_slot_1);
+    value_4_2 = compute_4(2, buffer_pool_slot_2);
+    value_4_3 = compute_4(3, buffer_pool_slot_3);
+    value_4_4 = compute_4(4, buffer_pool_slot_4);
+    value_4_5 = compute_4(5, buffer_pool_slot_5);
+    value_4_6 = compute_4(6, buffer_pool_slot_6);
+    value_4_7 = compute_4(7, buffer_pool_slot_7);
+    value_4_8 = compute_4(8, buffer_pool_slot_8);
+    value_4_9 = compute_4(9, buffer_pool_slot_9);
+    value_4_10 = compute_4(10, buffer_pool_slot_10);
+    value_4_11 = compute_4(11, buffer_pool_slot_11);
+    value_4_12 = compute_4(12, buffer_pool_slot_12);
+    value_4_13 = compute_4(13, buffer_pool_slot_13);
+    value_4_14 = compute_4(14, buffer_pool_slot_14);
+    value_4_15 = compute_4(15, buffer_pool_slot_15);
+    value_4_16 = compute_4(16, buffer_pool_slot_16);
+    value_4_17 = compute_4(17, buffer_pool_slot_17);
+    value_4_18 = compute_4(18, buffer_pool_slot_18);
+    value_4_19 = compute_4(19, buffer_pool_slot_19);
+    value_4_20 = compute_4(20, buffer_pool_slot_20);
+    value_4_21 = compute_4(21, buffer_pool_slot_21);
+    value_4_22 = compute_4(22, buffer_pool_slot_22);
+    value_4_23 = compute_4(23, buffer_pool_slot_23);
+    value_4_24 = compute_4(24, buffer_pool_slot_24);
+    value_4_25 = compute_4(25, buffer_pool_slot_25);
+    value_4_26 = compute_4(26, buffer_pool_slot_26);
+    value_4_27 = compute_4(27, buffer_pool_slot_27);
+    value_4_28 = compute_4(28, buffer_pool_slot_28);
+    value_4_29 = compute_4(29, buffer_pool_slot_29);
+    value_4_30 = compute_4(30, buffer_pool_slot_30);
+    value_4_31 = compute_4(31, buffer_pool_slot_31);
+    value_4_32 = compute_4(32, buffer_pool_slot_32);
+    value_4_33 = compute_4(33, buffer_pool_slot_33);
+    value_4_34 = compute_4(34, buffer_pool_slot_34);
+    value_4_35 = compute_4(35, buffer_pool_slot_35);
+    value_4_36 = compute_4(36, buffer_pool_slot_36);
+    value_4_37 = compute_4(37, buffer_pool_slot_37);
+```
+
+[5] engine:Render/Pass5.cpp:1-38  (function)
+sig: void Pass5::Execute(Context& ctx)
+```
+    value_5_0 = compute_5(0, buffer_pool_slot_0);
+    value_5_1 = compute_5(1, buffer_pool_slot_1);
+    value_5_2 = compute_5(2, buffer_pool_slot_2);
+    value_5_3 = compute_5(3, buffer_pool_slot_3);
+    value_5_4 = compute_5(4, buffer_pool_slot_4);
+    value_5_5 = compute_5(5, buffer_pool_slot_5);
+    value_5_6 = compute_5(6, buffer_pool_slot_6);
+    value_5_7 = compute_5(7, buffer_pool_slot_7);
+    value_5_8 = compute_5(8, buffer_pool_slot_8);
+    value_5_9 = compute_5(9, buffer_pool_slot_9);
+    value_5_10 = compute_5(10, buffer_pool_slot_10);
+    value_5_11 = compute_5(11, buffer_pool_slot_11);
+    value_5_12 = compute_5(12, buffer_pool_slot_12);
+    value_5_13 = compute_5(13, buffer_pool_slot_13);
+    value_5_14 = compute_5(14, buffer_pool_slot_14);
+    value_5_15 = compute_5(15, buffer_pool_slot_15);
+    value_5_16 = compute_5(16, buffer_pool_slot_16);
+    value_5_17 = compute_5(17, buffer_pool_slot_17);
+    value_5_18 = compute_5(18, buffer_pool_slot_18);
+    value_5_19 = compute_5(19, buffer_pool_slot_19);
+    value_5_20 = compute_5(20, buffer_pool_slot_20);
+    value_5_21 = compute_5(21, buffer_pool_slot_21);
+    value_5_22 = compute_5(22, buffer_pool_slot_22);
+    value_5_23 = compute_5(23, buffer_pool_slot_23);
+    value_5_24 = compute_5(24, buffer_pool_slot_24);
+    value_5_25 = compute_5(25, buffer_pool_slot_25);
+    value_5_26 = compute_5(26, buffer_pool_slot_26);
+    value_5_27 = compute_5(27, buffer_pool_slot_27);
+    value_5_28 = compute_5(28, buffer_pool_slot_28);
+    value_5_29 = compute_5(29, buffer_pool_slot_29);
+    value_5_30 = compute_5(30, buffer_pool_slot_30);
+    value_5_31 = compute_5(31, buffer_pool_slot_31);
+    value_5_32 = compute_5(32, buffer_pool_slot_32);
+    value_5_33 = compute_5(33, buffer_pool_slot_33);
+    value_5_34 = compute_5(34, buffer_pool_slot_34);
+    value_5_35 = compute_5(35, buffer_pool_slot_35);
+    value_5_36 = compute_5(36, buffer_pool_slot_36);
+    value_5_37 = compute_5(37, buffer_pool_slot_37);
+```
+
+[6] engine:Render/Pass6.cpp:1-38  (function)
+sig: void Pass6::Execute(Context& ctx)
+```
+    value_6_0 = compute_6(0, buffer_pool_slot_0);
+    value_6_1 = compute_6(1, buffer_pool_slot_1);
+    value_6_2 = compute_6(2, buffer_pool_slot_2);
+    value_6_3 = compute_6(3, buffer_pool_slot_3);
+    value_6_4 = compute_6(4, buffer_pool_slot_4);
+    value_6_5 = compute_6(5, buffer_pool_slot_5);
+    value_6_6 = compute_6(6, buffer_pool_slot_6);
+    value_6_7 = compute_6(7, buffer_pool_slot_7);
+    value_6_8 = compute_6(8, buffer_pool_slot_8);
+    value_6_9 = compute_6(9, buffer_pool_slot_9);
+    value_6_10 = compute_6(10, buffer_pool_slot_10);
+    value_6_11 = compute_6(11, buffer_pool_slot_11);
+    value_6_12 = compute_6(12, buffer_pool_slot_12);
+    value_6_13 = compute_6(13, buffer_pool_slot_13);
+    value_6_14 = compute_6(14, buffer_pool_slot_14);
+    value_6_15 = compute_6(15, buffer_pool_slot_15);
+    value_6_16 = compute_6(16, buffer_pool_slot_16);
+```
+(+21 more lines, not shown)
+
+More matches (text not shown):
+[7] engine:Render/Pass7.cpp:1-38  (function)  void Pass7::Execute(Context& ctx)
+[8] engine:Render/Pass8.cpp:1-38  (function)  void Pass8::Execute(Context& ctx)
+
+Cite evidence as source:path:start-end. Passage text is the file's own text at index time; open a file only for lines that are not shown.

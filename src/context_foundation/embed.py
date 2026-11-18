@@ -18,6 +18,7 @@ from pathlib import Path
 
 import numpy as np
 
+from . import command_hint
 from .config import EmbeddingConfig
 
 
@@ -146,7 +147,7 @@ def model_files(spec: ModelSpec) -> tuple[Path, Path]:
     if missing:
         raise ModelUnavailable(
             "埋め込みモデルが手元にありません: " + ", ".join(missing) +
-            "\n取得するには `ctxf model download`(setup.bat でも取得できます)。"
+            f"\n取得するには `{command_hint('model download')}`。"
             "モデル無しでも keyword(BM25)の検索は使えます")
     return onnx, tok
 
@@ -157,6 +158,19 @@ def _sha256(path: Path) -> str:
         for block in iter(lambda: f.read(1 << 20), b""):
             h.update(block)
     return h.hexdigest()
+
+
+def download_failure_message(name: str, e: Exception) -> str:
+    """モデルの取得に失敗したときの文面。パスが長すぎて書けなかったときは、そう言う(いつも「ネットワーク」とは言わない)。
+
+    hf_hub_download は、取得の途中のファイルを <フォルダ>/.cache/huggingface/download/ の下に、長い名前
+    (<28 文字>=.<64 文字>.incomplete)で置く。Windows の長いパスが無効だと、そこで FileNotFoundError になる。"""
+    first = (str(e).strip().splitlines() or [""])[0][:200]
+    head = f"{name} を取得できませんでした({type(e).__name__}: {first})。"
+    if os.name == "nt" and isinstance(e, OSError) and len(str(getattr(e, "filename", None) or "")) > 259:
+        return (head + "取得の途中のファイルのパスが、Windows の上限(260 文字)を超えるようです。環境変数 CF_HOME を"
+                "短いフォルダ(例 C:\\cf)にするか、Windows の長いパスを有効にしてから、もう一度取得してください")
+    return head + "ネットワークかプロキシ(HTTPS_PROXY)の設定を確かめてから、もう一度取得してください"
 
 
 def download_model(spec: ModelSpec, log=print) -> Path:
@@ -179,7 +193,10 @@ def download_model(spec: ModelSpec, log=print) -> Path:
         else:
             size = f"(約 {want[0] / 1e6:.0f} MB)" if want else ""
             log(f"取得します: {spec.repo} {name} {size}")
-            hf_hub_download(repo_id=spec.repo, filename=name, revision=spec.revision, local_dir=str(folder))
+            try:
+                hf_hub_download(repo_id=spec.repo, filename=name, revision=spec.revision, local_dir=str(folder))
+            except Exception as e:      # 素の traceback では、何をすればよいかが分からないので、1 つの文にする
+                raise ModelUnavailable(download_failure_message(name, e)) from None
         if want is not None:
             got = _sha256(target)
             if got != want[1]:
@@ -210,11 +227,11 @@ class Embedder:
 CPU_PROVIDER = "CPUExecutionProvider"
 # GPU で計算するときの実行先(onnxruntime での名前)。入っている onnxruntime が持っているものを、この順で使う。
 # DirectML は Windows の DirectX 12 の GPU(メーカーを問わない)、CUDA は NVIDIA の GPU。
-# 確かめたのは DirectML だけ(onnxruntime-directml 1.24.4。docs/design.md の「速さについて」)
+# 確かめたのは DirectML だけ(onnxruntime-directml 1.24.4。docs/design.md の「GPU で計算する」)
 GPU_PROVIDERS = ("DmlExecutionProvider", "CUDAExecutionProvider")
 GPU_BATCH_SIZE = 32                # GPU では、束を大きくしたほうが速い(CPU の既定は 8)
 GPU_HOWTO = ("GPU で計算するには、仮想環境の onnxruntime を、GPU の実行先を持つもの(Windows なら onnxruntime-directml)"
-             "に入れ替えます。手順は docs/design.md の「速さについて」")
+             "に入れ替えます。手順は docs/design.md の「GPU で計算する」")
 
 
 def gpu_provider() -> str | None:

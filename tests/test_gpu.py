@@ -122,3 +122,13 @@ def test_setup_rejects_conflicting_gpu_options_before_doing_anything(tmp_path):
                            text=True, encoding="utf-8", env=env, timeout=60)
         assert r.returncode == 2 and "Windows only" in r.stdout
         assert not (tmp_path / "home" / "runtime" / "venv").exists()
+
+
+def test_gpu_howto_names_an_existing_heading_in_design_md():
+    # 誤りの文が指す節が、設計の文書に本当にあり、入れ方の手順の節であること(節の名前を変えたときの直し忘れを拾う)
+    import re
+    names = re.findall(r"「([^」]+)」", embed.GPU_HOWTO)
+    assert names and all("GPU" in n for n in names)
+    headings = {line.lstrip("#").strip() for line in (REPO / "docs" / "design.md").read_text(encoding="utf-8").splitlines()
+                if line.startswith("#")}
+    assert set(names) <= headings

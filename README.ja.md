@@ -25,7 +25,10 @@ grep や、同じ作者の cxxref(clang の索引)が向いています。この
 
 ## 状態
 
-PoC です。動かしたのは、合成のコーパスと、公開されているコードだけです。
+PoC です。当たりの評価と、既存の手順との比較に使ったのは、合成の
+コーパスと、公開されているコードだけです。索引づくりと検索の時間は、
+公開されていない大きいエンジンのコードの一部(約 24.5 万 passage)でも
+測りました。
 公開されているコード(Godot)で既存の手順と比べたところ、事前に決めた
 目安には届かず、既存の手順との差も出ていませんでした。そのあと、
 エージェントへの出し方を MCP サーバーに変え(0.3)、同じ質問で比べ直すと、
@@ -47,14 +50,36 @@ hybrid で 54%)。質問と正解、結果は
 [examples/o3de](examples/o3de/README.md) にあります。この評価例では、
 エージェントがこの検索を使って答えるときの正しさは、まだ測っていません。
 
+0.4.0 では、本番で使うための直し(安全・取り込み・止まったときの続き・
+出力の上限・用意の失敗の知らせ方など)を入れました。何が変わったか、
+更新のあとに何をするかは [CHANGELOG.md](CHANGELOG.md) にあります。直しを
+手元で動かして確かめたのは Windows と Python 3.13 で、ほかの OS と Python
+の版は CI のテストで確かめています。Copilot での 0.4.0 の動作は、まだ
+確かめていません(Copilot の側で確かめたのは 0.3 まで)。
+
 対象は、まず GitHub Copilot CLI と、GitHub Copilot のデスクトップアプリ
 です。Visual Studio Code は後回しで、手順も確認もまだありません。
 
-## 前提
+## 前提と、対応する環境
 
-- Windows(ほかの OS でも Python の部分は動きますが、.bat は Windows 用です)
-- Python 3.11 以降(3.13 で確かめています)
-- Copilot から使うときは、GitHub Copilot CLI(1.0.112 で確かめています)
+| もの | 対応する範囲 | 確かめたもの |
+| --- | --- | --- |
+| OS | Windows。Linux でも Python の部分は動く(`.bat` は Windows 用) | Windows 11(手元)。Windows と Ubuntu(CI のテスト) |
+| Python | 3.11 から 3.14 | 3.13(手元)。3.11・3.12・3.13・3.14(CI のテスト) |
+| Copilot から使うとき | GitHub Copilot CLI と、そのデスクトップアプリ | CLI 1.0.112(0.3 まで)。アプリは未確認 |
+
+- Copilot から使うときは、`python` という名前のコマンドで Python が起動
+  できることも要ります(MCP サーバーと hook は `python` で起動します)。
+  python.org のインストーラーは、既定では `python` を PATH に足しません。
+  Linux と macOS の `python3` しか無い PC では、`python` という名前でも
+  起動できるようにします([docs/copilot.md](docs/copilot.md) の「入れ方は
+  2 つ」)
+- 3.15 以降には、検索に要る onnxruntime の配布物がまだありません。
+  `python` が 3.15 以降なら、用意(setup)だけを 3.14 以前で動かします
+  (`py -3.14 -I "<…>\ctxf.py" setup`)
+- 依存のパッケージは、版の範囲(下限と、壊れたことのあるものの上限)だけを
+  決めていて、版を固定した一覧(lock)は持ちません。PyPI の新しい版で
+  壊れたことには、CI の週 1 回の実行で気づくようにしています
 
 git は要りません。Perforce の作業フォルダや、ただのフォルダでも、同じように
 索引を作れます。
@@ -94,12 +119,15 @@ copilot plugin install context-foundation@context-foundation
 - 索引づくりの時間は、ほとんどが埋め込みの計算です。GPU(Windows の
   DirectX 12 の GPU)で計算すると、6〜7 倍速くなります。入れ方は
   [docs/design.md](docs/design.md) の「GPU で計算する」にあります
-- ソースが変わったら、もう一度 `index.bat` を実行します。変わっていない
-  passage の埋め込みは前の索引から使い回すので、変わったファイルの分だけの
-  時間で済みます(差分更新)。索引の後に変わったファイルを指す結果には、
-  その旨の印が付きます
+- ソースが変わったら(同期したら)、もう一度 `index.bat` を実行します。
+  変わっていない passage の埋め込みは前の索引から使い回すので、変わった
+  ファイルの分だけの時間で済みます(差分更新)。索引の後に変わった・消えた
+  ファイルを指す結果には、その旨の印が付きます。索引の後に増えたファイルは、
+  作り直すまで検索に出ません。無人で流すコマンドと、タスク スケジューラの
+  例は [docs/copilot.md](docs/copilot.md) の「索引を更新する」にあります
 - `.cf` フォルダは、git には入りません(中に、全部を無視する `.gitignore`
-  を置きます)。Perforce では、`.cf` を `.p4ignore` に足してください
+  を置きます)。Perforce では、`.cf` を `.p4ignore` に足してください(索引
+  には、ソースの本文の写しが入ります)
 
 `setup.bat` が取得するもの:
 
@@ -120,8 +148,14 @@ copilot plugin install context-foundation@context-foundation
 
 埋め込みモデルは、取得しなくても使えます。そのときは、keyword(BM25)だけの
 検索になります。モデルの置き場は `%LOCALAPPDATA%\context-foundation\models`
-です(環境変数 `CF_HOME` で、置き場の親を変えられます)。インターネットに
-出られない PC では、ほかの PC で取得したこのフォルダを写せば使えます。
+です(環境変数 `CF_HOME` で、置き場の親を変えられます。Linux の場所は
+[docs/copilot.md](docs/copilot.md) の「保存されるものと消し方」)。
+
+インターネットに出られない PC では、モデルは、ほかの PC で取得したこの
+フォルダを写せば使えます。Python のパッケージは、写しただけでは入りません。
+出られる PC で `pip download` したものを渡すか、PyPI のミラーを使います
+(手順は [docs/copilot.md](docs/copilot.md) の「インターネットに出られない
+PC・PyPI のミラー」)。
 
 ## 検索の方法
 
@@ -151,35 +185,75 @@ copilot plugin install context-foundation@context-foundation
 
 ## コマンド
 
-`.bat` の中身は、次のコマンドです。作業フォルダ(かその下)で実行すると、
-親へさかのぼって `.cf` を探します。
+道具のコマンドは、どれも入口の `ctxf.py` を通して、次のどちらかの形で
+動かします。この文書とほかの文書で `ctxf <コマンド>` と書いたものは、
+この形の略です(`ctxf` という名前のコマンドは、ふつうは PATH にありません)。
 
-```text
-.venv\Scripts\python -m context_foundation <コマンド>
-python -I <このフォルダかプラグインのフォルダ>\ctxf.py <コマンド>
-```
+| 入れ方 | 形 |
+| --- | --- |
+| プラグインとして入れた | `python -I "<プラグインのフォルダ>\ctxf.py" <コマンド>` |
+| リポジトリを取得した | `"<取得したフォルダ>\.venv\Scripts\python.exe" -I "<取得したフォルダ>\ctxf.py" --run <コマンド>`(`.bat` の中身もこの形) |
 
-2 行目の入口(`ctxf.py`)は、使える python を探して同じコマンドを動かします
-(環境変数 `CF_PYTHON`、隣の `.venv`、利用者ごとの置き場の順)。入口だけの
-コマンドは `setup`(依存とモデルを利用者ごとの置き場に用意する。
-`--no-model`・`--help`)と `where`(使う python と置き場を出す)です。
+作業フォルダ(かその下)で動かすと、親へさかのぼって `.cf` を探します。
+ほかの場所から動かすときは、`--config <作業フォルダ>` で渡します(`init`
+は `--workspace`)。道具が文面で案内するコマンドも、動かした形に合わせて
+出ます。
+
+1 つ目の形の入口は、使える python を探して、同じコマンドを動かします
+(環境変数 `CF_PYTHON`、隣の `.venv`、利用者ごとの置き場の順)。2 つ目の
+`--run` は、探さずに、その python で道具を動かします。入口だけのコマンドは
+次の 3 つで、`python -I "<…>\ctxf.py" --help` で一覧が出ます。
+
+| 入口のコマンド | すること |
+| --- | --- |
+| `setup` | 依存とモデルを、利用者ごとの置き場に用意する。`--no-model`・`--gpu`・`--cpu`・`--help` |
+| `where` | 使う python・PATH の `python`・置き場・モデル・索引を出す(うまく動かないときに最初に見る) |
+| `session-hint` | Copilot のセッションの始めの hook が使う |
 
 | コマンド | すること |
 | --- | --- |
 | `init <フォルダ>...` | 作業フォルダに設定(`.cf\config.toml`)を作る。対話なし。`--force` で作り直す(前の設定は `.bak` に残す) |
-| `index` | 索引を作る。変わっていない passage の埋め込みは前の索引から使い回す。`--full` ですべて埋め込み直す、`--no-embed` で keyword だけ、`--download` でモデルを先に取得、`--revision <版>` でコーパスの版を記録 |
-| `search "<質問>"` | 検索する。`--mode`、`--top-k`、`--source <id>`、`--format agent\|human\|json` |
-| `status` | 索引の版・件数・作成日時・作成にかかった時間、構文で分けられなかった割合と、その多いファイル |
+| `index` | 索引を作る。変わっていない passage の埋め込みは前の索引から使い回す。`--full` ですべて埋め込み直す(途中までの埋め込み `index.db.partial` も使わない)、`--no-embed` で keyword だけ(前の索引の埋め込みは捨てる。途中までの埋め込みは残し、次に埋め込みつきで作るときに使う)、`--download` でモデルを先に取得、`--revision <版>` でコーパスの版を記録、`--quiet` で途中の進み具合を出さない |
+| `search "<質問>"` | 検索する。`--mode`、`--top-k`、`--source <id>`、`--format agent\|human\|json`、`--max-bytes`、`--line-numbers` |
+| `status` | 索引の版・件数・作成日時・作成にかかった時間、source ごとのフォルダ、除いたファイルの数(理由ごと)、構文で分けられなかった割合と、その多いファイル。`--check` で、索引の後に変わった・増えた・消えたファイルを数える(フォルダを歩くので時間がかかる) |
 | `eval --cases <cases.jsonl> --out <フォルダ>` | 評価を回して、要約を書く |
 | `validate --cases <cases.jsonl>` | 評価データの形式を検査する |
 | `serve` | 読み取り専用の MCP サーバー(stdio) |
 | `model download` / `model info` | 埋め込みモデルの取得と確認 |
-| `copilot register` / `unregister` / `status` | このフォルダを手元の Marketplace としてプラグインを入れる・外す・状態を見る |
+| `copilot register` / `unregister` / `status` | このフォルダを手元の Marketplace としてプラグインを入れる・外す・状態を見る(取得したリポジトリのフォルダからだけ) |
+
+`index` の終了コードは、0 が成功、1 が索引を置き換えられなかった(ほかの
+プログラムが開いている。できあがった索引は `.cf\index.db.new` に残る)、
+2 が設定の誤り・source のルートが無い・入るファイルが無い・モデルを読め
+ない・モデルを取得できなかった(`--download`)、3 が `.cf` が見つからない
+(`--config` を付けないとき)、4 が用意ができていない(setup が済んでいない、
+プラグインの更新で依存の一覧が変わった、仮想環境のもとの Python が消えた、
+仮想環境の python が要るパッケージを読めない。setup をやり直すまで続き
+ます)、130 が途中で止めた(Ctrl+C)、です。4 は、入口(`python -I
+"<…>\ctxf.py"`)から動かしたときです。`--run` の形(`.bat` と、取得した
+フォルダの `.venv` の python で直接動かす形)では、要るパッケージを読めない
+ときは 104、Windows で `.venv` のもとの Python が消えたときは 103 で終わり
+ます。
+埋め込みのある索引は、モデルを読めないときに keyword だけの索引に置き
+換えず、止まります(置き換えるなら `--no-embed`)。途中で止めた `index`
+は、次の実行で、計算済みの埋め込みを使い回して続きから計算します。
 
 `search` の出力は、端末では人が読む形、そうでないとき(エージェントが
 呼んだとき)は、エージェント向けの短い形になります。エージェント向けの形は、
 上位の passage は本文ごと、残りは場所だけを返し、全体を 12,000 バイト
-(設定で変更可。上限 18,000)に収めます。
+(設定で変更可。上限 18,000)に収めます。収まらない場所は、最後に
+`(+N more matches, not shown)` とまとめます。収まらないのは、頭や印の
+段落など、決まって出す部分に、`More matches` の見出しと件数の行(合わせて
+60 バイトほど)を足した大きさが上限を超えるときだけです(上限を最小の
+1,000 バイト近くにしたときに起きえます)。
+
+結果の印は 2 つです。`[changed since index]` は、索引の後に変わった
+ファイルで、本文と行番号は索引を作ったときのものです。`[file no longer
+exists]` は、索引の後に消えたファイルで、エージェント向けの形では本文を
+出しません(人が読む形は「※索引の後に消えたファイル」の印を付けて、索引の
+ときの本文を出します。JSON は本文に `missing: true` を付けます)。source の
+ルートが作業フォルダそのものでないときは、`roots: <id> = <ルート>` の
+行で、`source:path` をどこで開けばよいかを出します。
 
 ## 設定ファイル
 
@@ -195,6 +269,7 @@ exclude = ['**/ThirdParty/**']  # 既定の除外に足す
 id = 'docs'
 root = 'docs'
 include = ['**/*.md']         # 省くと、既定の拡張子
+# default_excludes = false    # 既定の除外(フォルダの名前・生成物と秘密の名前)を使わない
 
 [embedding]
 enabled = true                # false にすると keyword だけ
@@ -210,10 +285,78 @@ top_k = 8
 
 - 既定で入るのは、C・C++・C#・Markdown と、そのほかの文字のファイル
   (Python、シェーダー、設定ファイルなど)です
-- 既定で除くのは、版管理やビルドの出力のフォルダ(`.git`、`build`、
-  `bin`、`obj`、`node_modules` など)、バイナリ、生成物(先頭に自動生成の
-  印があるもの、極端に長い行があるもの)、1 MB を超えるファイルです
-- 除いた数は、`status` に理由ごとに出ます
+- 既定で除くフォルダの名前です(大文字と小文字は区別しません)。どの深さに
+  あっても除きます
+  - `.git`・`.svn`・`.hg`・`.p4`・`.cf`・`.index`・`.cache`・`.venv`・
+    `venv`・`__pycache__`・`node_modules`・`.gradle`・`.vs`・`.vscode`・
+    `.idea`・`intermediate`・`deriveddatacache`
+  - `build`・`out`・`bin`・`obj`・`dist`・`target`・`binaries`・`saved`・
+    `packages`。この 9 つは、ソースを置く名前にも使われるので、中に索引に
+    入りうるファイルがあれば、その数とフォルダを `index` の終わりと
+    `status` に出します
+- 既定の名前で除いたフォルダを入れるには、そのフォルダを `root` にした
+  `[[source]]` を足すか、その source に `default_excludes = false` を
+  書いて、要らないものを `exclude` に並べます
+- 既定で除くファイルは、生成物によくある名前(`*.generated.*`、`*.g.cs`、
+  `*.min.js`、`moc_*.cpp` など)、秘密を持ちやすい名前(下)、バイナリ、
+  文字として読めないもの、1 MB を超えるもの、5,000 文字を超える行がある
+  もの(minify したものなど)、先頭の 2,000 文字のコメントの行に自動生成の
+  印があるものです。文書(`.md`・`.markdown`・`.mdx`・`.txt`・`.rst`・
+  `.adoc`)は、生成物とはみなしません
+- 自動生成の印は、コメントの行だけで見ます
+  - 「This file was generated」「File automatically generated by」
+    「Generated by」「autogenerated」「このファイルは自動生成」
+    「自動生成ファイル」などは、先頭の 2,000 文字のどのコメントの行でも、
+    書き出しにあれば印です。前に飾りの記号や `NOTE:`・`注意:` のような
+    短い前置きがあっても構いません。「Generated by:」(後ろにコロン)は
+    印にしません
+  - 「auto-generated」だけ、「generated from」「generated with」
+    「code generated」「parser generated by」「自動生成され」などは、
+    ファイルの頭のコメントのかたまり(最初のコードの行より前。docstring
+    の中の行も含みます)のどこかの行の書き出しにあるときだけ印です
+  - `@generated`・`<auto-generated`・大文字の `DO NOT EDIT` は、コメントの
+    行のどこにあっても印です。小文字の「do not edit」は、同じ行に
+    「generated」があるときだけです
+  - 頭で開いたブロックコメント(`/* */`、docstring)の中の行も、
+    コメントの行として見ます。`'` は VB の拡張子、`<!--` はマークアップ
+    (`.xml`・`.html`・`.csproj` など)の拡張子のときだけ、コメントの
+    始まりとみなします
+  - `#` の後ろが `include`・`import`・`if`・`else`・`define`・`pragma`・
+    `warning`・`using` などの語の行は、プリプロセッサの行としてコードの
+    行とみなし、印を見ません(頭のコメントのかたまりもそこで終わります)。
+    ただし、`#` がコメントの始まりのファイル(`.py`・`.sh`・`.cmake`・
+    `.yaml`・`.yml`・`.toml`・`.ini`・`.cfg`・`.rb`・`.ps1` と、
+    `Makefile`・`Dockerfile`)では、その語の行もコメントの行として見ます
+    (「# WARNING: This file is auto-generated by …」も印になります)
+  - 生成物なのに入ってしまうものは、`exclude` に足します。手書きなのに
+    除かれるものは、`[index] skip_generated = false` で入ります(印と
+    長い行の判定を、すべての source でやめます)
+- 秘密を持ちやすい名前: `.env`・`.env.*`・`*.pem`・`*.key`・`*.pfx`・
+  `*.p12`・`id_rsa*`・`id_dsa*`・`id_ecdsa*`・`id_ed25519*`・`.npmrc`・
+  `.pypirc`・`.netrc`・`_netrc`・`.git-credentials`・`.p4config`・
+  `.p4tickets`・`*.tfvars` と、名前に `secret` か `credential` を含む
+  yaml・yml・toml・ini・cfg・json。`include` を書いても除きます。名前だけで
+  見るので、ほかのファイルの中に書かれた秘密(設定ファイルのパスワード
+  など)は索引に入ります。`.gitignore` は読みません
+- `default_excludes = false` は、既定のフォルダの名前・生成物の名前・
+  秘密を持ちやすい名前を、まとめて外します
+- フォルダのリンク(シンボリックリンク、Windows のジャンクション)は
+  たどりません。リンクの先を入れるには、そのフォルダ(リンクそのもので
+  も構いません)を `root` にした `[[source]]` を足します
+- ファイルのリンクは入れません。指す先が source のルートの中なら、指す先の
+  ファイルが、もとの場所で(その名前の決まりのとおりに)入ります
+- Windows でも、260 文字を超えるパスのファイルを取り込みます
+- ほかの source のルートになっているフォルダは、その source の側だけで
+  取り込みます
+- 除いた数は、`status` に理由ごとに出ます(`excluded`・`not_included`・
+  `secret_name`・`too_large`・`binary`・`undecodable`・`generated`・
+  `long_lines`・`empty`・`unreadable`・`symlink_inside`・`symlink_outside`・
+  `bad_name`。たどらなかったフォルダは `link_dir`・`unreadable_dir`)
+- `[index] path` で、索引のファイル名を変えられます。置けるのは `.cf` の
+  中だけです
+- 0.3.1 まであった `[search] reranker` と `rerank_candidates` は、0.4.0 で
+  無くなりました。書いてあると、止まります(作業フォルダの設定から、
+  Python のコードを読み込ませないため)
 - そのほかの項目(分割の大きさ、埋め込みモデルの差し替え、順位の重み)は
   [docs/design.md](docs/design.md) にあります
 
@@ -228,6 +371,15 @@ top_k = 8
 フォルダでだけ「探すときは、検索を grep より先に」と 1 文で知らせ、モデルが
 検索の道具を呼びます。MCP の道具が使えない場面のために、同じ検索を CLI で
 呼ぶ skill `context-search` も入っています。
+
+- 用意(setup)の後は、Copilot の新しいセッションを始めます。動いている
+  セッションには、検索の道具は出ません
+- 検索の道具が出ない・効かないときは、[docs/copilot.md](docs/copilot.md)
+  の「うまく動かないとき」を見ます。最初に `python -I "<…>\ctxf.py" where`
+  を動かします
+- 検索は、上位の passage だけを返し、ほかにも当たる場所があるかは知らせ
+  ません。識別子が分かっていて、使われている場所をすべて挙げたいときは、
+  grep を使います([docs/copilot.md](docs/copilot.md) の「検索の限界」)
 
 ## 評価する
 
@@ -252,12 +404,25 @@ top_k = 8
 ## データの扱い
 
 - 索引(`.cf\index.db`)には、対象のファイルの本文が入ります。作業フォルダの
-  中だけに置かれ、この道具がどこかへ送ることはありません
+  中だけに置かれ、この道具がどこかへ送ることはありません。版管理に入れない
+  でください(git には入らないようにしてあります。Perforce では `.p4ignore`
+  に足します)
+- 秘密を持ちやすい名前のファイル(`.env`、鍵など)は、既定で索引に入れ
+  ません。ただし、名前だけで見るので、ほかのファイルの中に書かれた秘密は
+  入ります(上の「設定ファイル」)
+- `.cf` は、自分で作ります。取ってきたリポジトリに `.cf` が入っていたら、
+  使わずに消して、作り直してください。設定は、作業フォルダの外のフォルダ
+  (source のルート、モデルのフォルダ、用語の対応表)も指せるためです
+- 何がどこに保存されるか、プラグインと保存したものの消し方は、
+  [docs/copilot.md](docs/copilot.md) の「保存されるものと消し方」にあります
 - 埋め込みは、この PC の中で計算します(CPU。索引づくりは、設定によっては
   GPU)。モデルの取得のときに送るのは、取得するファイルの名前だけです
 - エージェントから使うときは、話が別です。エージェントが読んだもの(質問、
   検索が返した passage、開いたファイル)は、そのエージェントが使うモデルの
   提供元に送られます。これは、この道具を使わない今の手順でも同じです。
+  source のルートが作業フォルダの外にあると、その絶対パス(利用者の名前を
+  含むこともあります)も、検索の結果の `roots:` の行と `status` に出て、
+  モデルに送られます。避けるには、ルートを作業フォルダの中に置きます。
   非公開のコーパスでエージェントを動かす前に、どの提供元になら送ってよいか
   を決めてください
 
@@ -267,17 +432,42 @@ top_k = 8
 (`tests/fixtures`)で、分割・検索・評価・MCP サーバー・コマンドを通しで
 確かめます。埋め込みモデルが無くても通ります。
 
-GitHub Actions では、次の 3 つを回します(`.github/workflows`)。
+GitHub Actions では、次の 4 つを回します(`.github/workflows`)。
 
 | ワークフロー | いつ | すること |
 | --- | --- | --- |
-| CI | プルリクエストと main への push | テスト(Windows・Linux、Python 3.11 と 3.13)、Markdown の検査、リンクの確認 |
-| Plugin smoke test | 道具の中身に関わる変更と main への push | まっさらな機械で、`ctxf.py setup` から、実物の埋め込みモデルでの索引づくり・検索・評価・MCP サーバーまでを通す(Windows・Linux) |
+| CI | プルリクエスト、main への push、毎週月曜、手で起動したとき | テスト(Windows・Linux、Python 3.11・3.12・3.13・3.14)、依存を宣言した下限の版でのテスト(Python 3.11。実物のモデルを使うテストも)、wheel と sdist を作って使う確認(sdist の中身が `git ls-files` と同じか)、Markdown の検査、リンクの確認 |
+| Plugin smoke test | 道具の中身に関わる変更、main への push、毎週月曜、手で起動したとき | まっさらな機械で、`ctxf.py setup` から、実物の埋め込みモデルでの索引づくり・検索・評価・MCP サーバーまでを通し、実物のモデルを使うテスト(`pytest -m model`)も流す(Windows・Linux) |
+| Secret scan | すべての push、プルリクエスト、手で起動したとき | 秘密情報と、所属・著作権の表示の検査(共通の workflow) |
 | Benchmark (O3DE example) | 手で起動したとき | 公開の評価例([examples/o3de](examples/o3de/README.md))を、GitHub の機械で最初から測り直す |
 
 エージェントを使う比較(Copilot CLI を動かす計測)は、GitHub Actions では
 流しません。質問と正解を公開のリポジトリに置かない決まりで、実行の記録も
 公開されるためです。
+
+毎週の実行は、PyPI の新しい版や新しい Python で壊れたことに気づくため
+です。公開リポジトリでは、60 日間動きが無いと、GitHub が毎週の実行を
+止めます(Actions の画面で有効に戻します)。失敗の知らせは、cron の行を
+最後に変えた人に届きます。GitHub Actions の版の更新は、Dependabot が
+知らせます
+(`.github/dependabot.yml`)。実物の埋め込みモデルを使うテスト
+(`tests/test_model.py`)は、モデルが手元にあるときだけ動き、CI では飛ばし
+ます。
+
+## 不具合の報告
+
+不具合や質問は、GitHub の issue
+(<https://github.com/noxitro/context-foundation/issues>)に書いてください。
+`python -I "<…>\ctxf.py" where` の出力と、道具の版(`--version`)を添えると
+早く分かります。
+
+- 公開されていないコードの本文、検索結果、索引、評価の質問と正解は、
+  issue に貼らないでください(issue は公開されます)。パスやフォルダの名前
+  も、伏せられるものは伏せてください。再現には、合成のコーパス
+  (`tests/fixtures`)か、公開されているコードを使います
+- 秘密が漏れるおそれのある不具合は、issue に詳しく書かないでください。
+  GitHub のリポジトリの Security の画面から非公開で知らせるか、それが
+  使えなければ、issue には「非公開で伝えたい不具合がある」とだけ書きます
 
 ## フォルダの構成
 
@@ -291,6 +481,7 @@ GitHub Actions では、次の 3 つを回します(`.github/workflows`)。
 | `tests` | テストと、合成のコーパス |
 | `examples/o3de` | 公開のゲームエンジンを題材にした評価の実例(質問・正解の場所・測った結果) |
 | `docs` | 評価の仕様、設計、Copilot の手順、比較の手順書、計測の一覧 |
+| `CHANGELOG.md` | 版ごとの変更と、更新のあとにすること |
 
 ## ライセンス
 

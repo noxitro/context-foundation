@@ -23,10 +23,11 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
 import subprocess
 import sys
 from pathlib import Path
+
+from . import command_hint
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SKILLS_DIR = REPO_ROOT / "skills"
@@ -42,9 +43,28 @@ class StateUnreadable(Exception):
     """Copilot の一覧を読めない(出力の形が違う・失敗した)。文面は利用者に見せる。"""
 
 
+def which_on_path(name: str) -> str | None:
+    """PATH の項目だけを順に見て、実行ファイル name を探す。shutil.which と違い、Windows でも今のフォルダを見ない
+    (作業フォルダに置かれた python.bat などを起動しないため)。空の項目と相対の項目も飛ばす。
+    ctxf.py の which_on_path と同じもの(入口は標準ライブラリだけで動くので、写しを持つ)。"""
+    exts = [""]
+    if os.name == "nt":
+        pathext = [e for e in os.environ.get("PATHEXT", ".COM;.EXE;.BAT;.CMD").split(os.pathsep) if e]
+        if os.path.splitext(name)[1].lower() not in [e.lower() for e in pathext]:
+            exts = pathext
+    for folder in os.environ.get("PATH", "").split(os.pathsep):
+        if not folder or not os.path.isabs(folder):
+            continue
+        for ext in exts:
+            p = os.path.join(folder, name + ext)
+            if os.path.exists(p) and not os.path.isdir(p) and os.access(p, os.X_OK):
+                return p
+    return None
+
+
 def find_copilot() -> str | None:
     # npm で入れたものは copilot.cmd。.exe があればそちらを使う(cmd を経ると、引数の記号が解釈されうる)
-    return shutil.which("copilot.exe") or shutil.which("copilot")
+    return which_on_path("copilot.exe") or which_on_path("copilot")
 
 
 def copilot_home() -> Path:
@@ -184,6 +204,19 @@ def show_status(exe: str, mp: str) -> None:
         print("  " + info.replace("\n", "\n  "))
 
 
+def python_on_path_problem() -> str | None:
+    """プラグインの MCP サーバーと hook は `python` という名前で起動する。PATH の `python` で Python が起動しなければ、
+    その説明を返す(登録は止めない。CF_PYTHON やラッパーで動かしている人もいるので、知らせるだけ)。"""
+    exe = which_on_path("python")
+    if exe is None:
+        return "`python` が PATH にありません"
+    try:
+        ok = subprocess.run([exe, "-I", "-c", "pass"], capture_output=True, timeout=20).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        ok = False
+    return None if ok else f"`python`({exe})で Python が起動しません"
+
+
 def _register(exe: str, mp: str, args) -> int:
     plugins = _list(exe, "plugin", "list", "--json")
     markets = _list(exe, "plugin", "marketplace", "list", "--json")
@@ -230,8 +263,13 @@ def _register(exe: str, mp: str, args) -> int:
         _run(exe, "plugin", "enable", PLUGIN_NAME)
     print()
     show_status(exe, mp)
+    problem = python_on_path_problem()
+    if problem:
+        print(f"\n注意: {problem}。プラグインの MCP サーバーと hook は `python` で起動するので、このままでは Copilot に"
+              "検索の道具が出ません。Python を PATH に足してください(python.org のインストーラーなら"
+              "「Add python.exe to PATH」)")
     print("\n使うには: 索引を作った作業フォルダで Copilot CLI(かアプリ)の新しいセッションを始めます。"
-          "\n解除するには: unregister-copilot.bat(`ctxf copilot unregister`)")
+          f"\n解除するには: unregister-copilot.bat(`{command_hint('copilot unregister')}`)")
     return 0
 
 
@@ -273,13 +311,16 @@ def main(args) -> int:
         sys.stderr.write(f"このフォルダのパスに、cmd が特別に扱う文字({''.join(sorted(CMD_METACHARS))})が入っています: "
                          f"{REPO_ROOT}\nCopilot CLI(copilot.cmd)に正しく渡せないので、記号の無いフォルダに置き直してください\n")
         return 2
+    if not (SKILLS_DIR / SKILL_NAME / "SKILL.md").is_file() or not LAUNCHER.is_file():
+        # pip で入れたもの(wheel)には、入口・skill・Marketplace の定義が入らない
+        sys.stderr.write(f"skill のフォルダか入口(ctxf.py)がありません: {REPO_ROOT}\n"
+                         "Copilot への登録は、取得したリポジトリのフォルダ(setup.bat を流したもの)からだけできます。"
+                         "pip で入れたパッケージからは登録できません\n")
+        return 2
     try:
         mp = marketplace_name()
     except (OSError, ValueError, KeyError):
         sys.stderr.write(f"Marketplace の定義(.github/plugin/marketplace.json)を読めません: {REPO_ROOT}\n")
-        return 2
-    if not (SKILLS_DIR / SKILL_NAME / "SKILL.md").is_file() or not LAUNCHER.is_file():
-        sys.stderr.write(f"skill のフォルダか入口(ctxf.py)がありません: {REPO_ROOT}\n")
         return 2
     try:
         if args.action == "status":
