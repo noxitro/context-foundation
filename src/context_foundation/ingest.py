@@ -223,6 +223,18 @@ class SourceFile:
     text: str = ""
 
 
+@dataclass
+class Candidate:
+    """名前の決まり(include・exclude・秘密の名前・リンク)を通ったファイル。中身はまだ読んでいない。"""
+    source_id: str
+    path: str            # source のルートからの相対パス(区切りは /)
+    os_path: str         # 開くときのパス(Windows では拡張の形)
+    name: str
+    language: str
+    size: int | None     # stat できなかったときは None
+    mtime_ns: int | None
+
+
 def shown_path(rel: str) -> str:
     """表示と meta に使うパス。UTF-8 にできない名前(Linux での Shift_JIS の名前など)は、そのバイトを \\x.. で書く。"""
     try:
@@ -253,9 +265,17 @@ class IngestStats:
     nested_roots: list[str] = field(default_factory=list)   # ほかの source のルートなので、こちらでは歩かなかったフォルダ
     chunk_failed: int = 0            # 分割の途中で落ちて、行で分け直したファイル
     chunk_failed_examples: list[str] = field(default_factory=list)
+    # 名前の決まりは通ったが、大きさや中身で除いたファイル((source の id, パス, 大きさ, 更新日時, 理由))。
+    # 索引の skipped_files 表に書き、次の差分更新の安い確かめ(autoindex)で、索引の後に変わったかを見分ける
+    unindexed: list[tuple] = field(default_factory=list)
 
     def skip(self, reason: str, rel: str) -> None:
         _count(self.skipped, self.examples, reason, rel)
+
+    def leave_out(self, reason: str, f) -> None:
+        """名前の決まりを通ったファイル(Candidate か SourceFile)を、大きさや中身で除く。"""
+        self.skip(reason, f.path)
+        self.unindexed.append((f.source_id, f.path, f.size, f.mtime_ns, reason))
 
     def skip_dir(self, reason: str, rel: str) -> None:
         _count(self.skipped_dirs, self.dir_examples, reason, rel)
@@ -386,11 +406,57 @@ def iter_source_files(source: SourceConfig, index_cfg: IndexConfig, stats: Inges
                       sources: list[SourceConfig] | None = None) -> Iterator[SourceFile]:
     """source のルートを歩き、索引に入れるファイルを、中身を読んだ形で返す(パスの順)。
 
+    歩き方と名前の決まりは iter_candidates。ここでは、大きさと中身で除く(空・大きすぎる・読めない・バイナリ・
+    文字にできない・生成物・長すぎる行)。除いたものは stats.unindexed にも残す。
+    """
+    for c in iter_candidates(source, stats, sources):
+        if c.size is None:
+            stats.leave_out("unreadable", c)
+            continue
+        if c.size == 0:
+            stats.leave_out("empty", c)
+            continue
+        if c.size > index_cfg.max_file_bytes:
+            stats.leave_out("too_large", c)
+            continue
+        try:
+            with open(c.os_path, "rb") as fh:
+                data = fh.read()
+        except OSError:
+            stats.leave_out("unreadable", c)
+            continue
+        decoded = decode_bytes(data)
+        if decoded is None:
+            stats.leave_out("binary" if b"\x00" in data[:8192] else "undecodable", c)
+            continue
+        text, enc = decoded
+        text = normalize_newlines(text)
+        if not text.strip():
+            stats.leave_out("empty", c)
+            continue
+        if index_cfg.skip_generated:
+            if looks_generated(text, c.name):
+                stats.leave_out("generated", c)
+                continue
+            if index_cfg.max_line_chars and any(len(line) > index_cfg.max_line_chars for line in text.split("\n")):
+                stats.leave_out("long_lines", c)
+                continue
+        stats.included += 1
+        yield SourceFile(source_id=source.id, path=c.path, abs_path=Path(c.os_path), size=c.size,
+                         mtime_ns=c.mtime_ns, language=c.language, encoding=enc, text=text)
+
+
+def iter_candidates(source: SourceConfig, stats: IngestStats, sources: list[SourceConfig] | None = None, *,
+                    count_excluded: bool = True) -> Iterator[Candidate]:
+    """source のルートを歩き、名前の決まりを通ったファイルを、大きさと更新日時をつけて返す(パスの順。中身は読まない)。
+
     sources: 設定のすべての source。ほかの source のルートがこのルートの中にあれば、そのフォルダは歩かない
     (その source の側だけで取り込む。同じファイルを 2 回入れないため)。ファイルのリンクは取り込まない(ルートの
     中を指すものは symlink_inside、外を指すものは symlink_outside として数える)。フォルダのリンク・ジャンクション
     はたどらない(ルートの外や、上のフォルダに戻るものがあるため。ルートの中を指すものは、もとの場所で取り込まれる)。
     リンクそのものを root にした source があれば、そのフォルダはほかの source のルートとして扱う。
+    count_excluded: 既定の名前で除いたフォルダ(build など)の中も歩いて、索引に入りうるファイルを数える
+    (status に出すため)。偽なら歩かない(返すファイルは同じ。差分更新の安い確かめで使う)。
     """
     root = source.root
     if not root.is_dir():
@@ -464,6 +530,8 @@ def iter_source_files(source: SourceConfig, index_cfg: IndexConfig, stats: Inges
             if lower in UNCOUNTED_EXCLUDED_DIRS and lower in excluded_dirs:
                 continue
             if counter is None and lower in excluded_dirs:
+                if not count_excluded:
+                    continue
                 record = [f"{source.id}:{shown_path(rel)}", 0]
                 stats.excluded_dirs.append(record)
                 sub.append((d.path, rel + "/", record))
@@ -506,40 +574,10 @@ def iter_source_files(source: SourceConfig, index_cfg: IndexConfig, stats: Inges
                 inside = any(_inside(_real(f.path), r) for r in real_roots)
                 stats.skip("symlink_inside" if inside else "symlink_outside", rel)
                 continue
-            full = Path(f.path)
             try:
                 st = os.stat(f.path)
+                size, mtime_ns = st.st_size, st.st_mtime_ns
             except OSError:
-                stats.skip("unreadable", rel)
-                continue
-            if st.st_size == 0:
-                stats.skip("empty", rel)
-                continue
-            if st.st_size > index_cfg.max_file_bytes:
-                stats.skip("too_large", rel)
-                continue
-            try:
-                with open(f.path, "rb") as fh:
-                    data = fh.read()
-            except OSError:
-                stats.skip("unreadable", rel)
-                continue
-            decoded = decode_bytes(data)
-            if decoded is None:
-                stats.skip("binary" if b"\x00" in data[:8192] else "undecodable", rel)
-                continue
-            text, enc = decoded
-            text = normalize_newlines(text)
-            if not text.strip():
-                stats.skip("empty", rel)
-                continue
-            if index_cfg.skip_generated:
-                if looks_generated(text, name):
-                    stats.skip("generated", rel)
-                    continue
-                if index_cfg.max_line_chars and any(len(line) > index_cfg.max_line_chars for line in text.split("\n")):
-                    stats.skip("long_lines", rel)
-                    continue
-            stats.included += 1
-            yield SourceFile(source_id=source.id, path=rel, abs_path=full, size=st.st_size, mtime_ns=st.st_mtime_ns,
-                             language=lang, encoding=enc, text=text)
+                size = mtime_ns = None
+            yield Candidate(source_id=source.id, path=rel, os_path=f.path, name=name, language=lang, size=size,
+                            mtime_ns=mtime_ns)

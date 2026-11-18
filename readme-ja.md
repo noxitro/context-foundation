@@ -402,6 +402,11 @@ Copilot CLI の実験的機能で、`/settings experimental on` で読み込ま�
 
 - 用意(setup)の後は、Copilot の新しいセッションを始めます。動いている
   セッションには、検索の道具は出ません
+- セッションを始めると、索引のある作業フォルダでは、索引の差分更新が裏で
+  自動に流れます(0.4.6 から)。変わったファイルが無ければ、索引は書き直し
+  ません。自動の更新の結果は `status` に出ます。要らないときは、
+  `config.toml` の `[index]` に `auto_update = false` と書きます
+  ([docs/copilot.md](docs/copilot.md) の「セッションの始めの自動の更新」)
 - 検索の道具が出ない・効かないときは、[docs/copilot.md](docs/copilot.md)
   の「うまく動かないとき」を見ます。最初に `python -I "<…>\ctxf.py" where`
   を動かします

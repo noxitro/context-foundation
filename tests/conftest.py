@@ -30,6 +30,9 @@ def write_config(workspace: Path, corpus: Path = CORPUS, extra: str = "") -> Pat
 def _hash_embedder(monkeypatch):
     """既定では、テスト用の埋め込みを使う(モデルの実物を使うテストは、自分で外す)。"""
     monkeypatch.setenv("CF_TEST_EMBEDDER", "hash")
+    # sessionStart の hook を流すテストで、索引の差分更新を裏で始めない(確かめるテストは、自分で外す)
+    monkeypatch.setenv("CF_AUTO_INDEX", "0")
+    monkeypatch.delenv("CF_AUTO_INDEX_LOCKED", raising=False)
     monkeypatch.delenv("CF_CONFIG", raising=False)
     monkeypatch.delenv("COPILOT_SESSION_CWD", raising=False)   # MCP サーバーが作業フォルダを探す変数(Copilot のシェルで入る)
 

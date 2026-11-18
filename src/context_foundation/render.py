@@ -272,7 +272,54 @@ def status_agent(st: dict) -> str:
                      "which files to index may differ: \"added\" and \"deleted\" may include files that did not change, "
                      "until the index is rebuilt")
         out.append(line)
+    au = _auto_update_agent(st.get("auto_update"))
+    if au:
+        out.append(au)
     return "\n".join(out) + "\n"
+
+
+# 自動の差分更新の結果(0.4.6 から。英語は status_agent、日本語は status_human)
+_AUTO_RESULTS_EN = {"skipped": "no file changes, index kept", "updated": "index updated",
+                    "failed": "failed, previous index kept (see .cf/auto-index.log)",
+                    "busy": "not run, a manual index build was running"}
+_AUTO_RESULTS_JA = {"skipped": "変わったファイルが無いので、書き直さなかった", "updated": "更新した",
+                    "failed": "止まった(前の索引のまま。.cf/auto-index.log を見てください)",
+                    "busy": "手動の索引づくりが動いていたので、しなかった"}
+
+
+def _auto_update_agent(au: dict | None) -> str:
+    """セッションの始まりの差分更新の様子(1 行)。一度も走っていなければ出さない。"""
+    if not au:
+        return ""
+    if not au.get("enabled", True):
+        return "auto update at session start: off ([index] auto_update = false)"
+    if au.get("state") == "running":
+        return (f"auto update at session start: running since {au.get('started')}; "
+                "search uses the previous index until it finishes")
+    if au.get("state") == "stopped":
+        return f"last auto update ({au.get('started')}): stopped before finishing, previous index kept"
+    result = au.get("result")
+    return f"last auto update ({au.get('finished')}): {_AUTO_RESULTS_EN.get(result, result)}"
+
+
+def _auto_update_human(au: dict | None) -> list[str]:
+    if not au:
+        return []
+    if not au.get("enabled", True):
+        return ["  自動の更新: 切ってあります([index] auto_update = false)"]
+    if au.get("state") == "running":
+        return [f"  自動の更新: 走っています({au.get('started')} から、pid {au.get('pid')})。"
+                "終わるまで、検索は前の索引を使います"]
+    if au.get("state") == "stopped":
+        return [f"  最後の自動の更新: {au.get('started')} に始めて、途中で止められた(前の索引のまま)"]
+    result = au.get("result")
+    line = f"  最後の自動の更新: {au.get('finished')} {_AUTO_RESULTS_JA.get(result, result)}"
+    if au.get("seconds") is not None:
+        line += f"({au['seconds']} 秒)"
+    out = [line]
+    if au.get("message"):
+        out.append(f"    {au['message']}")
+    return out
 
 
 def _other_version(st: dict) -> bool:
@@ -332,6 +379,7 @@ def status_human(st: dict) -> str:
     out += _ingest_notes_human(stats)
     if st.get("freshness"):             # `status --check` のときだけ
         out += _freshness_human(st["freshness"], st)
+    out += _auto_update_human(st.get("auto_update"))
     return "\n".join(out) + "\n"
 
 

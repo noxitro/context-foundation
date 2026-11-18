@@ -48,7 +48,7 @@ def plugin_copy(tmp_path: Path, with_src: bool = False) -> Path:
 
 def base_env(tmp_path: Path, **extra) -> dict:
     env = {"CF_HOME": str(tmp_path / "home"), "SYSTEMROOT": os.environ.get("SYSTEMROOT", ""),
-           "CF_TEST_EMBEDDER": "hash"}
+           "CF_TEST_EMBEDDER": "hash", "CF_AUTO_INDEX": "0"}
     env.update(extra)
     return env
 

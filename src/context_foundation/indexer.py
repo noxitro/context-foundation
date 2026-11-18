@@ -443,6 +443,21 @@ def chunking_signature(cfg: Config) -> dict:
             "parsers": parsers, "chunk": asdict(cfg.chunk)}
 
 
+# 埋め込みの設定のうち、索引の中身を変えないもの(計算の速さ・置き場だけに効く)
+_EMBEDDING_RUNTIME_KEYS = ("cache_dir", "batch_size", "threads", "workers", "device")
+
+
+def config_digest(cfg: Config) -> str:
+    """索引の中身を決める設定(source・[index]・[chunk]・[embedding])のハッシュ。meta の config_digest に残し、
+    セッションの始まりの差分更新が、設定を変えたかを見分ける。[search] と、計算の速さだけに効く設定
+    (auto_update・threads・workers など)は入れない(変えても、索引を作り直す理由にならない)。"""
+    index = {k: v for k, v in asdict(cfg.index).items() if k != "auto_update"}
+    embedding = {k: v for k, v in asdict(cfg.embedding).items() if k not in _EMBEDDING_RUNTIME_KEYS}
+    data = {"sources": [asdict(s) for s in cfg.sources], "index": index, "chunk": asdict(cfg.chunk),
+            "embedding": embedding}
+    return hashlib.sha256(json.dumps(data, sort_keys=True, ensure_ascii=False, default=str).encode("utf-8")).hexdigest()
+
+
 def content_digest(f: SourceFile) -> bytes:
     """分割に渡すもの(言語と本文)のハッシュ。"""
     return hashlib.sha256(f.language.encode("utf-8") + b"\0" + f.text.encode("utf-8")).digest()
@@ -582,7 +597,7 @@ def build_index(cfg: Config, *, use_embedding: bool | None = None, embedder: Emb
                 else:
                     chunks, cs = _chunk_one(f, cfg, ingest_stats, log)
                 if not chunks:
-                    ingest_stats.skip("empty", f.path)
+                    ingest_stats.leave_out("empty", f)
                     ingest_stats.included -= 1
                     continue
                 nlines = f.text.count("\n") + (0 if f.text.endswith("\n") else 1)
@@ -618,6 +633,7 @@ def build_index(cfg: Config, *, use_embedding: bool | None = None, embedder: Emb
                 say(f"  取り込み中: {total_files:,} ファイル / {total_chunks:,} passage")
             per_source[src.id] = {"id": src.id, "root": str(src.root), "files": s_files, "lines": s_lines,
                                   "chunks": s_chunks}
+        writer.add_skipped(ingest_stats.unindexed)
         writer.commit()
         if chunk_reuse is not None:
             chunk_reuse.close()          # 前の索引を閉じる(Windows では、開いたままだと置き換えられない)
@@ -770,6 +786,7 @@ def build_index(cfg: Config, *, use_embedding: bool | None = None, embedder: Emb
                                          "line_window": cfg.chunk.line_window, "macro_hints": cfg.chunk.macro_hints})
         writer.set_meta("tool_version", __version__)
         writer.set_meta("chunking", signature_chunking)    # 次の索引づくりが、分割を写せるかを見分ける
+        writer.set_meta("config_digest", config_digest(cfg))   # 自動の差分更新が、設定を変えたかを見分ける(0.4.6 から)
         writer.set_meta("created_at", time.strftime("%Y-%m-%dT%H:%M:%S%z"))
         writer.set_meta("revision", revision)     # コーパスの版(コミットやチェンジリストの番号。利用者が渡す)
         # 作るたびに変わる印。検索の途中で作り直されたかを見分ける(0.4.0 から。0.3 までの索引には無い)

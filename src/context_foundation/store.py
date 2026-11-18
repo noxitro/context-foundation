@@ -6,6 +6,8 @@
   vectors     埋め込み(意味検索)。passage の id の順に並べ、まとまりごとに 1 行で持つ(検索は総当たり)
   file_chunking  ファイルごとの分割の控え(中身のハッシュと分割の統計)。次の索引づくりが、中身の変わらない
               ファイルの passage を分け直さずに写すため(0.4.5 から。検索では使わない)
+  skipped_files  名前の決まりは通ったが、大きさや中身で除いたファイル(大きさ・更新日時・理由)。セッションの
+              始まりの差分更新が、ファイルを読まずに、索引の後に変わったかを見分けるため(0.4.6 から。検索では使わない)
   meta        索引の版・作成日時・統計・埋め込みモデル
 
 読むときは読み取り専用で開き、呼び出しの間は開いたままにしない(作り直しで置き換えられるように)。
@@ -42,6 +44,8 @@ CREATE VIRTUAL TABLE chunks_fts USING fts5(
 CREATE TABLE vectors(block INTEGER PRIMARY KEY, first_id INTEGER NOT NULL, count INTEGER NOT NULL, data BLOB NOT NULL);
 CREATE TABLE file_chunking(file_id INTEGER PRIMARY KEY, digest BLOB NOT NULL, lines INTEGER NOT NULL,
     inner_error_units INTEGER NOT NULL);
+CREATE TABLE skipped_files(source_id TEXT NOT NULL, path TEXT NOT NULL, size INTEGER, mtime_ns INTEGER,
+    reason TEXT NOT NULL);
 """
 
 
@@ -83,6 +87,11 @@ class IndexWriter:
         """分割の控え(次の索引づくりが、中身の同じファイルの passage を写すため)。"""
         self.db.execute("INSERT INTO file_chunking(file_id, digest, lines, inner_error_units) VALUES(?,?,?,?)",
                         (file_id, digest, lines, inner_error_units))
+
+    def add_skipped(self, rows: list[tuple]) -> None:
+        """大きさや中身で除いたファイル((source の id, パス, 大きさ, 更新日時, 理由)。stat できなければ大きさは None)。"""
+        self.db.executemany("INSERT INTO skipped_files(source_id, path, size, mtime_ns, reason) VALUES(?,?,?,?,?)",
+                            rows)
 
     def add_chunk(self, file_id: int, source_id: str, path: str, chunk, fts_body: str, fts_symbols: str,
                   fts_path: str) -> int:

@@ -1,6 +1,7 @@
 """コマンドライン: index / search / status / eval / serve / validate / model / copilot / wizard。
 
   ctxf index                    設定(.cf/config.toml)に従って索引を作り直す
+  ctxf auto-index               セッションの始まりに hook が裏で流す差分更新(変わっていなければ何もしない)
   ctxf search "<質問>"          検索する(端末なら人が読む形、そうでなければエージェント向けの形)
   ctxf status                   索引の版・件数・作成日時
   ctxf eval --cases cases.jsonl 評価(keyword・semantic・hybrid を回して要約を書く。別に取った結果も並べる)
@@ -165,6 +166,7 @@ def cmd_search(args) -> int:
 
 
 def cmd_status(args) -> int:
+    from .autoindex import read_state
     from .render import status_agent, status_human
     from .search import Searcher, freshness
     from .store import IndexError_
@@ -178,10 +180,33 @@ def cmd_status(args) -> int:
     except IndexError_ as e:
         sys.stderr.write(f"{e}\n")
         return EXIT_NO_INDEX
+    st["auto_update"] = read_state(cfg)
     if fmt == "json":
         sys.stdout.write(json.dumps(st, ensure_ascii=False, indent=1) + "\n")
     else:
         sys.stdout.write(status_human(st) if fmt == "human" else status_agent(st))
+    return 0
+
+
+def cmd_auto_index(args) -> int:
+    """hook が切り離して始める差分更新。何が起きても 0 で終わる(経過と結果は .cf/auto-index.log と .json)。"""
+    path = None
+    try:
+        from .autoindex import run
+
+        path = find_config(getattr(args, "config", None))
+        if path is None:
+            sys.stderr.write("設定(.cf/config.toml)が見つかりません。何もしません\n")
+            return 0
+        run(load_config(path))
+    except BaseException as e:      # 設定の誤りなども、セッションを止めない
+        try:
+            sys.stderr.write(f"自動の差分更新を始められませんでした: {type(e).__name__}: {e}\n")
+            if path is not None:
+                from .autoindex import release_hook_lock
+                release_hook_lock(path.parent)
+        except Exception:
+            pass
     return 0
 
 
@@ -279,6 +304,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--quiet", action="store_true", help="途中の進み具合を出さない")
     p.add_argument("--json", action="store_true", help="結果(統計と所要時間)を JSON で出す")
     p.set_defaults(func=cmd_index)
+
+    p = sub.add_parser("auto-index", help="差分更新を 1 回流す(セッションの始まりに hook が裏で使う。変わっていなければ何もしない)",
+                       allow_abbrev=False)
+    common(p)
+    p.set_defaults(func=cmd_auto_index)
 
     p = sub.add_parser("search", help="検索する", allow_abbrev=False)
     common(p)

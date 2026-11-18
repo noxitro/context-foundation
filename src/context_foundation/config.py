@@ -42,6 +42,7 @@ class IndexConfig:
     max_file_bytes: int = 1_000_000
     max_line_chars: int = 5_000        # これより長い行があるファイルは、生成物(minify など)として除く
     skip_generated: bool = True
+    auto_update: bool = True           # Copilot のセッションの始まりに、差分更新を裏で流す(0.4.6 から)
 
 
 @dataclass
@@ -244,12 +245,13 @@ def load_config(path: str | os.PathLike) -> Config:
     cfg = Config(config_path=path, workspace=workspace, sources=sources)
 
     t = data.get("index", {})
-    _check_keys(t, {"path", "max_file_bytes", "max_line_chars", "skip_generated"}, "index")
+    _check_keys(t, {"path", "max_file_bytes", "max_line_chars", "skip_generated", "auto_update"}, "index")
     cfg.index = IndexConfig(
         path=_index_file(_take(t, "path", str, INDEX_FILE_NAME), cf_dir),
         max_file_bytes=_take(t, "max_file_bytes", int, 1_000_000),
         max_line_chars=_take(t, "max_line_chars", int, 5_000),
-        skip_generated=_take(t, "skip_generated", bool, True))
+        skip_generated=_take(t, "skip_generated", bool, True),
+        auto_update=_take(t, "auto_update", bool, True))
 
     t = data.get("chunk", {})
     _check_keys(t, {"max_bytes", "min_bytes", "line_window", "macro_hints", "attribute_macros"}, "chunk")
@@ -335,6 +337,9 @@ def config_template(sources: list[tuple[str, str]], embedding_enabled: bool = Tr
             "",
         ]
     out += [
+        "[index]",
+        "# auto_update = false   # Copilot のセッションの始まりに、索引の差分更新を裏で流さない(既定は流す)",
+        "",
         "[embedding]",
         f"enabled = {'true' if embedding_enabled else 'false'}        # false にすると keyword(BM25)だけで動く",
         "",

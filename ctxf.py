@@ -2,7 +2,7 @@
 
   python -I ctxf.py setup [--no-model]   初回の用意: 依存の入った仮想環境と、埋め込みモデル
   python -I ctxf.py search "<質問>"      検索(init / index / status などのコマンドも同じ形で渡す)
-  python -I ctxf.py session-hint         Copilot の sessionStart の hook 用(標準入力に JSON)
+  python -I ctxf.py session-hint         Copilot の sessionStart の hook 用(標準入力に JSON。索引の差分更新も裏で始める)
   python -I ctxf.py where                使う python と置き場、モデル、索引を出す(うまく動かないときの確認)
 
 Python の依存(約 200 MB)は、次のどちらかに置く。プラグインの中には置かない(プラグインを更新しても、
@@ -246,16 +246,13 @@ def find_index(cwd):
     return None
 
 
-def has_index(cwd):
-    """cwd かその親に、索引(.cf/index.db)があるか。"""
-    return find_index(cwd) is not None
-
-
 def session_hint(mcp=False):
     """Copilot の sessionStart の hook から呼ばれる。索引のある作業フォルダでだけ、skill の使いどころを 1 文で
     知らせる(説明文だけでは、skill を読まずに grep から始めるモデルがあるため)。索引が無ければ何も足さない。
     mcp が真なら(`session-hint --mcp`。MCP サーバーも入れているとき)、検索の道具を先に呼ぶように促す。
-    仮想環境の python は起動しない(セッションの始まりを遅くしないため)。何が起きても 0 で終わる。"""
+    用意ができていれば、索引の差分更新を切り離したプロセスで始める(_start_auto_index。待たない)。
+    仮想環境の python で動かすのは、その切り離したプロセスだけ(セッションの始まりを遅くしないため)。
+    何が起きても 0 で終わる。"""
     try:
         raw = sys.stdin.buffer.read() if sys.stdin is not None else b""
         try:
@@ -263,14 +260,172 @@ def session_hint(mcp=False):
         except ValueError:
             data = {}
         cwd = data.get("cwd") if isinstance(data, dict) else None
-        if has_index(cwd or os.getcwd()):
+        index = find_index(cwd or os.getcwd())
+        if index is not None:
             py, kind, reason = find_python()
             hint = ((SESSION_HINT_MCP if mcp else SESSION_HINT) if py is not None
                     else session_hint_not_ready(reason, kind))
             sys.stdout.write(json.dumps({"additionalContext": hint}))
+            sys.stdout.flush()
+            if py is not None:
+                _start_auto_index(index, py)
     except BaseException:        # hook はセッションを止めない
         pass
     return 0
+
+
+# セッションの始まりの差分更新(0.4.6 から)。名前と決まりは src/context_foundation/autoindex.py と同じ
+AUTO_INDEX_LOCK, AUTO_INDEX_LOG = "auto-index.lock", "auto-index.log"
+AUTO_LOCK_GRACE_SECONDS = 60             # 中身(pid)をまだ書いていないロックを、使われているとみなす秒数
+AUTO_LOCK_MAX_AGE_SECONDS = 24 * 3600    # pid が生きていても(番号が使い回されることがある)、古いとみなす秒数
+# Windows: 窓を出さない・Ctrl+C を受けない・低い優先度・hook を呼んだプロセスのジョブから外す
+_CREATE_NO_WINDOW, _CREATE_NEW_PROCESS_GROUP, _BELOW_NORMAL_PRIORITY_CLASS = 0x08000000, 0x200, 0x4000
+_CREATE_BREAKAWAY_FROM_JOB = 0x01000000
+
+
+def _start_auto_index(index, py):
+    """索引の差分更新(`ctxf auto-index`)を、切り離したプロセスで始める(待たない)。始めたら、その pid。
+
+    始めないとき: 環境変数 CF_AUTO_INDEX が 0、設定の [index] auto_update が偽(設定を読めないときも)、
+    ほかの自動の更新が動いている(ロック .cf/auto-index.lock)、手動の索引づくりが動いている(<索引>.tmp-<pid>)。
+    子の標準入出力は hook につながない(出力は .cf/auto-index.log。毎回書き直す)。DETACHED_PROCESS は使わない
+    (子が始めるプロセスの並び(埋め込みの並列)が、それぞれ窓を開くため)。"""
+    try:
+        if os.environ.get("CF_AUTO_INDEX") == "0":
+            return None
+        cf = os.path.dirname(index)
+        config = os.path.join(cf, "config.toml")
+        if not _auto_update_enabled(config) or _index_build_running(index):
+            return None
+        lock = os.path.join(cf, AUTO_INDEX_LOCK)
+        fd = _take_auto_index_lock(lock)
+        if fd is None:
+            return None
+    except BaseException:
+        return None
+    child = None
+    try:
+        try:
+            log = open(os.path.join(cf, AUTO_INDEX_LOG), "wb")
+        except OSError:
+            log = subprocess.DEVNULL
+        try:
+            env = dict(os.environ, CF_AUTO_INDEX_LOCKED="1")
+            argv = [py, "-I", os.path.abspath(__file__), "--run", "auto-index", "--config", config]
+            kw = dict(stdin=subprocess.DEVNULL, stdout=log, stderr=log, env=env, cwd=os.path.dirname(cf),
+                      close_fds=True)
+            if os.name == "nt":
+                flags = _CREATE_NO_WINDOW | _CREATE_NEW_PROCESS_GROUP | _BELOW_NORMAL_PRIORITY_CLASS
+                try:
+                    child = subprocess.Popen(argv, creationflags=flags | _CREATE_BREAKAWAY_FROM_JOB, **kw)
+                except OSError:      # ジョブから外すことを許さないジョブの中
+                    child = subprocess.Popen(argv, creationflags=flags, **kw)
+            else:
+                child = subprocess.Popen(argv, start_new_session=True, **kw)
+        finally:
+            if log is not subprocess.DEVNULL:
+                log.close()
+        os.write(fd, str(child.pid).encode("ascii"))
+        return child.pid
+    except BaseException:
+        return None
+    finally:
+        try:
+            os.close(fd)
+            if child is None:
+                os.remove(lock)
+        except OSError:
+            pass
+
+
+def _auto_update_enabled(config):
+    """設定の [index] auto_update(既定は入)。設定を読めなければ偽。"""
+    try:
+        with open(config, "rb") as f:
+            raw = f.read()
+    except OSError:
+        return False
+    if not any(b"auto_update" in line and not line.lstrip().startswith(b"#") for line in raw.splitlines()):
+        return True              # 書いていなければ既定の入(TOML を読む部品の読み込み(数 ms)を省く)
+    try:
+        import tomllib
+        data = tomllib.loads(raw.decode("utf-8"))
+    except (ImportError, ValueError):
+        return False
+    index = data.get("index")
+    return (index.get("auto_update", True) if isinstance(index, dict) else True) is True
+
+
+def _index_build_running(index):
+    """手動の索引づくり(<索引>.tmp-<pid> のプロセスが生きている。生死が分からないときも)が動いているか。"""
+    head = os.path.basename(index) + ".tmp-"
+    try:
+        names = os.listdir(os.path.dirname(index))
+    except OSError:
+        return False
+    for name in names:
+        pid = name[len(head):]
+        if name.startswith(head) and pid.isascii() and pid.isdigit() and len(pid) <= 10 \
+                and _pid_alive(int(pid)) is not False:
+            return True
+    return False
+
+
+def _auto_index_lock_held(lock):
+    """ロックが使われているか。無ければ偽。読めなければ真(消さない)。"""
+    try:
+        age = time.time() - os.path.getmtime(lock)
+        with open(lock, "rb") as f:
+            text = f.read(32).decode("ascii", "replace").strip()
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return True
+    if not (text.isascii() and text.isdigit() and len(text) <= 10):
+        return age <= AUTO_LOCK_GRACE_SECONDS
+    if age > AUTO_LOCK_MAX_AGE_SECONDS:
+        return False
+    alive = _pid_alive(int(text))
+    return alive is True or (alive is None and age <= LOCK_STALE_SECONDS)
+
+
+def _take_auto_index_lock(lock):
+    """ロックを O_EXCL で作る。作れたら、その fd(中の pid は、子を始めてから書く)。
+
+    古いロックは、消す役の印(<ロック>.break。これも O_EXCL)を取ったプロセスだけが、もう一度確かめてから消して
+    作り直す(2 つのセッションが同時に同じ古いロックを見ても、片方が作り直したロックを、もう片方が消さない)。"""
+    flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY
+    try:
+        return os.open(lock, flags, 0o644)
+    except FileExistsError:
+        pass
+    if _auto_index_lock_held(lock):
+        return None
+    breaker = lock + ".break"
+    try:
+        os.close(os.open(breaker, flags, 0o644))
+    except FileExistsError:
+        try:                     # 消す役が途中で止められて残った印は、しばらくしたら消す
+            if time.time() - os.path.getmtime(breaker) > AUTO_LOCK_GRACE_SECONDS:
+                os.remove(breaker)
+        except OSError:
+            pass
+        return None
+    try:
+        if _auto_index_lock_held(lock):
+            return None
+        try:
+            os.remove(lock)
+        except FileNotFoundError:
+            pass
+        return os.open(lock, flags, 0o644)
+    except OSError:
+        return None
+    finally:
+        try:
+            os.remove(breaker)
+        except OSError:
+            pass
 
 
 def _say(text):
@@ -785,7 +940,7 @@ def where():
 LAUNCHER_HELP = """context-foundation launcher. Its own commands:
   setup [--no-model] [--gpu | --cpu]   install the Python packages and the model (setup --help says more)
   where                                show the Python, runtime folder, model and index in use (troubleshooting)
-  session-hint [--mcp]                 used by the Copilot sessionStart hook
+  session-hint [--mcp]                 used by the Copilot sessionStart hook (also starts a background index update)
 Every other command goes to the tool:"""
 # Windows の仮想環境の python.exe が、仮想環境を作った python を見つけられないときの終了コード
 VENV_LAUNCHER_LOST = 103

@@ -170,7 +170,11 @@ def _call_tool(state: _State, name: str, args: dict) -> tuple[bool, str]:
     try:
         cfg, searcher = state.searcher()
         if name == "status":
-            return False, status_agent(searcher.status())
+            from .autoindex import read_state
+
+            st = searcher.status()
+            st["auto_update"] = read_state(cfg)
+            return False, status_agent(st)
         if name != "search":
             return True, f"Unknown tool: {name}"
         query = args.get("query")
