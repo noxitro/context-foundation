@@ -181,7 +181,9 @@ Version 0.4.1 adds `/context-index`. Version 0.4.2 fixes it for Copilot CLI
 Windows, building and rebuilding the index worked with no model calls.
 Version 0.4.3 adds `/context-setup`; in Copilot CLI 1.0.114 on Windows, the
 setup and the first index worked from inside one session with no model
-calls. Neither command has been tried in the app yet.
+calls. Version 0.4.4 lets the first `/context-index` without folders show a
+checklist of the workspace's folders to pick from. Neither command has been
+tried in the app yet.
 
 ## Supported environments
 

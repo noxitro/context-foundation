@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  dataHome, escapeMarkdown, failureMessage, findWorkspace, hasLocalVenv, initSources, joinOptions, keywordOnly, lastCwd, loadSdk, logTail,
+  chooseFallback, dataHome, escapeMarkdown, failureMessage, findWorkspace, folderChoices, folderSchema, hasLocalVenv, MAX_FOLDER_CHOICES, pickedFolders, WHOLE_WORKSPACE, initSources, joinOptions, keywordOnly, lastCwd, loadSdk, logTail,
   makeNotifier, parseIndexArgs, parseProgress, parseSetupArgs, parseSetupProgress, planIndex, pluginRoot, progressNote, repairCommand,
   SDK_NAMES, SETUP_HELP, setupFailureMessage, setupProgressNote, setupRuntimeFolder, splitArgs, wantDialog,
 } from "./lib.mjs";
@@ -53,15 +53,44 @@ test("findWorkspace は親へさかのぼって .cf\\config.toml を探す", () 
   assert.equal(findWorkspace(join(root, "ws", "sub")), "");
 });
 
-test("planIndex: 設定があれば作り直し、無ければフォルダを並べて init", () => {
+test("planIndex: 設定があれば作り直し、無ければフォルダを並べて init、並べていなければ選ばせる", () => {
   const root = tree();
   assert.deepEqual(planIndex("", join(root, "indexed", "deep")), { action: "index", workspace: join(root, "indexed"), full: false });
   assert.deepEqual(planIndex("full", join(root, "indexed")), { action: "index", workspace: join(root, "indexed"), full: true });
   assert.match(planIndex("Engine", join(root, "indexed")).error, /設定がすでにあります/);  // 設定を黙って書き換えない
   const ws = join(root, "ws");
-  assert.match(planIndex("", ws).error, /まだ索引がありません.*\n使い方: \/context-index/s);
+  assert.deepEqual(planIndex("", ws), { action: "choose", workspace: ws, full: false });
+  assert.deepEqual(planIndex("full", ws), { action: "choose", workspace: ws, full: true });
   assert.deepEqual(planIndex('Engine "My Docs"', ws), { action: "init", workspace: ws, folders: ["Engine", "My Docs"], full: false });
   assert.match(planIndex("Engine Nowhere", ws).error, /フォルダがありません: .*Nowhere/);
+});
+
+test("folderChoices は直下のフォルダから、隠しフォルダと索引に入らない名前を除く", () => {
+  const root = tree();
+  const ws = join(root, "ws");
+  for (const d of [".git", "node_modules", "Build", "Docs"]) mkdirSync(join(ws, d));
+  writeFileSync(join(ws, "README.md"), "");
+  assert.deepEqual(folderChoices(ws), ["Docs", "Engine", "My Docs", "sub"]);
+  assert.deepEqual(folderChoices(join(root, "nowhere")), []);
+  const many = join(root, "many");
+  for (let i = 0; i < MAX_FOLDER_CHOICES + 5; i++) mkdirSync(join(many, `d${String(i).padStart(2, "0")}`), { recursive: true });
+  assert.equal(folderChoices(many).length, MAX_FOLDER_CHOICES);
+});
+
+test("folderSchema と pickedFolders: 複数選べる形、初めは全部選んである、作業フォルダ全体は . にする", () => {
+  const names = ["Docs", "Engine"];
+  const s = folderSchema(names);
+  assert.equal(s.properties.folders.type, "array");
+  assert.deepEqual(s.properties.folders.items.enum, ["Docs", "Engine", WHOLE_WORKSPACE]);
+  assert.deepEqual(s.properties.folders.default, ["Docs", "Engine"]);
+  assert.deepEqual(pickedFolders({ folders: ["Engine"] }, names), ["Engine"]);
+  assert.deepEqual(pickedFolders({ folders: ["Engine", WHOLE_WORKSPACE] }, names), ["."]);
+  // 候補に無いもの(Other に書き込まれたパス)は後ろに足す
+  assert.deepEqual(pickedFolders({ folders: [" \"D:\\Ref App\" ", "Engine", ""] }, names), ["Engine", "D:\\Ref App"]);
+  assert.deepEqual(pickedFolders({ folders: "Docs" }, names), ["Docs"]);
+  assert.deepEqual(pickedFolders(undefined, names), []);
+  assert.match(chooseFallback("C:\\w", ["Engine", "My Docs"]), /まだ索引がありません.*\n使い方: \/context-index.*例: \/context-index Engine "My Docs"/s);
+  assert.match(chooseFallback("C:\\w", []), /例: \/context-index \./);
 });
 
 // indexer.py の build_index が出す行の形(_Progress と log)
