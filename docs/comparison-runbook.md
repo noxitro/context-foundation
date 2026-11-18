@@ -19,7 +19,7 @@ README の計画の手順 4(既存の手順と PoC を、同じ質問で比べ�
 名前のコマンドは、ふつうは PATH にありません。実際には
 `python -I "<プラグインのフォルダ>\ctxf.py" <コマンド>` か、取得した
 リポジトリの `.venv` の python で `ctxf.py --run <コマンド>` と動かします
-([README.ja.md](../README.ja.md) の「コマンド」)。
+([readme-ja.md](../readme-ja.md) の「コマンド」)。
 
 ## 0. 始める前に決めること
 

@@ -8,7 +8,7 @@ precise C++ references, while this project aims to discover relevant passages
 from natural-language questions. It is not intended to replace reference
 analysis.
 
-日本語の説明(目的・導入・使い方)は [README.ja.md](README.ja.md) にあります。
+日本語の説明(目的・導入・使い方)は [readme-ja.md](readme-ja.md) にあります。
 
 ## Initial plan
 

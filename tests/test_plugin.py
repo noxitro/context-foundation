@@ -54,7 +54,7 @@ def _section(text: str, heading: str) -> str:
 def test_reporting_sections_ask_to_mask_the_paths_of_the_where_output():
     # where の出力は、利用者の名前を含む絶対パスを出す。issue は公開されるので、どちらの README も伏せるよう求める
     en = _section((REPO / "README.md").read_text(encoding="utf-8"), "Reporting problems")
-    ja = _section((REPO / "README.ja.md").read_text(encoding="utf-8"), "不具合の報告")
+    ja = _section((REPO / "readme-ja.md").read_text(encoding="utf-8"), "不具合の報告")
     assert "where" in en and "mask" in en
     assert "where" in ja and "伏せ" in ja
 
@@ -64,7 +64,7 @@ def test_documented_index_exit_codes_match_the_code():
     from context_foundation import cli
     import re
     codes = {0, 1, cli.EXIT_USAGE, cli.EXIT_NO_INDEX, 4, 130}
-    for name, heading in (("README.ja.md", "コマンド"), ("docs/copilot.md", "索引を更新する")):
+    for name, heading in (("readme-ja.md", "コマンド"), ("docs/copilot.md", "索引を更新する")):
         part = _section((REPO / name).read_text(encoding="utf-8"), heading)
         para = part[part.index("終了コードは"):].split("\n\n", 1)[0]
         # 「130 が」の中の「0 が」に当てない(0 の説明が消えたら落ちる)。書いてある値と、コードの値が同じ

@@ -214,7 +214,7 @@ python -I "<プラグインのフォルダ>\ctxf.py" index
   知らせます)。足さないと、`p4 reconcile` などで追加の候補に挙がります
 - 秘密を持ちやすい名前のファイル(`.env`、`*.pem`、`*.key` など)は、既定で
   除きます。名前だけで見るので、ほかのファイルの中に書かれた秘密は索引に
-  入ります。除く規則は [README.ja.md](../README.ja.md) の「設定ファイル」
+  入ります。除く規則は [readme-ja.md](../readme-ja.md) の「設定ファイル」
 - 大きいコードの最初の索引づくりは、エージェントに任せず、自分の端末で
   動かすのがよいです(数十分かかり、その間エージェントは待つだけになり
   ます)。skill の文も、そう勧めるよう書いています
@@ -364,7 +364,7 @@ schtasks /Create /TN "context-foundation index" /SC DAILY /ST 07:00 ^
 2. `index.bat`: 作業フォルダと検索したいフォルダを尋ねて、索引を作る
 3. `register-copilot.bat`: このフォルダを手元の Marketplace として足し、
    プラグインを入れる(中身は `copilot register`。コマンドの呼び方は
-   [README.ja.md](../README.ja.md) の「コマンド」)
+   [readme-ja.md](../readme-ja.md) の「コマンド」)
 
 `.bat` は、`.venv` の python で `ctxf.py --run <コマンド>` を動かします。
 フォルダを動かしたり写したりしても、そのまま動きます(写したフォルダは、
@@ -532,7 +532,7 @@ python -I "<プラグインのフォルダ>\ctxf.py" where
 あった索引に入りうるファイルの数、使える検索(`hybrid / keyword /
 semantic` か keyword だけか)を出します。
 
-不具合を見つけたら、[README.ja.md](../README.ja.md) の「不具合の報告」の
+不具合を見つけたら、[readme-ja.md](../readme-ja.md) の「不具合の報告」の
 とおりに知らせてください。
 
 ## 保存されるものと消し方

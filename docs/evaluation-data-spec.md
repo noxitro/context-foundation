@@ -405,7 +405,7 @@ Check files with the `validate` command. It reports each problem with its
 file name and line number. `ctxf` below stands for the tool's command line:
 `python -I <plugin folder>/ctxf.py`, or `ctxf.py --run` started with the
 Python of the cloned repository's `.venv` (see "コマンド" in
-[README.ja.md](../README.ja.md)). A command named `ctxf` is usually not on
+[readme-ja.md](../readme-ja.md)). A command named `ctxf` is usually not on
 `PATH`.
 
 ```text

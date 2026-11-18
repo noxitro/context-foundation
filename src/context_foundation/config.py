@@ -322,7 +322,7 @@ def config_template(sources: list[tuple[str, str]], embedding_enabled: bool = Tr
     """新しい設定ファイルの中身を作る。sources は (id, ルートのパス) の並び。"""
     out = [
         "# context-foundation の設定(このフォルダ .cf は、索引と一緒に手元だけに置く)",
-        "# 書き方: https://github.com/noxitro/context-foundation の README.ja.md「設定ファイル」",
+        "# 書き方: https://github.com/noxitro/context-foundation の readme-ja.md「設定ファイル」",
         "",
     ]
     for sid, root in sources:
