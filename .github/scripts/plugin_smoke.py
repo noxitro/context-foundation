@@ -31,9 +31,12 @@ EXPECTED_PATH = "Render/BufferPool.cpp"
 # (keyword・semantic も同じ)。OS による計算のわずかな差で 1 問動いても落ちないよう、1 問分の余裕を見る
 HIT5_FLOOR = 0.7
 # /context-index を試すための、偽の Copilot の SDK(コマンドを globalThis に置き、知らせを標準出力に出す)と、
-# コマンドを呼んで終わるまで待つ取り次ぎ。本物の SDK は Copilot CLI が渡すので、ここでは動かせない
+# コマンドを呼んで終わるまで待つ取り次ぎ。本物の SDK は Copilot CLI が渡すので、ここでは動かせない。
+# SDK の名前とコマンドの置き場は版で違う(Copilot CLI 1.0.113 からは @microsoft/copilot-sdk の interaction.commands、
+# 1.0.112 まで と GitHub Copilot app は @github/copilot-sdk の commands)。偽物も、その版の置き場だけを読む
+SDK_KINDS = {"@github/copilot-sdk": "opts.commands", "@microsoft/copilot-sdk": "opts.interaction?.commands"}
 FAKE_SDK = """export async function joinSession(opts) {
-  globalThis.__commands = opts.commands;
+  globalThis.__commands = __COMMANDS__;
   return {
     capabilities: {},
     getEvents: async () => [{ type: "session.start", data: { context: { cwd: process.env.FAKE_CWD } } }],
@@ -148,24 +151,29 @@ def main() -> int:
 
     node = shutil.which("node")
     if node and shutil.which("python"):          # 拡張は、MCP サーバーと同じく PATH の python で入口を動かす
-        sdk = plugin / "node_modules" / "@github" / "copilot-sdk"
-        sdk.mkdir(parents=True)
-        (sdk / "package.json").write_text('{"name": "@github/copilot-sdk", "type": "module", '
-                                          '"exports": {"./extension": "./extension.mjs"}}', encoding="utf-8")
-        (sdk / "extension.mjs").write_text(FAKE_SDK, encoding="utf-8")
+        def fake_sdk(name):  # 偽の SDK を 1 つだけ置く(ホストは、どちらか一方の名前しか向けない)
+            shutil.rmtree(plugin / "node_modules", ignore_errors=True)
+            sdk = plugin / "node_modules" / Path(*name.split("/"))
+            sdk.mkdir(parents=True)
+            (sdk / "package.json").write_text(json.dumps({"name": name, "type": "module",
+                                                          "exports": {"./extension": "./extension.mjs"}}), encoding="utf-8")
+            (sdk / "extension.mjs").write_text(FAKE_SDK.replace("__COMMANDS__", SDK_KINDS[name]), encoding="utf-8")
+
         (work / "drive.mjs").write_text(DRIVER, encoding="utf-8")
         ext = plugin / "com.github.copilot" / "extensions" / "context-foundation" / "extension.mjs"
         ws2 = work / "workspace2"
         ws2.mkdir()
         shutil.copytree(corpus / "engine", ws2 / "engine")
         ext_env = dict(env, FAKE_CWD=str(ws2), CF_DISPLAY="timeline")
+        fake_sdk("@github/copilot-sdk")
         p = run([node, work / "drive.mjs", ext, "engine"], env=ext_env, timeout=600)
         check(p.returncode == 0 and "索引ができました" in p.stdout and "keyword だけ" not in p.stdout
-              and (ws2 / ".cf" / "index.db").is_file(), "/context-index が、設定と埋め込みつきの索引を作る",
+              and (ws2 / ".cf" / "index.db").is_file(), "/context-index が、設定と埋め込みつきの索引を作る(@github の SDK)",
               p.stdout + p.stderr)
+        fake_sdk("@microsoft/copilot-sdk")
         p = run([node, work / "drive.mjs", ext, ""], env=ext_env, timeout=600)
-        check(p.returncode == 0 and "次の検索からこの索引を使います" in p.stdout, "/context-index が、索引を作り直す",
-              p.stdout + p.stderr)
+        check(p.returncode == 0 and "次の検索からこの索引を使います" in p.stdout,
+              "/context-index が、索引を作り直す(@microsoft の SDK)", p.stdout + p.stderr)
     else:
         print("  skipped: /context-index(node か python が PATH に無い)")
 

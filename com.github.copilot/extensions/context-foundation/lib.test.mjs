@@ -6,8 +6,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  escapeMarkdown, failureMessage, findWorkspace, initSources, keywordOnly, lastCwd, logTail, makeNotifier, parseIndexArgs, parseProgress,
-  planIndex, pluginRoot, progressNote, repairCommand, splitArgs, wantDialog,
+  escapeMarkdown, failureMessage, findWorkspace, initSources, joinOptions, keywordOnly, lastCwd, loadSdk, logTail, makeNotifier, parseIndexArgs,
+  parseProgress, planIndex, pluginRoot, progressNote, repairCommand, SDK_NAMES, splitArgs, wantDialog,
 } from "./lib.mjs";
 
 const here = fileURLToPath(new URL(".", import.meta.url));
@@ -149,4 +149,46 @@ test("makeNotifier: SDK の場所が分からなければアプリとみなし�
   await new Promise((r) => setTimeout(r, 10));
   assert.deepEqual(logs, [["できました C:\\w\\\\.cf", ""], ["だめでした", "error"], ["進み具合", ""]]);
   assert.deepEqual(dialogs, ["できました C:\\w\\\\.cf"]);
+});
+
+// Copilot CLI 1.0.113 は @microsoft/copilot-sdk だけを、1.0.112 まで と GitHub Copilot app は @github/copilot-sdk だけを
+// 同梱の SDK に向ける。見つからないときの誤りは、Node.js の ERR_MODULE_NOT_FOUND と同じ形にする
+const notFound = (name) => Object.assign(new Error(`Cannot find package '${name.split("/").slice(0, 2).join("/")}' imported from x`),
+  { code: "ERR_MODULE_NOT_FOUND" });
+
+test("loadSdk: 新しい名前(@microsoft)を先に試す", async () => {
+  const tried = [];
+  const m = await loadSdk(async (n) => { tried.push(n); return { which: n }; });
+  assert.deepEqual(m, { which: "@microsoft/copilot-sdk/extension" });
+  assert.deepEqual(tried, ["@microsoft/copilot-sdk/extension"]);
+  assert.deepEqual(SDK_NAMES, ["@microsoft/copilot-sdk/extension", "@github/copilot-sdk/extension"]);
+});
+
+test("loadSdk: 新しい名前が無ければ、古い名前(@github)を読む", async () => {
+  const m = await loadSdk(async (n) => {
+    if (n.startsWith("@microsoft/")) throw notFound(n);
+    return { which: n };
+  });
+  assert.deepEqual(m, { which: "@github/copilot-sdk/extension" });
+});
+
+test("loadSdk: どちらも無ければ、名前を挙げて止まる", async () => {
+  await assert.rejects(loadSdk(async (n) => { throw notFound(n); }),
+    /SDK が見つかりません.@microsoft\/copilot-sdk\/extension、@github\/copilot-sdk\/extension./);
+});
+
+test("loadSdk: SDK の中の誤り(ほかのパッケージが無いなど)は、次を試さずに投げる", async () => {
+  const tried = [];
+  const inner = Object.assign(new Error("Cannot find package 'vscode-jsonrpc' imported from sdk"), { code: "ERR_MODULE_NOT_FOUND" });
+  await assert.rejects(loadSdk(async (n) => { tried.push(n); throw inner; }), (e) => e === inner);
+  assert.deepEqual(tried, ["@microsoft/copilot-sdk/extension"]);
+  const syntax = new SyntaxError("Unexpected token");
+  await assert.rejects(loadSdk(async () => { throw syntax; }), (e) => e === syntax);
+});
+
+test("joinOptions: コマンドを、新しい SDK の interaction.commands と古い SDK の commands の両方に置く", () => {
+  const commands = [{ name: "context-index", handler: () => { } }];
+  const o = joinOptions(commands);
+  assert.equal(o.commands, commands);
+  assert.equal(o.interaction.commands, commands);
 });

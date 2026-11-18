@@ -180,6 +180,31 @@ export function failureMessage(code, out, log, setup) {
   }
 }
 
+// 拡張の SDK の名前。ホストが、この名前の import を自分の同梱の SDK に向ける。Copilot CLI 1.0.113 から
+// @microsoft/copilot-sdk になった(1.0.112 まで と GitHub Copilot app のランタイム 1.0.106-8 は @github/copilot-sdk)。
+// どちらか一方の名前しか向けないので、新しい名前から順に試す
+export const SDK_NAMES = ["@microsoft/copilot-sdk/extension", "@github/copilot-sdk/extension"];
+
+// SDK_NAMES の順に読み込み、最初に読めたものを返す。load は名前を受け取り import する関数(拡張の import(n))。
+// その名前のパッケージが見つからないときだけ次を試す(SDK の中の誤りは、そのまま投げる)
+export async function loadSdk(load, names = SDK_NAMES) {
+  const missing = [];
+  for (const name of names) {
+    try {
+      return await load(name);
+    } catch (err) {
+      const pkg = name.split("/").slice(0, 2).join("/");
+      if (err?.code !== "ERR_MODULE_NOT_FOUND" || !String(err?.message ?? "").includes(pkg)) throw err;
+      missing.push(name);
+    }
+  }
+  throw new Error(`Copilot の拡張の SDK が見つかりません(${missing.join("、")})。Copilot CLI の新しい版で起動してください`);
+}
+
+// joinSession に渡す設定。スラッシュコマンドの置き場も SDK の版で違う: @microsoft/copilot-sdk は interaction.commands、
+// @github/copilot-sdk は commands。どちらの SDK も、知らない方の置き場は読まないので、両方に同じものを置く
+export const joinOptions = (commands) => ({ commands, interaction: { commands } });
+
 // ふつうの(level の無い)session.log は Markdown として表示され、\ の後ろが記号だと \ が消える
 // (E:\src\Proj\.cf が E:\src\Proj.cf と出る)。その \ を二重にする。error の表示はそのまま出るので通さない
 export const escapeMarkdown = (s) => s.replace(/\\(?=[!-/:-@[-`{-~])/g, "\\\\");

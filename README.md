@@ -172,8 +172,10 @@ after updating, are in [CHANGELOG.md](CHANGELOG.md) (in Japanese). They were
 run by hand on Windows with Python 3.13; other systems and Python versions
 are covered by the CI tests (and the tests were also run on Ubuntu under WSL
 with Python 3.12), and version 0.4.0 has not been tried in Copilot yet.
-Version 0.4.1 adds `/context-index`. It was run with a stand-in for the
-Copilot SDK on Linux, not yet in Copilot CLI or the app.
+Version 0.4.1 adds `/context-index`. Version 0.4.2 fixes it for Copilot CLI
+1.0.113, which did not load it. In Copilot CLI 1.0.113 and 1.0.112 on
+Windows, building and rebuilding the index worked with no model calls; it
+has not been tried in the app yet.
 
 ## Supported environments
 
