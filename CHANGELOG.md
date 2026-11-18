@@ -17,7 +17,37 @@
   固定します([docs/copilot.md](docs/copilot.md) の「チームの Marketplace
   に載せる」)
 
+## 0.4.2(2026-11-18)
+
+Copilot CLI 1.0.113 で、`/context-index` が読み込まれなかったのを直し
+ました。検索の順位の付け方、索引の形式、エージェント向けの検索の出力、
+MCP の道具は変えていません。
+
+- 1.0.113 から、CLI が拡張に渡す SDK の名前が `@microsoft/copilot-sdk` に
+  変わり、前の名前(`@github/copilot-sdk`)を読み込めなくなった。コマンドの
+  置き場も、`commands` から `interaction.commands` に変わった。拡張は、
+  新しい名前から順に SDK を読み込み、コマンドを両方の置き場に渡すように
+  した。1.0.112 までの CLI と、アプリのランタイム(前の名前)でも動く
+- 拡張の単体テストに、SDK の読み込みの順とコマンドの置き場のテストを
+  足した。プラグインの通しの確かめ(`.github/scripts/plugin_smoke.py`)は、
+  偽の SDK を 2 つの名前で 1 回ずつ置いて動かす
+- Copilot CLI 1.0.113 と 1.0.112 の対話の画面で、一覧に出ること・使い方・
+  索引づくり・作り直し・`full`・同じセッションでの検索を確かめた。索引
+  づくりの間、モデルの呼び出しは 0 回だった【実測】。アプリでは、まだ
+  試していない【未確認】(docs/copilot.md の「確かめたこと」)
+
+### 更新のあとにすること
+
+1. **setup のやり直しと、索引の作り直しは要りません。** 依存の一覧も、
+   索引の形式も変わっていません
+2. `copilot plugin update context-foundation` で更新し、Copilot CLI の
+   新しいセッションを始めます。`/context` と打って、一覧に
+   `/context-index` が出れば読み込まれています
+
 ## 0.4.1(2026-11-18)
+
+**Copilot CLI 1.0.113 では、`/context-index` が読み込まれません(0.4.2 で
+直しました)。** 1.0.112 までの CLI では動きます。
 
 索引を作るスラッシュコマンド `/context-index` を足しました。同じ作者の
 cxxref の `/cxxref-index` と同じ形(Copilot CLI の拡張)です。検索の順位の
@@ -38,8 +68,9 @@ cxxref の `/cxxref-index` と同じ形(Copilot CLI の拡張)です。検索の
 - skill `context-search` の「When it is not ready」は、索引が無いとき、
   利用者に `/context-index` を勧めるように変えた(拡張が使えないときの
   CLI の手順も残した)
-- Copilot CLI とアプリでは、まだ試していない【未確認】。偽の SDK で、
-  Linux で動かして確かめた(docs/copilot.md の「確かめたこと」)
+- 偽の SDK で、Linux で動かして確かめた。そのあと Windows の Copilot CLI
+  で動かすと、1.0.113 では読み込まれず(拡張が「failed」)、1.0.112 では
+  動いた【実測】(docs/copilot.md の「確かめたこと」)
 
 ### 更新のあとにすること
 

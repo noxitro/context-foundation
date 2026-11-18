@@ -10,12 +10,14 @@
 //     裏で動かし、走っている間は進み具合をときどき出し、終わったらそう出す。ログは .cf\context-index.log。
 //
 // 拡張は Copilot CLI の実験的機能で、機能フラグ EXTENSIONS が有効なときだけ読み込まれる。
-import { joinSession } from "@github/copilot-sdk/extension";
+// SDK は、ホストの版で名前が違う(lib.mjs の SDK_NAMES)ので、静的な import にせず、名前を順に試して読む。
 import { spawn } from "node:child_process";
 import { closeSync, existsSync, openSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { failureMessage, initSources, keywordOnly, lastCwd, makeNotifier, parseProgress, planIndex, pluginRoot, progressNote } from "./lib.mjs";
+import { failureMessage, initSources, joinOptions, keywordOnly, lastCwd, loadSdk, makeNotifier, parseProgress, planIndex, pluginRoot, progressNote } from "./lib.mjs";
+
+const { joinSession } = await loadSdk((name) => import(name));
 
 // MCP サーバーと hook と同じく、PATH の python で入口(ctxf.py)を動かす。-I: 作業フォルダのファイルを読み込まない
 const PYTHON = "python";
@@ -134,15 +136,14 @@ async function indexCommand(ctx) {
   }
 }
 
-const session = await joinSession({
-  commands: [
-    {
-      // 拡張のコマンドには引数のヒントを付けられないので、説明文の先頭に引数を書く
-      name: "context-index",
-      description: "[full] [<フォルダ> ...] — コードと設計文書の検索の索引(context-foundation)を作る・作り直す。初めては検索したいフォルダを並べる。full ですべて埋め込み直す。裏で動かす(モデルは呼ばない)",
-      handler: (ctx) => {
-        indexCommand(ctx).catch((err) => tell(`context-foundation: ${err?.message ?? err}`, "error"));
-      },
+const commands = [
+  {
+    // 拡張のコマンドには引数のヒントを付けられないので、説明文の先頭に引数を書く
+    name: "context-index",
+    description: "[full] [<フォルダ> ...] — コードと設計文書の検索の索引(context-foundation)を作る・作り直す。初めては検索したいフォルダを並べる。full ですべて埋め込み直す。裏で動かす(モデルは呼ばない)",
+    handler: (ctx) => {
+      indexCommand(ctx).catch((err) => tell(`context-foundation: ${err?.message ?? err}`, "error"));
     },
-  ],
-});
+  },
+];
+const session = await joinSession(joinOptions(commands));
