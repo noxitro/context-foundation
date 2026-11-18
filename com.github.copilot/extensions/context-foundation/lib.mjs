@@ -74,9 +74,9 @@ export function planIndex(arg, cwd) {
 
 // ---- 初めての /context-index で、索引に入れるフォルダを選ばせる
 
-// 選ぶ候補から外すフォルダ。ingest.py の DEFAULT_EXCLUDED_DIRS と同じ名前(どこにあっても索引に入らない)。
-// 名前が . で始まるものも外す
-const SKIP_DIRS = new Set([
+// 選ぶ候補から外すフォルダ。ingest.py の DEFAULT_EXCLUDED_DIRS と同じ名前(どこにあっても索引に入らない。
+// そろっていることは tests/test_plugin.py で確かめる)。名前が . で始まるものも外す
+export const SKIP_DIRS = new Set([
   ".git", ".svn", ".hg", ".p4", ".vs", ".vscode", ".idea", ".cf", ".index", ".cache", ".venv", "venv",
   "__pycache__", "node_modules", "build", "out", "bin", "obj", "dist", "target", "intermediate", "binaries",
   "deriveddatacache", "saved", ".gradle", "packages",
@@ -85,30 +85,37 @@ export const MAX_FOLDER_CHOICES = 40;
 // 選択肢の「作業フォルダ全体」(直下のファイルも入る)。選ぶと、ほかの選択は使わない
 export const WHOLE_WORKSPACE = ". (作業フォルダ全体。直下のファイルも入る)";
 
-// 作業フォルダの直下の、選ぶ候補のフォルダの名前(名前の順)。読めなければ []。多すぎれば先頭の MAX_FOLDER_CHOICES 個
+// 作業フォルダの直下の、選ぶ候補のフォルダ。{ names, omitted }。names は名前の順で、多すぎれば先頭の
+// MAX_FOLDER_CHOICES 個(omitted は、出せなかった数)。フォルダへのリンク・ジャンクションも候補にする
+// (ingest.py は、リンクそのものを source の root にできる)。読めなければ { names: [], omitted: 0 }
 export function folderChoices(ws) {
   let entries;
   try {
     entries = readdirSync(ws, { withFileTypes: true });
   } catch {
-    return [];
+    return { names: [], omitted: 0 };
   }
-  return entries
-    .filter((e) => e.isDirectory() && !e.name.startsWith(".") && !SKIP_DIRS.has(e.name.toLowerCase()))
+  const all = entries
+    .filter((e) => !e.name.startsWith(".") && !SKIP_DIRS.has(e.name.toLowerCase()))
+    .filter((e) => e.isDirectory() || (e.isSymbolicLink() && isDir(join(ws, e.name))))
     .map((e) => e.name)
-    .sort((a, b) => a.localeCompare(b))
-    .slice(0, MAX_FOLDER_CHOICES);
+    .sort((a, b) => a.localeCompare(b));
+  return { names: all.slice(0, MAX_FOLDER_CHOICES), omitted: Math.max(0, all.length - MAX_FOLDER_CHOICES) };
 }
 
-// フォルダを選ばせるダイアログの形(複数選べる)。初めは、候補のフォルダをすべて選んである
-export function folderSchema(names) {
+// フォルダを選ばせるダイアログの形(複数選べる)。初めは、候補のフォルダをすべて選んである。
+// 出せなかったフォルダがあれば(omitted)、そう書く(Other に書き込めば足せる)
+export function folderSchema(names, omitted = 0) {
+  const more = omitted
+    ? `。名前の順で ${names.length} 個まで出しています(ほかに ${omitted} 個。入れるなら Other に名前を書いてください)`
+    : "";
   return {
     type: "object",
     properties: {
       folders: {
         type: "array",
         title: "検索するフォルダ",
-        description: "エンジンのソース・参考にするアプリ・設計文書など。後から .cf\\config.toml の [[source]] で直せます",
+        description: `エンジンのソース・参考にするアプリ・設計文書など。後から .cf\\config.toml の [[source]] で直せます${more}`,
         minItems: 1,
         items: { type: "string", enum: [...names, WHOLE_WORKSPACE] },
         default: [...names],
@@ -120,13 +127,25 @@ export function folderSchema(names) {
 
 // ダイアログの答え(content)から、init に渡すフォルダ。作業フォルダ全体を選んでいれば ["."]。
 // Copilot CLI は選択肢に「Other」(書き込む欄)を足すので、候補に無い答えは、書き込まれたパス(作業フォルダの外も可)
-// として後ろに足す(囲みの引用符は外す。無いフォルダなら init が断る)
+// として後ろに足す(前後の空白・囲みの引用符・末尾の区切りを外す。無いフォルダなら init が断る)。
+// 書き込まれたものが候補の名前と同じなら(大文字小文字は見ない。Windows では同じフォルダ)、候補を選んだのと同じ
+// に扱い、同じフォルダを 2 度渡さない
 export function pickedFolders(content, names) {
   const v = content?.folders;
   const got = (Array.isArray(v) ? v : typeof v === "string" ? [v] : []).filter((s) => typeof s === "string");
   if (got.includes(WHOLE_WORKSPACE)) return ["."];
-  const typed = got.filter((s) => !names.includes(s)).map((s) => s.trim().replace(/^"(.*)"$/, "$1")).filter(Boolean);
-  return [...names.filter((n) => got.includes(n)), ...new Set(typed)];
+  const clean = got.map((s) => s.trim().replace(/^"(.*)"$/, "$1").trim().replace(/(?<=[^:\\/])[\\/]+$/, "")).filter(Boolean);
+  const key = (s) => s.toLowerCase();
+  const chosen = new Set(clean.map(key));
+  const picked = names.filter((n) => chosen.has(key(n)));
+  const seen = new Set(picked.map(key));
+  for (const s of clean) {
+    if (!seen.has(key(s))) {
+      seen.add(key(s));
+      picked.push(s);
+    }
+  }
+  return picked;
 }
 
 // ダイアログを出せないときの文(並べて打つ例に、候補のフォルダを使う)
@@ -437,7 +456,12 @@ export function makeNotifier(getSession, env) {
       if (useDialog && level !== "error") queue = queue.then(() => show(message)).catch(() => { });
       return log(message, level);
     },
-    // 出したダイアログがすべて閉じたら解ける(選ぶダイアログを、知らせのダイアログに重ねないため)
-    settled: () => queue,
+    // ダイアログを出す fn を、知らせのダイアログと同じ列に並べて動かし、その結果を返す(先に出したダイアログが
+    // 閉じてから出し、出している間の tell のダイアログは、閉じてから出す。重ねないため)
+    exclusive: (fn) => {
+      const p = queue.then(fn);
+      queue = p.catch(() => { });
+      return p;
+    },
   };
 }

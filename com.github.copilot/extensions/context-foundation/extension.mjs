@@ -81,28 +81,29 @@ function busy() {
 // 利用者に見せる文は tell、進み具合は say で出す。GitHub Copilot app は session.log の info と warning を表示しない
 // (error だけ出る)ので、アプリで動いているときは tell の文をダイアログにも出す(lib.mjs の makeNotifier。
 // CF_DISPLAY で切り替えられる)。session は下の joinSession で決まり、コマンドが呼ばれるのはその後
-const { tell, say, settled } = makeNotifier(() => session, process.env);
+const { tell, say, exclusive } = makeNotifier(() => session, process.env);
 
 // 初めての索引で、フォルダを並べずに打たれたとき: 作業フォルダの直下のフォルダから、索引に入れるものを選ばせる
-// (複数選べるダイアログ。モデルは呼ばない)。選んだフォルダの一覧か、やめた・出せないときは null
+// (複数選べるダイアログ。モデルは呼ばない)。選んだフォルダの一覧か、やめた・出せないときは null。
+// ダイアログは知らせのダイアログと同じ列に並べる(出している間に来た知らせは、閉じてから出す)
 async function chooseFolders(ws) {
-  const names = folderChoices(ws);
+  const { names, omitted } = folderChoices(ws);
   if (!session.capabilities?.ui?.elicitation) {
     await tell(`context-foundation: ${chooseFallback(ws, names)}`, "error");
     return null;
   }
-  await settled();
   try {
-    if (!names.length) {
-      if (await session.ui.confirm(`context-foundation: 作業フォルダ全体(${ws})で索引を作りますか`)) return ["."];
-    } else {
+    const picked = await exclusive(async () => {
+      if (!names.length) {
+        return (await session.ui.confirm(`context-foundation: 作業フォルダ全体(${ws})で索引を作りますか`)) ? ["."] : [];
+      }
       const r = await session.ui.elicitation({
         message: `context-foundation: 索引に入れるフォルダを選んでください(${ws})`,
-        requestedSchema: folderSchema(names),
+        requestedSchema: folderSchema(names, omitted),
       });
-      const picked = r.action === "accept" ? pickedFolders(r.content, names) : [];
-      if (picked.length) return picked;
-    }
+      return r.action === "accept" ? pickedFolders(r.content, names) : [];
+    });
+    if (picked.length) return picked;
   } catch (err) {
     // このホストが複数選ぶダイアログを描けないなど。並べて打つ使い方を出す
     await tell(`context-foundation: フォルダを選ぶダイアログを出せませんでした(${err?.message ?? err})。` +
@@ -140,6 +141,8 @@ async function indexCommand(ctx) {
       return;
     }
     if (plan.action === "choose") {
+      // 選ぶのを待っている間に打たれたコマンドには、そう断る(まだ何も走っていない)
+      running = "索引に入れるフォルダの選択";
       const folders = await chooseFolders(plan.workspace);
       if (!folders) return;
       plan = { ...plan, action: "init", folders };

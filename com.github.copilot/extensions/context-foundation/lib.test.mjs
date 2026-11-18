@@ -1,7 +1,7 @@
 // lib.mjs の単体テスト(node --test。tests/test_plugin.py から流す)
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -70,11 +70,24 @@ test("folderChoices は直下のフォルダから、隠しフォルダと索引
   const ws = join(root, "ws");
   for (const d of [".git", "node_modules", "Build", "Docs"]) mkdirSync(join(ws, d));
   writeFileSync(join(ws, "README.md"), "");
-  assert.deepEqual(folderChoices(ws), ["Docs", "Engine", "My Docs", "sub"]);
-  assert.deepEqual(folderChoices(join(root, "nowhere")), []);
+  assert.deepEqual(folderChoices(ws), { names: ["Docs", "Engine", "My Docs", "sub"], omitted: 0 });
+  assert.deepEqual(folderChoices(join(root, "nowhere")), { names: [], omitted: 0 });
   const many = join(root, "many");
   for (let i = 0; i < MAX_FOLDER_CHOICES + 5; i++) mkdirSync(join(many, `d${String(i).padStart(2, "0")}`), { recursive: true });
-  assert.equal(folderChoices(many).length, MAX_FOLDER_CHOICES);
+  const m = folderChoices(many);
+  assert.equal(m.names.length, MAX_FOLDER_CHOICES);
+  assert.equal(m.omitted, 5);
+  assert.match(folderSchema(m.names, m.omitted).properties.folders.description, /ほかに 5 個/);
+  assert.doesNotMatch(folderSchema(["Docs"]).properties.folders.description, /ほかに/);
+});
+
+test("folderChoices はフォルダへのリンク・ジャンクションも候補にする(切れたリンクは出さない)", () => {
+  const root = tree();
+  const ws = join(root, "ws");
+  // Windows ではジャンクション(管理者の権限が要らない)、ほかではフォルダへのシンボリックリンク
+  symlinkSync(join(root, "indexed"), join(ws, "Linked"), "junction");
+  symlinkSync(join(root, "gone"), join(ws, "Broken"), "junction");
+  assert.deepEqual(folderChoices(ws).names, ["Engine", "Linked", "My Docs", "sub"]);
 });
 
 test("folderSchema と pickedFolders: 複数選べる形、初めは全部選んである、作業フォルダ全体は . にする", () => {
@@ -88,6 +101,9 @@ test("folderSchema と pickedFolders: 複数選べる形、初めは全部選ん
   // 候補に無いもの(Other に書き込まれたパス)は後ろに足す
   assert.deepEqual(pickedFolders({ folders: [" \"D:\\Ref App\" ", "Engine", ""] }, names), ["Engine", "D:\\Ref App"]);
   assert.deepEqual(pickedFolders({ folders: "Docs" }, names), ["Docs"]);
+  // 書き込まれたものが候補と同じフォルダなら、2 度渡さない(空白・引用符・末尾の区切り・大文字小文字)
+  assert.deepEqual(pickedFolders({ folders: ["Engine", " \"Engine\" ", "engine\\", "Docs/", "D:\\", "D:\\"] }, names),
+    ["Docs", "Engine", "D:\\"]);
   assert.deepEqual(pickedFolders(undefined, names), []);
   assert.match(chooseFallback("C:\\w", ["Engine", "My Docs"]), /まだ索引がありません.*\n使い方: \/context-index.*例: \/context-index Engine "My Docs"/s);
   assert.match(chooseFallback("C:\\w", []), /例: \/context-index \./);
@@ -261,6 +277,36 @@ test("makeNotifier: SDK の場所が分からなければアプリとみなし�
   await new Promise((r) => setTimeout(r, 10));
   assert.deepEqual(logs, [["できました C:\\w\\\\.cf", ""], ["だめでした", "error"], ["進み具合", ""]]);
   assert.deepEqual(dialogs, ["できました C:\\w\\\\.cf"]);
+});
+
+test("makeNotifier: exclusive のダイアログを出している間の知らせのダイアログは、閉じてから出す", async () => {
+  const order = [];
+  let close;
+  const session = {
+    capabilities: { ui: { elicitation: true } },
+    log: async () => { },
+    ui: { elicitation: async (o) => { order.push(`open ${o.message}`); } },
+  };
+  const n = makeNotifier(() => session, {});
+  const picked = n.exclusive(async () => {
+    order.push("open pick");
+    await new Promise((r) => { close = r; });
+    order.push("close pick");
+    return ["Engine"];
+  });
+  await new Promise((r) => setTimeout(r, 10));
+  await n.tell("途中です", "warning");
+  await new Promise((r) => setTimeout(r, 10));
+  assert.deepEqual(order, ["open pick"]);
+  close();
+  assert.deepEqual(await picked, ["Engine"]);
+  await new Promise((r) => setTimeout(r, 10));
+  assert.deepEqual(order, ["open pick", "close pick", "open 途中です"]);
+  // fn が失敗しても、列は止まらない
+  await assert.rejects(n.exclusive(async () => { throw new Error("描けない"); }), /描けない/);
+  await n.tell("次");
+  await new Promise((r) => setTimeout(r, 10));
+  assert.equal(order.at(-1), "open 次");
 });
 
 // Copilot CLI 1.0.113 は @microsoft/copilot-sdk だけを、1.0.112 まで と GitHub Copilot app は @github/copilot-sdk だけを
