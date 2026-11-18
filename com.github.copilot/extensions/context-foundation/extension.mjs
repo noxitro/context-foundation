@@ -5,7 +5,8 @@
 //     (エージェントからは呼べない。MCP サーバーは読み取り専用のまま)。
 //     - 作業フォルダか親に設定(.cf\config.toml)があれば、ctxf.py index でその索引を作り直す。変わっていない
 //       passage の埋め込みは使い回す。full を付けると、使い回さずにすべて埋め込み直す(--full)
-//     - 無ければ、並べたフォルダで作業フォルダに設定を作り(ctxf.py init)、続けて索引を作る。並べていなければ使い方を出す
+//     - 無ければ、並べたフォルダで作業フォルダに設定を作り(ctxf.py init)、続けて索引を作る。並べていなければ、
+//       作業フォルダの直下のフォルダから選ばせる(複数選べるダイアログ。出せないホストでは使い方を出す)
 //     - この PC の用意(setup)ができていなければ、何も作らずに、用意の仕方を出す(大きな取得は、利用者が自分で始める)
 //     裏で動かし、走っている間は進み具合をときどき出し、終わったらそう出す。ログは .cf\context-index.log。
 //
@@ -24,9 +25,9 @@ import { closeSync, existsSync, mkdirSync, openSync, readFileSync } from "node:f
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  dataHome, failureMessage, findWorkspace, hasLocalVenv, initSources, joinOptions, keywordOnly, lastCwd, loadSdk, makeNotifier,
-  parseProgress, parseSetupArgs, parseSetupProgress, planIndex, pluginRoot, progressNote, SETUP_HELP, setupFailureMessage,
-  setupProgressNote, setupRuntimeFolder,
+  chooseFallback, dataHome, failureMessage, findWorkspace, folderChoices, folderSchema, hasLocalVenv, initSources, joinOptions,
+  keywordOnly, lastCwd, loadSdk, makeNotifier, parseProgress, parseSetupArgs, parseSetupProgress, pickedFolders, planIndex,
+  pluginRoot, progressNote, SETUP_HELP, setupFailureMessage, setupProgressNote, setupRuntimeFolder,
 } from "./lib.mjs";
 
 const { joinSession } = await loadSdk((name) => import(name));
@@ -80,7 +81,37 @@ function busy() {
 // 利用者に見せる文は tell、進み具合は say で出す。GitHub Copilot app は session.log の info と warning を表示しない
 // (error だけ出る)ので、アプリで動いているときは tell の文をダイアログにも出す(lib.mjs の makeNotifier。
 // CF_DISPLAY で切り替えられる)。session は下の joinSession で決まり、コマンドが呼ばれるのはその後
-const { tell, say } = makeNotifier(() => session, process.env);
+const { tell, say, settled } = makeNotifier(() => session, process.env);
+
+// 初めての索引で、フォルダを並べずに打たれたとき: 作業フォルダの直下のフォルダから、索引に入れるものを選ばせる
+// (複数選べるダイアログ。モデルは呼ばない)。選んだフォルダの一覧か、やめた・出せないときは null
+async function chooseFolders(ws) {
+  const names = folderChoices(ws);
+  if (!session.capabilities?.ui?.elicitation) {
+    await tell(`context-foundation: ${chooseFallback(ws, names)}`, "error");
+    return null;
+  }
+  await settled();
+  try {
+    if (!names.length) {
+      if (await session.ui.confirm(`context-foundation: 作業フォルダ全体(${ws})で索引を作りますか`)) return ["."];
+    } else {
+      const r = await session.ui.elicitation({
+        message: `context-foundation: 索引に入れるフォルダを選んでください(${ws})`,
+        requestedSchema: folderSchema(names),
+      });
+      const picked = r.action === "accept" ? pickedFolders(r.content, names) : [];
+      if (picked.length) return picked;
+    }
+  } catch (err) {
+    // このホストが複数選ぶダイアログを描けないなど。並べて打つ使い方を出す
+    await tell(`context-foundation: フォルダを選ぶダイアログを出せませんでした(${err?.message ?? err})。` +
+      chooseFallback(ws, names), "error");
+    return null;
+  }
+  await tell("context-foundation: 索引づくりをやめました(フォルダを選ばなかった)");
+  return null;
+}
 
 // 索引づくりか用意の間、ログを数秒おきに見て、進み具合を画面に出す。止める関数を返す
 function watchProgress(log, t0, parse = parseProgress, decide = progressNote) {
@@ -103,10 +134,15 @@ async function indexCommand(ctx) {
     const ctxf = join(plugin(), "ctxf.py");
     const setup = `python -I "${ctxf}" setup`;
     const cwd = lastCwd(await session.getEvents()) || process.cwd();
-    const plan = planIndex(ctx.args, cwd);
+    let plan = planIndex(ctx.args, cwd);
     if (plan.error) {
       await tell(`context-foundation: ${plan.error}`, "error");
       return;
+    }
+    if (plan.action === "choose") {
+      const folders = await chooseFolders(plan.workspace);
+      if (!folders) return;
+      plan = { ...plan, action: "init", folders };
     }
     const ws = plan.workspace;
     running = `索引づくり(${ws})`;
@@ -193,7 +229,7 @@ async function setupCommand(ctx) {
       ? `この作業フォルダには索引があります(${ws})。検索の道具は、新しいセッションから出ます(動いているセッションには出ません)`
       : ws
         ? "次に /context-index を打って、索引を作ってください。できたら、新しいセッションを始めます"
-        : "次に、検索したいフォルダを並べて /context-index を打ち、索引を作ってください(例: /context-index Engine Docs)。" +
+        : "次に /context-index を打ち、索引に入れるフォルダを選んでください(並べて打っても構いません。例: /context-index Engine Docs)。" +
           "できたら、新しいセッションを始めます";
     await tell(`context-foundation: 用意ができました(${sec} 秒、置き場: ${setupRuntimeFolder(out) || home})。` +
       (model ? "" : "モデルは取っていないので、検索は keyword だけです。") + next);
@@ -213,7 +249,7 @@ const commands = [
   {
     // 拡張のコマンドには引数のヒントを付けられないので、説明文の先頭に引数を書く
     name: "context-index",
-    description: "[full] [<フォルダ> ...] — コードと設計文書の検索の索引(context-foundation)を作る・作り直す。初めては検索したいフォルダを並べる。full ですべて埋め込み直す。裏で動かす(モデルは呼ばない)",
+    description: "[full] [<フォルダ> ...] — コードと設計文書の検索の索引(context-foundation)を作る・作り直す。初めは検索したいフォルダを並べるか、省いて一覧から選ぶ。full ですべて埋め込み直す。裏で動かす(モデルは呼ばない)",
     handler: (ctx) => {
       indexCommand(ctx).catch((err) => tell(`context-foundation: ${err?.message ?? err}`, "error"));
     },

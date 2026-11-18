@@ -65,10 +65,11 @@ before running one, say what it does, and run it only after they agree.
   appears only in a new session; in this session, keep using this skill
 - "No context-foundation index": ask which folders to search (the engine
   source, reference apps, design docs). Then suggest the user type
-  `/context-index "<folder>" "<folder>"` in the session: it builds the
-  index in the background without calling the model (it needs extensions,
-  an experimental feature of Copilot CLI: `/settings experimental on`).
-  Without it, the commands
+  `/context-index "<folder>" "<folder>"` in the session (with no folders,
+  it shows a checklist of the workspace's folders to pick from): it builds
+  the index in the background without calling the model (it needs
+  extensions, an experimental feature of Copilot CLI:
+  `/settings experimental on`). Without it, the commands
   are `python -I "<...>\ctxf.py" init "<folder>" "<folder>"`, then
   `python -I "<...>\ctxf.py" index`, in the workspace. The first index of
   a large codebase takes tens of minutes (about 30 minutes for 8,000

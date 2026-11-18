@@ -1,6 +1,6 @@
 // /context-index と /context-setup の、Copilot の SDK に依らない部分(テストできるように分けた。lib.test.mjs を
 // tests/test_plugin.py が node --test で流す)。出し方(makeNotifier など)は cxxref の拡張と同じ作り。
-import { existsSync, realpathSync, statSync } from "node:fs";
+import { existsSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve, win32 } from "node:path";
 
@@ -50,9 +50,10 @@ export function parseIndexArgs(arg) {
   return { full, folders: full ? words.slice(1) : words };
 }
 
-// 何をするか。{ action: "index", workspace, full } か { action: "init", workspace, folders, full } か { error }。
+// 何をするか。{ action: "index", workspace, full } か { action: "init", workspace, folders, full } か
+// { action: "choose", workspace, full } か { error }。
 // - 作業フォルダか親に設定があれば、その索引を作り直す(フォルダを並べたら断る。設定を黙って書き換えない)
-// - 無ければ、並べたフォルダで作業フォルダに設定を作ってから索引を作る。並べていなければ、使い方を出す
+// - 無ければ、並べたフォルダで作業フォルダに設定を作ってから索引を作る。並べていなければ、フォルダを選ばせる(choose)
 export function planIndex(arg, cwd) {
   const { full, folders } = parseIndexArgs(arg);
   const ws = findWorkspace(cwd);
@@ -65,16 +66,75 @@ export function planIndex(arg, cwd) {
     }
     return { action: "index", workspace: ws, full };
   }
-  if (!folders.length) {
-    return {
-      error: `まだ索引がありません(${resolve(cwd)} とその親に .cf が無い)。検索したいフォルダ(エンジンのソース、` +
-        "参考にするアプリ、設計文書など)を並べて打ってください。相対パスは作業フォルダから数えます。\n" +
-        `${USAGE}(例: /context-index Engine Docs)`,
-    };
-  }
+  if (!folders.length) return { action: "choose", workspace: resolve(cwd), full };
   const missing = folders.map((f) => resolve(cwd, f)).filter((p) => !isDir(p));
   if (missing.length) return { error: `フォルダがありません: ${missing.join(", ")}` };
   return { action: "init", workspace: resolve(cwd), folders, full };
+}
+
+// ---- 初めての /context-index で、索引に入れるフォルダを選ばせる
+
+// 選ぶ候補から外すフォルダ。ingest.py の DEFAULT_EXCLUDED_DIRS と同じ名前(どこにあっても索引に入らない)。
+// 名前が . で始まるものも外す
+const SKIP_DIRS = new Set([
+  ".git", ".svn", ".hg", ".p4", ".vs", ".vscode", ".idea", ".cf", ".index", ".cache", ".venv", "venv",
+  "__pycache__", "node_modules", "build", "out", "bin", "obj", "dist", "target", "intermediate", "binaries",
+  "deriveddatacache", "saved", ".gradle", "packages",
+]);
+export const MAX_FOLDER_CHOICES = 40;
+// 選択肢の「作業フォルダ全体」(直下のファイルも入る)。選ぶと、ほかの選択は使わない
+export const WHOLE_WORKSPACE = ". (作業フォルダ全体。直下のファイルも入る)";
+
+// 作業フォルダの直下の、選ぶ候補のフォルダの名前(名前の順)。読めなければ []。多すぎれば先頭の MAX_FOLDER_CHOICES 個
+export function folderChoices(ws) {
+  let entries;
+  try {
+    entries = readdirSync(ws, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  return entries
+    .filter((e) => e.isDirectory() && !e.name.startsWith(".") && !SKIP_DIRS.has(e.name.toLowerCase()))
+    .map((e) => e.name)
+    .sort((a, b) => a.localeCompare(b))
+    .slice(0, MAX_FOLDER_CHOICES);
+}
+
+// フォルダを選ばせるダイアログの形(複数選べる)。初めは、候補のフォルダをすべて選んである
+export function folderSchema(names) {
+  return {
+    type: "object",
+    properties: {
+      folders: {
+        type: "array",
+        title: "検索するフォルダ",
+        description: "エンジンのソース・参考にするアプリ・設計文書など。後から .cf\\config.toml の [[source]] で直せます",
+        minItems: 1,
+        items: { type: "string", enum: [...names, WHOLE_WORKSPACE] },
+        default: [...names],
+      },
+    },
+    required: ["folders"],
+  };
+}
+
+// ダイアログの答え(content)から、init に渡すフォルダ。作業フォルダ全体を選んでいれば ["."]。
+// Copilot CLI は選択肢に「Other」(書き込む欄)を足すので、候補に無い答えは、書き込まれたパス(作業フォルダの外も可)
+// として後ろに足す(囲みの引用符は外す。無いフォルダなら init が断る)
+export function pickedFolders(content, names) {
+  const v = content?.folders;
+  const got = (Array.isArray(v) ? v : typeof v === "string" ? [v] : []).filter((s) => typeof s === "string");
+  if (got.includes(WHOLE_WORKSPACE)) return ["."];
+  const typed = got.filter((s) => !names.includes(s)).map((s) => s.trim().replace(/^"(.*)"$/, "$1")).filter(Boolean);
+  return [...names.filter((n) => got.includes(n)), ...new Set(typed)];
+}
+
+// ダイアログを出せないときの文(並べて打つ例に、候補のフォルダを使う)
+export function chooseFallback(ws, names) {
+  const example = names.length ? names.slice(0, 3).map((n) => (/\s/.test(n) ? `"${n}"` : n)).join(" ") : ".";
+  return `まだ索引がありません(${ws} とその親に .cf が無い)。検索したいフォルダ(エンジンのソース、` +
+    "参考にするアプリ、設計文書など)を並べて打ってください。相対パスは作業フォルダから数えます。\n" +
+    `${USAGE}(例: /context-index ${example})`;
 }
 
 function isDir(p) {
@@ -377,5 +437,7 @@ export function makeNotifier(getSession, env) {
       if (useDialog && level !== "error") queue = queue.then(() => show(message)).catch(() => { });
       return log(message, level);
     },
+    // 出したダイアログがすべて閉じたら解ける(選ぶダイアログを、知らせのダイアログに重ねないため)
+    settled: () => queue,
   };
 }
