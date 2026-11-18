@@ -1,6 +1,7 @@
 """プラグインとして入れた人の道筋を、まっさらな環境で通しで確かめる(CI から呼ぶ。手元でも動く)。
 
   setup(利用者ごとの置き場に仮想環境とモデル)→ init → index → search → eval → MCP サーバー → 始めの 1 文
+  → /context-index(Copilot CLI の拡張。node があるときだけ。SDK は偽物に差し替える)
 
 テスト(pytest)は、埋め込みモデルの実物を使わない。ここでは、実物のモデルを取得して、テスト用の小さな
 コーパス(tests/fixtures)で、検索が答えを上位に出すところまでを見る。標準ライブラリだけで動く。
@@ -29,6 +30,21 @@ EXPECTED_PATH = "Render/BufferPool.cpp"
 # tests/fixtures の質問で、実物のモデルの hybrid が上位 5 件に根拠を出す割合の下限。手元の実測は 0.80
 # (keyword・semantic も同じ)。OS による計算のわずかな差で 1 問動いても落ちないよう、1 問分の余裕を見る
 HIT5_FLOOR = 0.7
+# /context-index を試すための、偽の Copilot の SDK(コマンドを globalThis に置き、知らせを標準出力に出す)と、
+# コマンドを呼んで終わるまで待つ取り次ぎ。本物の SDK は Copilot CLI が渡すので、ここでは動かせない
+FAKE_SDK = """export async function joinSession(opts) {
+  globalThis.__commands = opts.commands;
+  return {
+    capabilities: {},
+    getEvents: async () => [{ type: "session.start", data: { context: { cwd: process.env.FAKE_CWD } } }],
+    log: async (m, o) => { console.log(`[${o?.level ?? "info"}] ${m}`); },
+  };
+}
+"""
+DRIVER = """import { pathToFileURL } from "node:url";
+await import(pathToFileURL(process.argv[2]).href);
+globalThis.__commands.find((c) => c.name === "context-index").handler({ args: process.argv[3] ?? "" });
+"""
 
 
 def run(cmd, **kw) -> subprocess.CompletedProcess:
@@ -129,6 +145,29 @@ def main() -> int:
                        capture_output=True, text=True, encoding="utf-8", env=env)
     hint = json.loads(p.stdout or "{}").get("additionalContext", "")
     check("context-foundation-search tool first" in hint, "始めの 1 文が、検索の道具を先に使うように促す", p.stdout)
+
+    node = shutil.which("node")
+    if node and shutil.which("python"):          # 拡張は、MCP サーバーと同じく PATH の python で入口を動かす
+        sdk = plugin / "node_modules" / "@github" / "copilot-sdk"
+        sdk.mkdir(parents=True)
+        (sdk / "package.json").write_text('{"name": "@github/copilot-sdk", "type": "module", '
+                                          '"exports": {"./extension": "./extension.mjs"}}', encoding="utf-8")
+        (sdk / "extension.mjs").write_text(FAKE_SDK, encoding="utf-8")
+        (work / "drive.mjs").write_text(DRIVER, encoding="utf-8")
+        ext = plugin / "com.github.copilot" / "extensions" / "context-foundation" / "extension.mjs"
+        ws2 = work / "workspace2"
+        ws2.mkdir()
+        shutil.copytree(corpus / "engine", ws2 / "engine")
+        ext_env = dict(env, FAKE_CWD=str(ws2), CF_DISPLAY="timeline")
+        p = run([node, work / "drive.mjs", ext, "engine"], env=ext_env, timeout=600)
+        check(p.returncode == 0 and "索引ができました" in p.stdout and "keyword だけ" not in p.stdout
+              and (ws2 / ".cf" / "index.db").is_file(), "/context-index が、設定と埋め込みつきの索引を作る",
+              p.stdout + p.stderr)
+        p = run([node, work / "drive.mjs", ext, ""], env=ext_env, timeout=600)
+        check(p.returncode == 0 and "次の検索からこの索引を使います" in p.stdout, "/context-index が、索引を作り直す",
+              p.stdout + p.stderr)
+    else:
+        print("  skipped: /context-index(node か python が PATH に無い)")
 
     shutil.rmtree(work, ignore_errors=True)
     print("ALL OK")

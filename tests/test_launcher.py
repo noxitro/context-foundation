@@ -846,7 +846,7 @@ def test_sdist_carries_what_the_tests_read():
     manifest = (REPO / "MANIFEST.in").read_text(encoding="utf-8")
     assert not re.search(r"^\s*graft\b", manifest, re.M)       # 無視しているファイルまで入る
     for line in ("recursive-include tests ", "recursive-include .github ", "skills/context-search/ctxf.py",
-                 "com.github.copilot/hooks/hooks.json", "docs/design.md", "bench/agent_run.py", "prune bench/local",
+                 "com.github.copilot/hooks/hooks.json", "com.github.copilot/extensions/context-foundation/lib.mjs", "docs/design.md", "bench/agent_run.py", "prune bench/local",
                  "prune bench/runs", ".cf/*"):
         assert line in manifest, line
     assert all(name in manifest for name in ("ctxf.py", "plugin.json", "mcp.json"))
