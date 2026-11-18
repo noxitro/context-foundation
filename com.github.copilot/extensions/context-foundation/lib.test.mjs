@@ -1,0 +1,152 @@
+// lib.mjs の単体テスト(node --test。tests/test_plugin.py から流す)
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import {
+  escapeMarkdown, failureMessage, findWorkspace, initSources, keywordOnly, lastCwd, logTail, makeNotifier, parseIndexArgs, parseProgress,
+  planIndex, pluginRoot, progressNote, repairCommand, splitArgs, wantDialog,
+} from "./lib.mjs";
+
+const here = fileURLToPath(new URL(".", import.meta.url));
+
+function tree() {
+  const root = mkdtempSync(join(tmpdir(), "cf-ext-"));
+  mkdirSync(join(root, "ws", "sub"), { recursive: true });
+  mkdirSync(join(root, "ws", "Engine"));
+  mkdirSync(join(root, "ws", "My Docs"));
+  mkdirSync(join(root, "indexed", ".cf"), { recursive: true });
+  mkdirSync(join(root, "indexed", "deep", "er"), { recursive: true });
+  writeFileSync(join(root, "indexed", ".cf", "config.toml"), "");
+  return root;
+}
+
+test("pluginRoot は plugin.json と ctxf.py のあるフォルダ(このリポジトリ)", () => {
+  const root = pluginRoot(here);
+  assert.equal(join(root, "com.github.copilot", "extensions", "context-foundation"), here.replace(/[\\/]$/, ""));
+});
+
+test("lastCwd は最後の作業フォルダ", () => {
+  const events = [
+    { type: "session.start", data: { context: { cwd: "C:\\a" } } },
+    { type: "user.message", data: {} },
+    { type: "session.context_changed", data: { cwd: "C:\\b" } },
+  ];
+  assert.equal(lastCwd(events), "C:\\b");
+  assert.equal(lastCwd([]), "");
+});
+
+test("splitArgs と parseIndexArgs: 引用符・full・./full", () => {
+  assert.deepEqual(splitArgs(' Engine  "My Docs" '), ["Engine", "My Docs"]);
+  assert.deepEqual(parseIndexArgs(""), { full: false, folders: [] });
+  assert.deepEqual(parseIndexArgs("FULL"), { full: true, folders: [] });
+  assert.deepEqual(parseIndexArgs("full Engine"), { full: true, folders: ["Engine"] });
+  assert.deepEqual(parseIndexArgs("./full"), { full: false, folders: ["./full"] });
+});
+
+test("findWorkspace は親へさかのぼって .cf\\config.toml を探す", () => {
+  const root = tree();
+  assert.equal(findWorkspace(join(root, "indexed", "deep", "er")), join(root, "indexed"));
+  assert.equal(findWorkspace(join(root, "ws", "sub")), "");
+});
+
+test("planIndex: 設定があれば作り直し、無ければフォルダを並べて init", () => {
+  const root = tree();
+  assert.deepEqual(planIndex("", join(root, "indexed", "deep")), { action: "index", workspace: join(root, "indexed"), full: false });
+  assert.deepEqual(planIndex("full", join(root, "indexed")), { action: "index", workspace: join(root, "indexed"), full: true });
+  assert.match(planIndex("Engine", join(root, "indexed")).error, /設定がすでにあります/);  // 設定を黙って書き換えない
+  const ws = join(root, "ws");
+  assert.match(planIndex("", ws).error, /まだ索引がありません.*\n使い方: \/context-index/s);
+  assert.deepEqual(planIndex('Engine "My Docs"', ws), { action: "init", workspace: ws, folders: ["Engine", "My Docs"], full: false });
+  assert.match(planIndex("Engine Nowhere", ws).error, /フォルダがありません: .*Nowhere/);
+});
+
+// indexer.py の build_index が出す行の形(_Progress と log)
+const LINES = [
+  "  取り込み中: 1,200 ファイル / 9,000 passage",
+  "取り込みと分割: 8,123 ファイル / 2,000,000 行 / 61,000 passage(36.0 秒)",
+  "  前の索引の埋め込みを使い回します: 0 passage、",
+  "  埋め込み中: 6,100 / 61,000 passage(40 件/秒、残り 約 1500 秒)",
+  "埋め込み: 61,000 passage を計算、0 passage を使い回し、中身の無い 3 passage は埋め込まず(1500.0 秒、モデル m、CPU、4 プロセス)",
+  "索引ができました: C:\\w\\.cf\\index.db(120.0 MB、合計 1600.0 秒)",
+];
+
+test("parseProgress は最後の段階を返す", () => {
+  const upTo = (n) => LINES.slice(0, n).join("\n");
+  assert.deepEqual(parseProgress(""), { phase: "start" });
+  assert.deepEqual(parseProgress(upTo(1)), { phase: "ingest", files: 1200 });
+  assert.deepEqual(parseProgress(upTo(3)), { phase: "ingested", files: 8123, passages: 61000 });
+  assert.deepEqual(parseProgress(upTo(4)), { phase: "embed", done: 6100, total: 61000, eta: 1500 });
+  assert.deepEqual(parseProgress(upTo(5)), { phase: "embedded" });
+  assert.deepEqual(parseProgress(upTo(6)), { phase: "done" });
+});
+
+test("progressNote: 段階が変わったとき・1 割ごと・1 分ごとに出す", () => {
+  let r = progressNote({}, { phase: "start" }, 0, 0);
+  assert.equal(r.note, "");                                  // 始めてすぐは出さない
+  assert.equal(progressNote(r.state, { phase: "start" }, 30000, 30).note, "");
+  assert.match(progressNote(r.state, { phase: "start" }, 61000, 61).note, /準備しています.*61 秒/);
+  r = progressNote(r.state, { phase: "ingest", files: 100 }, 62000, 62);
+  assert.match(r.note, /^context-foundation: ファイルを取り込んでいます\(100 ファイル/);
+  r = progressNote(r.state, { phase: "embed", done: 6100, total: 61000, eta: 1500 }, 70000, 70);
+  assert.match(r.note, /6,100\/61,000 passage\(10%、残り 約 25 分、70 秒\)/);
+  // 同じ 1 割の中では出さない。次の 1 割でも、前から 10 秒たっていなければ出さない
+  assert.equal(progressNote(r.state, { phase: "embed", done: 6200, total: 61000, eta: 1400 }, 90000, 90).note, "");
+  assert.equal(progressNote(r.state, { phase: "embed", done: 12200, total: 61000, eta: 30 }, 75000, 75).note, "");
+  assert.match(progressNote(r.state, { phase: "embed", done: 12200, total: 61000, eta: 30 }, 81000, 81).note, /20%、残り 約 30 秒/);
+  assert.match(progressNote(r.state, { phase: "embedded" }, 82000, 82).note, /索引を書いています/);
+  assert.equal(progressNote(r.state, { phase: "done" }, 83000, 83).note, "");
+});
+
+test("repairCommand は入口の英語の知らせから直すコマンドを取り出す", () => {
+  const out = "context-foundation is not set up on this PC. Search with grep meanwhile. To set it up, ask the user first " +
+    '(it downloads ...), then run: python -I "C:\\p\\ctxf.py" setup\nA Copilot session that is already running ...\n';
+  assert.equal(repairCommand(out), 'python -I "C:\\p\\ctxf.py" setup');
+  assert.equal(repairCommand("nothing"), "");
+});
+
+test("failureMessage は終了コードごとに、わけと次にすることを出す", () => {
+  const log = "C:\\w\\.cf\\context-index.log";
+  assert.match(failureMessage(4, "", log, "SETUP"), /setup.*\nSETUP$/s);
+  assert.match(failureMessage(2, "a\nb\nsource のルートがありません:\n  engine: E:\\x\n", log, "S"), /前の索引はそのまま使えます.*engine: E:\\x$/s);
+  assert.match(failureMessage(1, "", log, "S"), /index\.db\.new/);
+  assert.match(failureMessage(130, "", log, "S"), /続きから/);
+  assert.match(failureMessage(7, "", log, "S"), /終了コード 7/);
+  assert.equal(logTail("1\n\n2\n3\n4\n5\n"), "2\n3\n4\n5");
+});
+
+test("initSources と keywordOnly は ctxf.py の出力を読む", () => {
+  const init = "設定を書きました: C:\\w\\.cf\\config.toml\n  source Engine: Engine\n  source docs: D:\\Docs\n次は ...\n";
+  assert.deepEqual(initSources(init), ["Engine: Engine", "docs: D:\\Docs"]);
+  assert.equal(keywordOnly("注意: 埋め込みモデルが手元にありません\n      → keyword(BM25)だけの索引を作ります\n"), true);
+  assert.equal(keywordOnly(LINES.join("\n")), false);
+});
+
+test("escapeMarkdown は記号の前の \\ を二重にする", () => {
+  assert.equal(escapeMarkdown("E:\\src\\Proj\\.cf"), "E:\\src\\Proj\\\\.cf");
+});
+
+test("wantDialog: CF_DISPLAY で切り替える。既定はアプリのときだけ", () => {
+  assert.equal(wantDialog({ CF_DISPLAY: "timeline" }, true), false);
+  assert.equal(wantDialog({ CF_DISPLAY: "dialog" }, false), true);
+  assert.equal(wantDialog({}, true), true);
+  assert.equal(wantDialog({}, false), false);
+});
+
+test("makeNotifier: SDK の場所が分からなければアプリとみなし、error でない文をダイアログにも出す", async () => {
+  const logs = [], dialogs = [];
+  const session = {
+    capabilities: { ui: { elicitation: true } },
+    log: async (m, o) => { logs.push([m, o.level ?? ""]); },
+    ui: { elicitation: async (o) => { dialogs.push(o.message); } },
+  };
+  const n = makeNotifier(() => session, {});
+  await n.tell("できました C:\\w\\.cf");
+  await n.tell("だめでした", "error");
+  await n.say("進み具合");
+  await new Promise((r) => setTimeout(r, 10));
+  assert.deepEqual(logs, [["できました C:\\w\\\\.cf", ""], ["だめでした", "error"], ["進み具合", ""]]);
+  assert.deepEqual(dialogs, ["できました C:\\w\\\\.cf"]);
+});

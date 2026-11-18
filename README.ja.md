@@ -55,7 +55,9 @@ hybrid で 54%)。質問と正解、結果は
 更新のあとに何をするかは [CHANGELOG.md](CHANGELOG.md) にあります。直しを
 手元で動かして確かめたのは Windows と Python 3.13 で、ほかの OS と Python
 の版は CI のテストで確かめています。Copilot での 0.4.0 の動作は、まだ
-確かめていません(Copilot の側で確かめたのは 0.3 まで)。
+確かめていません(Copilot の側で確かめたのは 0.3 まで)。0.4.1 では、索引を
+作るスラッシュコマンド `/context-index` を足しました。偽の SDK で動かして
+確かめただけで、Copilot CLI とアプリでは、まだ試していません【未確認】。
 
 対象は、まず GitHub Copilot CLI と、GitHub Copilot のデスクトップアプリ
 です。Visual Studio Code は後回しで、手順も確認もまだありません。
@@ -101,7 +103,10 @@ copilot plugin install context-foundation@context-foundation
 
 その後、最初に 1 回だけ用意(`ctxf.py setup`。依存のパッケージとモデルを、
 利用者ごとの置き場に取得する)をし、作業フォルダで索引を作ります。どちらも、
-エージェントに頼めば、利用者に尋ねてから動かします。
+エージェントに頼めば、利用者に尋ねてから動かします。索引は、Copilot CLI の
+セッションで `/context-index <検索したいフォルダ> ...` と打っても作れます
+(モデルを呼ばずに、裏で作ります。機能フラグ `EXTENSIONS` が要ります。
+[docs/copilot.md](docs/copilot.md) の「`/context-index`」)。
 
 **リポジトリを取得して使う(手元で試す人)**: どれもダブルクリックで動きます。
 
@@ -370,7 +375,9 @@ top_k = 8
 `status`)が入っています。セッションの始めの hook が、索引のある作業
 フォルダでだけ「探すときは、検索を grep より先に」と 1 文で知らせ、モデルが
 検索の道具を呼びます。MCP の道具が使えない場面のために、同じ検索を CLI で
-呼ぶ skill `context-search` も入っています。
+呼ぶ skill `context-search` も入っています。索引を作る・作り直すには、
+セッションで `/context-index` と打ちます(拡張。機能フラグ `EXTENSIONS` が
+要ります)。
 
 - 用意(setup)の後は、Copilot の新しいセッションを始めます。動いている
   セッションには、検索の道具は出ません
@@ -474,7 +481,7 @@ GitHub Actions では、次の 4 つを回します(`.github/workflows`)。
 | 場所 | 中身 |
 | --- | --- |
 | `src/context_foundation` | 道具の本体(取り込み・分割・索引・検索・評価・MCP サーバー) |
-| `mcp.json`、`com.github.copilot` | プラグインの MCP サーバーの定義と、セッションの始めの hook |
+| `mcp.json`、`com.github.copilot` | プラグインの MCP サーバーの定義、セッションの始めの hook、索引を作る拡張(`/context-index`) |
 | `skills/context-search` | MCP の道具が使えないときに、検索の CLI の呼び方を伝える skill |
 | `ctxf.py` | MCP サーバー・hook・skill が呼ぶ入口 |
 | `bench` | エージェントを使う手法を Copilot CLI で回して記録する道具 |

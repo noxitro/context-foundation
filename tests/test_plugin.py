@@ -8,6 +8,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import re
+import shutil
 import subprocess
 import sys
 import tomllib
@@ -107,6 +108,29 @@ def test_plugin_manifest_marketplace_and_hook_agree():
     assert server["args"] == ["-I", "${PLUGIN_ROOT}/ctxf.py", "serve"]
     # Agent Plugins 1.0: skill は skills/ の下だけから読まれる
     assert (REPO / "skills" / "context-search" / "SKILL.md").is_file()
+
+
+def test_extension_adds_the_index_command_and_its_library_passes_its_tests():
+    # 索引を作るスラッシュコマンド /context-index(モデルを呼ばない拡張)。Agent Plugins 1.0 では
+    # com.github.copilot/extensions/ の下に置くと読まれる(cxxref で確かめた形。docs/copilot.md の「/context-index」)
+    folder = REPO / "com.github.copilot" / "extensions" / "context-foundation"
+    ext = (folder / "extension.mjs").read_text(encoding="utf-8")
+    assert 'name: "context-index"' in ext
+    # 入口は、プラグインのルートの ctxf.py(skill のフォルダの写しは要らない)。init と index だけを動かし、setup はしない
+    assert 'join(plugin, "ctxf.py")' in ext and '"init"' in ext and '"index"' in ext and '"setup"]' not in ext
+    plugin = json.loads((REPO / "plugin.json").read_text(encoding="utf-8"))
+    assert "/context-index" in plugin["description"]
+    # skill は、索引が無いとき利用者にこのコマンドを勧める
+    assert "/context-index" in (REPO / "skills" / "context-search" / "SKILL.md").read_text(encoding="utf-8")
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node が無い")
+    r = subprocess.run([node, "--check", str(folder / "extension.mjs")], capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stderr
+    # SDK に依らない部分(プラグインの場所・作業フォルダ・引数・進み具合・失敗の文)の単体テスト
+    r = subprocess.run([node, "--test", str(folder / "lib.test.mjs")], capture_output=True, text=True,
+                       encoding="utf-8", errors="replace", timeout=120)
+    assert r.returncode == 0, r.stdout + r.stderr
 
 
 def test_launcher_without_a_runtime_says_how_to_set_up(monkeypatch, tmp_path):

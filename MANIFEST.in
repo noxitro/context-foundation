@@ -9,6 +9,8 @@ include bench/README.md bench/agent_run.py bench/answer-format.txt
 include examples/o3de/README.md examples/o3de/cases.jsonl examples/o3de/config.example.toml
 include skills/context-search/SKILL.md skills/context-search/ctxf.py
 include com.github.copilot/hooks/hooks.json
+include com.github.copilot/extensions/context-foundation/extension.mjs com.github.copilot/extensions/context-foundation/lib.mjs
+include com.github.copilot/extensions/context-foundation/lib.test.mjs
 recursive-include .github *.json *.py *.yml
 recursive-include tests *.py *.json *.jsonl *.md *.txt *.cpp *.h *.cs
 # 拡張子で入れた中にも、手元だけのものが混ざりうる場所は外す

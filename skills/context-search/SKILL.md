@@ -62,11 +62,14 @@ before running one, say what it does, and run it only after they agree.
   After setup, the search tool appears only in a new session; in this
   session, keep using this skill
 - "No context-foundation index": ask which folders to search (the engine
-  source, reference apps, design docs). In the workspace, run
-  `python -I "<...>\ctxf.py" init "<folder>" "<folder>"`, then
-  `python -I "<...>\ctxf.py" index`. The first index of a large codebase
-  takes tens of minutes (about 30 minutes for 8,000 files); suggest the
-  user run the same command in their own terminal. Later runs reuse the
-  embeddings of unchanged passages; when few files changed, they take a
-  minute or two
+  source, reference apps, design docs). Then suggest the user type
+  `/context-index "<folder>" "<folder>"` in the session: it builds the
+  index in the background without calling the model (it needs the
+  `EXTENSIONS` feature flag of Copilot CLI). Without it, the commands
+  are `python -I "<...>\ctxf.py" init "<folder>" "<folder>"`, then
+  `python -I "<...>\ctxf.py" index`, in the workspace. The first index of
+  a large codebase takes tens of minutes (about 30 minutes for 8,000
+  files); suggest the user run them in their own terminal. Later runs
+  (`/context-index` with no folders) reuse the embeddings of unchanged
+  passages; when few files changed, they take a minute or two
 - Meanwhile, search with grep as usual

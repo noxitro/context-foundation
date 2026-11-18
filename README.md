@@ -49,7 +49,11 @@ The plugin adds a read-only **MCP server** with two tools, `search` and
 `status`, and a **session-start hook** that tells the agent to search before
 grepping, only in workspaces that have an index. A **skill**
 (`context-search`) that runs the same search through the command line stays
-as a fallback for when the MCP tools are not available. Python dependencies
+as a fallback for when the MCP tools are not available. A Copilot CLI
+**extension** adds the slash command `/context-index`, which the user types
+to build or update the index in the background without calling the model
+(extensions are experimental in Copilot CLI and load only with the
+`EXTENSIONS` feature flag). Python dependencies
 (about 200 MB) and the embedding model (about 490 MB) live outside the
 plugin, in a per-user folder that `python -I ctxf.py setup` fills once.
 Until version 0.2 the skill was the default; why the MCP server replaced it
@@ -109,7 +113,7 @@ The first proof of concept does not include:
 | --- | --- |
 | `src/context_foundation` | The tool: ingest, chunking, index, search, evaluation, MCP server |
 | `skills/context-search` | The skill that tells an agent when and how to search |
-| `plugin.json`, `.github/plugin`, `com.github.copilot` | The Copilot plugin, its marketplace entry, and the session-start hook |
+| `plugin.json`, `.github/plugin`, `com.github.copilot` | The Copilot plugin, its marketplace entry, the session-start hook, and the `/context-index` extension |
 | `ctxf.py` | Launcher (standard library only): finds the Python environment and runs the tool; `setup` prepares it |
 | `bench` | Runs the agent methods with Copilot CLI and records the results |
 | `tests` | Tests and a small synthetic corpus (C++, C#, Markdown) |
@@ -168,6 +172,8 @@ after updating, are in [CHANGELOG.md](CHANGELOG.md) (in Japanese). They were
 run by hand on Windows with Python 3.13; other systems and Python versions
 are covered by the CI tests (and the tests were also run on Ubuntu under WSL
 with Python 3.12), and version 0.4.0 has not been tried in Copilot yet.
+Version 0.4.1 adds `/context-index`. It was run with a stand-in for the
+Copilot SDK on Linux, not yet in Copilot CLI or the app.
 
 ## Supported environments
 

@@ -17,6 +17,37 @@
   固定します([docs/copilot.md](docs/copilot.md) の「チームの Marketplace
   に載せる」)
 
+## 0.4.1(2026-11-18)
+
+索引を作るスラッシュコマンド `/context-index` を足しました。同じ作者の
+cxxref の `/cxxref-index` と同じ形(Copilot CLI の拡張)です。検索の順位の
+付け方、索引の形式、エージェント向けの検索の出力、MCP の道具は変えて
+いません。
+
+- `/context-index`: Copilot CLI のセッションで打つと、モデルを呼ばずに、
+  `ctxf.py init` と `ctxf.py index` を裏で動かす。初めては、検索したい
+  フォルダを並べる(`/context-index "<エンジンのソース>" "<設計文書>"`)。
+  2 回目からは、何も付けずに打つと、今の設定で作り直す。`full` で、すべて
+  埋め込み直す。進み具合をときどき出し、終わったらそう出す。出力は
+  `.cf\context-index.log` に書く。用意(setup)が済んでいなければ、何も
+  作らずに、やり直すコマンドを出す(setup は動かさない)
+- 拡張は Copilot CLI の実験的機能で、機能フラグ `EXTENSIONS` が有効な
+  ときだけ読み込まれる。設定のしかたは
+  [docs/copilot.md](docs/copilot.md) の「`/context-index`」
+- MCP サーバーは読み取り専用のまま。エージェントからは索引を作れない
+- skill `context-search` の「When it is not ready」は、索引が無いとき、
+  利用者に `/context-index` を勧めるように変えた(拡張が使えないときの
+  CLI の手順も残した)
+- Copilot CLI とアプリでは、まだ試していない【未確認】。偽の SDK で、
+  Linux で動かして確かめた(docs/copilot.md の「確かめたこと」)
+
+### 更新のあとにすること
+
+1. **setup のやり直しと、索引の作り直しは要りません。** 依存の一覧も、
+   索引の形式も変わっていません
+2. `/context-index` を使うなら、機能フラグ `EXTENSIONS` を有効にしてから、
+   Copilot CLI の新しいセッションを始めます
+
 ## 0.4.0(2026-11-17)
 
 本番で使うための直しです。監査で見つかった不具合を直し、文書を今の動きに

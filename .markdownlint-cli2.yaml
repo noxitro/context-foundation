@@ -2,6 +2,9 @@ config:
   # Prose wraps at 80 columns; table rows cannot be wrapped.
   MD013:
     tables: false
+  # CHANGELOG.md: every version has its own "更新のあとにすること" heading.
+  MD024:
+    siblings_only: true
 
 ignores:
   - ".claude/**"
