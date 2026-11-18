@@ -25,13 +25,14 @@ import uuid
 import zlib
 from collections import defaultdict
 from contextlib import closing
+from dataclasses import asdict
 from pathlib import Path
 
 import numpy as np
 
-from . import __version__, command_hint
+from . import INDEX_SCHEMA_VERSION, __version__, command_hint
 from .chunking import chunk_file
-from .chunking.base import chunk_lines
+from .chunking.base import Chunk, ChunkStats, chunk_lines
 from .config import CONFIG_DIR_NAME, Config, ConfigError
 from .embed import CPU_PROVIDER, EmbedPool, Embedder, HashEmbedder, ModelUnavailable, make_embedder
 from .ingest import IngestStats, SourceFile, iter_source_files, shown_path
@@ -422,6 +423,93 @@ def _chunk_one(f: SourceFile, cfg: Config, stats: IngestStats, log):
         return chunks, cs
 
 
+def chunking_signature(cfg: Config) -> dict:
+    """分割の結果を決めるもの。前の索引とすべて同じときだけ、中身の同じファイルの passage を写す。
+
+    分け方のコード(chunking の .py)そのもののハッシュを入れるので、道具の版を上げずにコードを変えたとき
+    (リポジトリを取得して使う人)も、写さずに分け直す。構文の解析器(tree-sitter)の版も入れる。"""
+    from importlib import metadata
+
+    h = hashlib.sha256()
+    for p in sorted((Path(__file__).parent / "chunking").glob("*.py")):
+        h.update(p.name.encode("utf-8") + b"\0" + p.read_bytes() + b"\0")
+    parsers = {}
+    for name in ("tree-sitter", "tree-sitter-c", "tree-sitter-cpp", "tree-sitter-c-sharp"):
+        try:
+            parsers[name] = metadata.version(name)
+        except metadata.PackageNotFoundError:
+            parsers[name] = ""
+    return {"schema_version": INDEX_SCHEMA_VERSION, "tool_version": __version__, "code": h.hexdigest(),
+            "parsers": parsers, "chunk": asdict(cfg.chunk)}
+
+
+def content_digest(f: SourceFile) -> bytes:
+    """分割に渡すもの(言語と本文)のハッシュ。"""
+    return hashlib.sha256(f.language.encode("utf-8") + b"\0" + f.text.encode("utf-8")).digest()
+
+
+class _ChunkReuse:
+    """前の索引から、中身の同じファイルの passage を写す(分け直さない)。
+
+    写すのは、分割の作り方(chunking_signature)が前の索引と同じで、source・パス・言語・本文が同じファイルだけ。
+    構文で分けられずに行で分けたファイルは、控えを残さない(分け直して、作り直したときと同じ注意を出す)。
+    前の索引が無い・読めない・控えが無い(0.4.4 まで)ときは、何も写さない。"""
+
+    def __init__(self, path: Path, signature: dict):
+        self.db: sqlite3.Connection | None = None
+        self.files: dict[tuple[str, str], tuple] = {}
+        if not path.is_file():
+            return
+        try:
+            db = open_readonly(path)
+        except (IndexError_, sqlite3.Error, OSError):
+            return
+        try:
+            meta = read_meta(db, check_version=False)
+            if meta.get("chunking") != signature:
+                db.close()
+                return
+            ranges = {fid: (lo, hi, n) for fid, lo, hi, n in db.execute(
+                "SELECT file_id, min(id), max(id), count(*) FROM chunks GROUP BY file_id")}
+            for fid, sid, path_, language, n_chunks, fallback_lines, digest, lines, inner in db.execute(
+                    "SELECT f.id, f.source_id, f.path, f.language, f.chunks, f.fallback_lines, k.digest, k.lines, "
+                    "k.inner_error_units FROM files f JOIN file_chunking k ON k.file_id = f.id"):
+                r = ranges.get(fid)
+                # passage は、ファイルごとに続いた id で書いてある。そうでなければ写さない
+                if r is None or r[2] != n_chunks or r[1] - r[0] + 1 != n_chunks:
+                    continue
+                self.files[(sid, path_)] = (bytes(digest), language, r[0], r[1], lines, fallback_lines, inner)
+        except (IndexError_, sqlite3.Error, ValueError, TypeError):
+            self.files = {}
+        if self.files:
+            self.db = db
+        else:
+            db.close()
+
+    def take(self, f: SourceFile, digest: bytes):
+        """写せるなら (passage の並び, 分割の統計)。写せなければ None。"""
+        hit = self.files.get((f.source_id, f.path)) if self.db is not None else None
+        if hit is None or hit[0] != digest or hit[1] != f.language:
+            return None
+        _, _, lo, hi, lines, fallback_lines, inner = hit
+        try:
+            rows = self.db.execute(
+                "SELECT start_line, end_line, kind, method, scope, signature, symbols, part, text FROM chunks "
+                "WHERE id BETWEEN ? AND ? ORDER BY id", (lo, hi)).fetchall()
+            chunks = [Chunk(start_line=r[0], end_line=r[1], kind=r[2], method=r[3], scope=r[4], signature=r[5],
+                            symbols=json.loads(r[6]), part=r[7], text=unpack_text(r[8])) for r in rows]
+        except (sqlite3.Error, ValueError, TypeError, zlib.error):
+            return None
+        if len(chunks) != hi - lo + 1:
+            return None
+        return chunks, ChunkStats(lines=lines, fallback_lines=fallback_lines, inner_error_units=inner)
+
+    def close(self) -> None:
+        if self.db is not None:
+            self.db.close()
+            self.db = None
+
+
 def build_index(cfg: Config, *, use_embedding: bool | None = None, embedder: Embedder | None = None,
                 require_embedding: bool = False, progress: bool = True, log=None, revision: str = "",
                 reuse: bool = True) -> dict:
@@ -470,7 +558,12 @@ def build_index(cfg: Config, *, use_embedding: bool | None = None, embedder: Emb
 
     tmp = dest.with_name(dest.name + f".tmp-{os.getpid()}")
     writer = IndexWriter(tmp)
+    chunk_reuse = None
+    reused_files = 0
     try:
+        signature_chunking = chunking_signature(cfg)
+        # --full(reuse=False)では、分割も写さない(すべて分け直す)
+        chunk_reuse = _ChunkReuse(previous, signature_chunking) if reuse else None
         ingest_stats = IngestStats()
         per_source: dict[str, dict] = {}
         by_lang: dict[str, dict] = defaultdict(lambda: {"files": 0, "lines": 0, "chunks": 0, "fallback_lines": 0})
@@ -481,7 +574,13 @@ def build_index(cfg: Config, *, use_embedding: bool | None = None, embedder: Emb
         for src in cfg.sources:
             s_files = s_lines = s_chunks = 0
             for f in iter_source_files(src, cfg.index, ingest_stats, cfg.sources):
-                chunks, cs = _chunk_one(f, cfg, ingest_stats, log)
+                digest = content_digest(f)
+                copied = chunk_reuse.take(f, digest) if chunk_reuse is not None else None
+                if copied is not None:
+                    chunks, cs = copied
+                    reused_files += 1
+                else:
+                    chunks, cs = _chunk_one(f, cfg, ingest_stats, log)
                 if not chunks:
                     ingest_stats.skip("empty", f.path)
                     ingest_stats.included -= 1
@@ -490,6 +589,8 @@ def build_index(cfg: Config, *, use_embedding: bool | None = None, embedder: Emb
                 try:
                     file_id = writer.add_file(f.source_id, f.path, f.size, f.mtime_ns, nlines, f.language,
                                               f.encoding, len(chunks), cs.fallback_lines)
+                    if not cs.parse_failed:
+                        writer.add_file_chunking(file_id, digest, cs.lines, cs.inner_error_units)
                     fts_path = fts_text(f.path)
                     for c in chunks:
                         writer.add_chunk(file_id, f.source_id, f.path, c, fts_text(c.text),
@@ -518,12 +619,16 @@ def build_index(cfg: Config, *, use_embedding: bool | None = None, embedder: Emb
             per_source[src.id] = {"id": src.id, "root": str(src.root), "files": s_files, "lines": s_lines,
                                   "chunks": s_chunks}
         writer.commit()
+        if chunk_reuse is not None:
+            chunk_reuse.close()          # 前の索引を閉じる(Windows では、開いたままだと置き換えられない)
         for n in ingest_stats.nested_roots:
             outer, inner = n.split(" → ")
             log(f"  {outer} は source {inner} のルートなので、{inner} の側だけで取り込みました")
         t_chunk = time.time()
         log(f"取り込みと分割: {total_files:,} ファイル / {total_lines:,} 行 / {total_chunks:,} passage"
-            f"({t_chunk - t_start:.1f} 秒)")
+            f"({t_chunk - t_start:.1f} 秒"
+            + (f"。中身の変わらない {reused_files:,} ファイルは、前の索引の passage を写しました" if reused_files else "")
+            + ")")
         if not total_chunks:
             raise BuildError("索引に入るファイルが 1 つもありません。設定の root・include・exclude を確かめてください")
 
@@ -664,11 +769,14 @@ def build_index(cfg: Config, *, use_embedding: bool | None = None, embedder: Emb
         writer.set_meta("chunk_config", {"max_bytes": cfg.chunk.max_bytes, "min_bytes": cfg.chunk.min_bytes,
                                          "line_window": cfg.chunk.line_window, "macro_hints": cfg.chunk.macro_hints})
         writer.set_meta("tool_version", __version__)
+        writer.set_meta("chunking", signature_chunking)    # 次の索引づくりが、分割を写せるかを見分ける
         writer.set_meta("created_at", time.strftime("%Y-%m-%dT%H:%M:%S%z"))
         writer.set_meta("revision", revision)     # コーパスの版(コミットやチェンジリストの番号。利用者が渡す)
         # 作るたびに変わる印。検索の途中で作り直されたかを見分ける(0.4.0 から。0.3 までの索引には無い)
         writer.set_meta("build_id", uuid.uuid4().hex)
         timings = {"ingest_chunk_seconds": round(t_chunk - t_start, 2),
+                   # 分け直したファイルと、前の索引から passage を写したファイル
+                   "chunked_files": total_files - reused_files, "reused_chunk_files": reused_files,
                    "embed_seconds": round(t_embed - t_embed0, 2) if embedding_meta else 0.0,
                    "embedded_passages": embed_counts["embedded"], "reused_passages": embed_counts["reused"],
                    # 中身が無いので埋め込まなかった passage(意味検索には出ない。keyword では引ける)
@@ -687,6 +795,8 @@ def build_index(cfg: Config, *, use_embedding: bool | None = None, embedder: Emb
     except ReplaceError:
         raise                   # できた索引は <索引>.new に残した(消さない)
     except BaseException:
+        if chunk_reuse is not None:
+            chunk_reuse.close()
         writer.abort()
         raise
     # 置き換えたので、続きから作るための埋め込みと、前に置き換えられずに残った索引は要らない

@@ -271,7 +271,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("index", help="索引を作る(前の索引の埋め込みは、変わっていない passage の分を使い回す)",
                        allow_abbrev=False)
     common(p)
-    p.add_argument("--full", action="store_true", help="前の索引の埋め込みも、途中までの埋め込み(.partial)も使い回さず、すべて埋め込み直す")
+    p.add_argument("--full", action="store_true", help="前の索引の分割と埋め込みも、途中までの埋め込み(.partial)も使い回さず、すべて分け直し、埋め込み直す")
     p.add_argument("--no-embed", action="store_true", help="埋め込みを作らない(keyword だけの索引。前の索引の埋め込みは捨てる)")
     p.add_argument("--download", action="store_true", help="埋め込みモデルが無ければ、先に取得する")
     p.add_argument("--require-embedding", action="store_true", help="モデルが無いとき、keyword だけで作らずに止まる")
