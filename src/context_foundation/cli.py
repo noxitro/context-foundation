@@ -17,10 +17,13 @@ import json
 import os
 import sys
 
-from . import __version__
+from . import __version__, command_hint
 from .config import MODES, ConfigError, find_config, load_config
 
 EXIT_USAGE, EXIT_NO_INDEX = 2, 3
+# serve が、要るパッケージを読めずに終わったとき(入口 ctxf.py の VENV_IMPORT_FAILED と同じ値。入口はこれを見て、
+# 道具を出さないサーバーとして答え直す)
+EXIT_IMPORT_FAILED = 104
 
 
 def _utf8_stdio() -> None:
@@ -43,12 +46,12 @@ def _load(args):
     if path is None:
         if _for_agent(args):
             sys.stdout.write(
-                "No context-foundation index: no .cf folder found from " + os.getcwd() + " upward.\n"
-                "Search with grep as usual. Building an index takes minutes; ask the user first "
-                "(they run index.bat in the context-foundation folder).\n")
+                "No context-foundation index: no .cf folder found from " + os.getcwd() + " upward. "
+                "Search with grep as usual. Building an index takes minutes; ask the user first.\n")
         else:
             sys.stderr.write(
-                "設定(.cf/config.toml)が見つかりません。作業フォルダで index.bat を実行するか、"
+                "設定(.cf/config.toml)が見つかりません。作業フォルダで "
+                f"`{command_hint('init <フォルダ> [<フォルダ> ...]')}` と `{command_hint('index')}` を実行するか、"
                 "--config で場所を指定してください\n")
         raise SystemExit(EXIT_NO_INDEX)
     return load_config(path)
@@ -56,16 +59,22 @@ def _load(args):
 
 def cmd_index(args) -> int:
     from .embed import ModelUnavailable, download_model, resolve_model
-    from .indexer import build_index
+    from .indexer import BuildError, ReplaceError, build_index
 
     cfg = _load(args)
     use_embedding = False if args.no_embed else None
-    if args.download and not args.no_embed and cfg.embedding.enabled:
-        download_model(resolve_model(cfg.embedding), log=lambda s: print(s, file=sys.stderr))
     try:
+        if args.download and not args.no_embed and cfg.embedding.enabled:
+            download_model(resolve_model(cfg.embedding), log=lambda s: print(s, file=sys.stderr))
         result = build_index(cfg, use_embedding=use_embedding, require_embedding=args.require_embedding,
                              progress=not args.quiet, revision=args.revision, reuse=not args.full)
     except ModelUnavailable as e:
+        sys.stderr.write(f"{e}\n")
+        return EXIT_USAGE
+    except ReplaceError as e:            # 設定の誤りではない(開いているプログラムを閉じれば通る)
+        sys.stderr.write(f"{e}\n")
+        return 1
+    except BuildError as e:
         sys.stderr.write(f"{e}\n")
         return EXIT_USAGE
     if args.json:
@@ -86,7 +95,7 @@ def cmd_init(args) -> int:
     ws = Path(args.workspace or os.getcwd()).resolve()
     cfg_path = ws / CONFIG_DIR_NAME / CONFIG_FILE_NAME
     if cfg_path.is_file() and not args.force:
-        sys.stderr.write(f"設定がすでにあります: {cfg_path}\n(作り直すなら --force。索引を作るなら `ctxf index`)\n")
+        sys.stderr.write(f"設定がすでにあります: {cfg_path}\n(作り直すなら --force。索引を作るなら `{command_hint('index')}`)\n")
         return EXIT_USAGE
     sources: list[tuple[str, str]] = []
     used: set[str] = set()
@@ -118,7 +127,8 @@ def cmd_init(args) -> int:
     print(f"設定を書きました: {cfg_path}")
     for sid, root in sources:
         print(f"  source {sid}: {root}")
-    print("次は `ctxf index` で索引を作ります(大きなコードでは時間がかかります)。")
+    print(f"次は `{command_hint('index')}` で索引を作ります(大きなコードでは時間がかかります)。")
+    print("Perforce を使うなら、.cf を .p4ignore に足してください(索引には、ソースの本文の写しが入ります)。")
     return 0
 
 
@@ -130,7 +140,7 @@ def cmd_search(args) -> int:
     cfg = _load(args)
     query = " ".join(args.query).strip()
     if not query:
-        sys.stderr.write("質問を渡してください: ctxf search \"<質問>\"\n")
+        sys.stderr.write(f"質問を渡してください: {command_hint('search')} \"<質問>\"\n")
         return EXIT_USAGE
     fmt = args.format or ("human" if sys.stdout.isatty() else "agent")
     try:
@@ -156,13 +166,15 @@ def cmd_search(args) -> int:
 
 def cmd_status(args) -> int:
     from .render import status_agent, status_human
-    from .search import Searcher
+    from .search import Searcher, freshness
     from .store import IndexError_
 
     cfg = _load(args)
     fmt = args.format or ("human" if sys.stdout.isatty() else "agent")
     try:
         st = Searcher.from_config(cfg).status()
+        if args.check:
+            st["freshness"] = freshness(cfg)
     except IndexError_ as e:
         sys.stderr.write(f"{e}\n")
         return EXIT_NO_INDEX
@@ -204,7 +216,7 @@ def cmd_model(args) -> int:
         model_files(spec)
         print("  状態: 手元にあります")
     except ModelUnavailable:
-        print("  状態: まだありません(`ctxf model download` で取得)")
+        print(f"  状態: まだありません(`{command_hint('model download')}` で取得)")
     return 0
 
 
@@ -219,7 +231,13 @@ def cmd_validate(args) -> int:
 
 
 def cmd_serve(args) -> int:
-    from .mcp_server import serve
+    try:
+        from .mcp_server import serve
+    except ImportError as e:     # 標準入力を読む前に終わる(標準出力には何も書かない)
+        if (getattr(e, "name", None) or "").split(".")[0] == __package__:
+            raise                # 道具そのものの誤り(依存を読めないのではない)。traceback を残す
+        sys.stderr.write(f"検索に要るパッケージを読めません({type(e).__name__}: {e})。入れ直してください\n")
+        return EXIT_IMPORT_FAILED
     return serve(config=args.config)
 
 
@@ -252,8 +270,8 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("index", help="索引を作る(前の索引の埋め込みは、変わっていない passage の分を使い回す)",
                        allow_abbrev=False)
     common(p)
-    p.add_argument("--full", action="store_true", help="前の索引の埋め込みを使い回さず、すべて埋め込み直す")
-    p.add_argument("--no-embed", action="store_true", help="埋め込みを作らない(keyword だけの索引)")
+    p.add_argument("--full", action="store_true", help="前の索引の埋め込みも、途中までの埋め込み(.partial)も使い回さず、すべて埋め込み直す")
+    p.add_argument("--no-embed", action="store_true", help="埋め込みを作らない(keyword だけの索引。前の索引の埋め込みは捨てる)")
     p.add_argument("--download", action="store_true", help="埋め込みモデルが無ければ、先に取得する")
     p.add_argument("--require-embedding", action="store_true", help="モデルが無いとき、keyword だけで作らずに止まる")
     p.add_argument("--revision", default="", help="コーパスの版(コミットやチェンジリストの番号)。索引に記録する")
@@ -276,6 +294,8 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("status", help="索引の版・件数・作成日時", allow_abbrev=False)
     common(p)
     p.add_argument("--format", choices=("agent", "human", "json"))
+    p.add_argument("--check", action="store_true",
+                   help="索引の後に変わった・増えた・消えたファイルを数える(フォルダを歩いて読むので、大きいと時間がかかる)")
     p.set_defaults(func=cmd_status)
 
     p = sub.add_parser("eval", help="評価を回して要約を書く(検索だけの手法)。別に取った結果も並べる",

@@ -82,6 +82,10 @@ copy <ここ>\examples\o3de\config.example.toml o3de-eval\.cf\config.toml
 
 `o3de-eval\.cf\config.toml` の `<o3de>` を、取得したフォルダに書き換えます。
 作業フォルダで、索引を作り、正解の場所を検査して、評価を回します。
+`ctxf <コマンド>` は道具のコマンドの略で、実際の呼び方は
+[README.ja.md](../../README.ja.md) の「コマンド」にあります(リポジトリを
+取得したなら `<ここ>\.venv\Scripts\python.exe -I <ここ>\ctxf.py --run
+<コマンド>`)。
 
 ```text
 cd o3de-eval

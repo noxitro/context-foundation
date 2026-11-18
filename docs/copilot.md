@@ -21,13 +21,33 @@ Visual Studio Code は、今回の確認と手順の対象にしていません�
 | GitHub の Marketplace から | アプリや CLI で使う人、チームに配るとき | 利用者ごとの置き場(`ctxf.py setup` が作る) |
 | リポジトリを取得して `register-copilot.bat` | 手元で試す人、道具を直す人 | 取得したフォルダの `.venv`(`setup.bat` が作る) |
 
-どちらも、Python 3.11 以上が `python` という名前で使えることが前提です。
+どちらも、`python` という名前のコマンドで Python が起動できることが前提です。
 MCP サーバー・hook・skill は、どれも `python` で入口の `ctxf.py` を
 動かします。skill は、skill のフォルダに置いた取り次ぎ
 (`skills/context-search/ctxf.py`)を呼び、取り次ぎが同じ入口を動かします
 (skill の文に「2 つ上のフォルダ」と書くと、エージェントがパスを組み立て
 間違える回があったため)。`python` が無い PC では、MCP サーバーは起動
-できず、hook は何も足さず、skill は検索できません。
+できず、hook は何も足さず、skill は検索できません。どれも、何も知らせ
+ません(下の「うまく動かないとき」)。
+
+- 用意(setup)に使う Python は 3.11 から 3.14 です。3.15 以降には、検索に
+  要る onnxruntime の配布物がまだありません。`python` が 3.15 以降なら、
+  setup だけを対応する版で動かします(Windows なら
+  `py -3.14 -I "<プラグインのフォルダ>\ctxf.py" setup`)。`python` は
+  そのままで構いません(入口は、setup が作った仮想環境の Python で道具を
+  動かします)
+- python.org のインストーラーは、既定では `python` を PATH に足しません
+  (`py` だけが入ります)。入れるときに「Add python.exe to PATH」を選ぶか、
+  あとから PATH に足します
+- Linux と macOS では、`python3` しか無いことが多いです。プラグインは
+  `python` を起動するので、`python` という名前でも起動できるようにして
+  ください(Debian・Ubuntu なら python-is-python3 のパッケージ、ほかは
+  PATH の通ったフォルダに `python` という名前のリンク)。シェルの alias
+  は効きません(Copilot は、対話のシェルを通さずに起動します)。Linux と
+  macOS でプラグインとして動かすことは、確かめていません【未確認】
+- 控えの skill の文は、PowerShell で動かすこと(`\` 区切りのパス、
+  `[Console]::OutputEncoding` の指定)を前提に書いています。Windows の
+  ほかでは、エージェントが読み替えることになります
 
 ## GitHub の Marketplace から入れる
 
@@ -41,10 +61,25 @@ MCP サーバー・hook・skill は、どれも `python` で入口の `ctxf.py` 
 4. 索引を作った作業フォルダで、新しいセッションを始める
 
 アプリの文書は、プラグインが skill と hook を足すと説明しています【公式】。
-アプリでの実際の動作は、まだ確かめていません【未確認】。確かめるときは、
-名前の分からないものを探す質問(例: 「〜に相当する処理はどこ?」)をして、
-途中の道具の呼び出しに skill `context-search` と `ctxf.py search` の実行が
-出ること、回答に `source:path:行-行` の形の根拠が出ることを見ます。
+プラグインの MCP サーバーがアプリでも読み込まれるかは、文書に書かれて
+いません【未確認】。アプリでの実際の動作は、まだ確かめていません【未確認】。
+
+確かめるときは、索引のある作業フォルダで新しいセッションを始め、名前の
+分からないものを探す質問(例: 「〜に相当する処理はどこ?」)をして、次の
+3 つを見ます。既定の出し方は MCP の道具なので、skill が読まれることは、
+確かめる目安にしません(skill は控えです)。
+
+1. 道具の一覧に、`context-foundation-search` が出る
+2. 質問のときに、それが呼ばれ、結果が「No context-foundation index」で
+   ない(passage が返る)
+3. 回答に、`source:path:行-行` の形の根拠が出る
+
+1 が出なければ、MCP サーバーが起動していません。`python` と setup を
+疑います(下の「うまく動かないとき」)。2 が「No context-foundation
+index」なら、アプリがサーバーに作業フォルダ(環境変数
+`COPILOT_SESSION_CWD`)を渡していない見込みがあります。そのときは、控えの
+skill(`ctxf.py search`)で検索が動くかを見ます。skill は、作業フォルダで
+動くシェルから呼ばれるので、作業フォルダを受け取れます。
 
 ### CLI
 
@@ -61,8 +96,18 @@ GitHub から入れたプラグインは、Copilot の設定フォルダの
 仮想環境やモデルは、プラグインに入りません。
 
 更新は `copilot plugin update context-foundation` です【公式】。プラグインを
-更新すると、ソースはそのまま新しいものになります。Python の依存の一覧が
-変わったときだけ、もう一度「最初の用意」が要ります(そうと知らせます)。
+更新すると、ソースはそのまま新しいものになります。版ごとに、更新のあとに
+すること(setup のやり直し・索引の作り直し・新しいセッション)は
+[CHANGELOG.md](../CHANGELOG.md) にあります。
+
+- Python の依存の一覧が変わったときだけ、もう一度「最初の用意」が要り
+  ます。道具が「set up for an older version (its dependencies changed)」
+  と知らせます。0.3.1 から 0.4.0 への更新では要ります
+- setup のあとは、Copilot の新しいセッションを始めます。動いている
+  セッションには、検索の道具は出ません
+- 更新は、GitHub の main の先頭を取ってきます。git のタグはまだ打って
+  いないので、前の版に戻したいときは、下の「チームの Marketplace に
+  載せる」のように、コミットの sha で固定します
 
 ### 最初の用意(setup)
 
@@ -79,28 +124,80 @@ GitHub から入れたプラグインは、Copilot の設定フォルダの
 python -I "<プラグインのフォルダ>\ctxf.py" setup
 ```
 
-| 置くもの | 場所 | 大きさ |
-| --- | --- | --- |
-| 仮想環境(依存のパッケージ) | `%LOCALAPPDATA%\context-foundation\runtime\venv` | 約 180 MB |
-| 依存の一覧の覚え書き | `...\runtime\deps.json` | 小さい |
-| 埋め込みモデル | `%LOCALAPPDATA%\context-foundation\models` | 約 490 MB |
+置くものと場所の一覧は、下の「保存されるものと消し方」にあります。
 
+- 終わったら、Copilot の新しいセッションを始めます。動いているセッション
+  には、検索の道具は出ません(そのセッションでは、控えの skill が動きます)
 - `setup --no-model` でモデルを取らずに済ませると、keyword(BM25)だけの
   検索になります
 - `setup --help` は、何も取得せずに説明だけを出します
+- setup に使う Python は 3.11 から 3.14 です。範囲の外の Python で動かすと、
+  何もせずに止まり、使う版の起動のしかたを示します(上の「入れ方は 2 つ」)
 - `setup --gpu`(Windows)は、onnxruntime の代わりに onnxruntime-directml を
   入れます。索引づくりの埋め込みを、GPU で計算するようになります
-  ([design.md](design.md) の「GPU で計算する」)。`setup --cpu` で戻します
+  ([design.md](design.md) の「GPU で計算する」)。`setup --cpu` で戻します。
+  切り替えるときは、入れ替える先を入れられるかを先に確かめ、入れられな
+  ければ何も変えずに止まります(今のものが残り、検索はそのまま動きます)
 - 途中で止まった仮想環境は、次の `setup` で作り直します。2 つの `setup`
   が同時に走らないよう、排他します(前の `setup` のプロセスが終わっていれば、
   打ち切られたときの残りとみなして引き継ぎます)
+- pip が失敗すると、最後の 1 行に、見込みの原因を出します(パスが長すぎる、
+  PyPI に届かない、この Python 向けの配布物が無い)
+- Windows で長いパス(260 文字を超える)を使えない設定のとき、置き場の
+  パスが長いと、pip が「No such file or directory」で失敗します。setup は、
+  pip の前にそう知らせます。`CF_HOME` を短いフォルダ(例 `C:\cf`)にするか、
+  Windows の長いパスを有効にしてから、やり直します
 - 使われる python と置き場は `python -I "<…>\ctxf.py" where` で見られます
+
+### インターネットに出られない PC・PyPI のミラー
+
+setup は、Python のパッケージを pip で取得し、モデルを Hugging Face から
+取得します。pip は環境変数の設定を読むので、setup を動かす前に設定して
+おけば、そのまま効きます。
+
+- プロキシ: `HTTPS_PROXY`(pip とモデルの取得の両方に効きます)
+- ミラー(PyPI の写し): `PIP_INDEX_URL`
+- インターネットに出られない PC: 出られる PC で、同じ OS と同じ Python の
+  版(3.13 なら 3.13)を使って、依存を 1 つのフォルダに取得しておき、
+  それを写します
+
+```text
+python -m pip download -d <wheels> "tree-sitter>=0.25" "tree-sitter-c>=0.23" ^
+  "tree-sitter-cpp>=0.23" "tree-sitter-c-sharp>=0.23" "numpy>=2.0,<3" ^
+  "onnxruntime>=1.20,<2" "tokenizers>=0.21" "huggingface_hub>=0.36,<3" ^
+  "jsonschema>=4.20,<5"
+```
+
+依存の一覧は `pyproject.toml` の `dependencies` が正です。版を上げて一覧が
+変わったら、取得し直します。写した PC では、次のように設定してから setup
+を動かします。
+
+```text
+set PIP_NO_INDEX=1
+set PIP_FIND_LINKS=<wheels>
+python -I "<プラグインのフォルダ>\ctxf.py" setup --no-model
+```
+
+(コマンド プロンプトの書き方です。PowerShell なら `$env:PIP_NO_INDEX = "1"`
+のように書きます。)
+
+モデルは、ほかの PC の置き場の `models` フォルダを、同じ場所に写せば使え
+ます(setup は、ファイルの sha256 を確かめて、取得を飛ばします)。写した
+なら `--no-model` を外して setup を動かします。置き場の仮想環境
+(`runtime\venv`)は、写しても使えません。中に、もとの Python の場所が
+書かれているためです。
+
+Windows と Python 3.13 で、このフォルダ(約 39 MB)を `PIP_NO_INDEX` と
+`PIP_FIND_LINKS` で渡して `setup --no-model` を動かすと、PyPI に行かずに
+依存が入り、検索(モデルが無いので keyword)が動きました【実測】。Linux では
+確かめていません【未確認】。
 
 ### 索引を作る
 
 作業フォルダ(Copilot を起動するフォルダ)で、検索したいフォルダを並べて
 設定を作り、索引を作ります。エージェントに頼んでも、自分で動かしても
-構いません。
+構いません。Copilot CLI では、セッションで `/context-index` と打つのが
+いちばん簡単です(下の「`/context-index`」)。
 
 ```text
 python -I "<プラグインのフォルダ>\ctxf.py" init "<エンジンのソース>" "<設計文書>"
@@ -111,16 +208,177 @@ python -I "<プラグインのフォルダ>\ctxf.py" index
 埋め込み)。2 回目からは、変わっていない passage の埋め込みを使い回すので、
 変わったファイルの分だけで済みます([design.md](design.md) の「差分更新」)。
 
+- 索引(`.cf\index.db`)には、対象のファイルの本文の写しが入ります。git
+  には入りません(`init` が、全部を無視する `.cf\.gitignore` を置きます)。
+  Perforce では、`.cf` を `.p4ignore` に足してください(`init` もそう
+  知らせます)。足さないと、`p4 reconcile` などで追加の候補に挙がります
+- 秘密を持ちやすい名前のファイル(`.env`、`*.pem`、`*.key` など)は、既定で
+  除きます。名前だけで見るので、ほかのファイルの中に書かれた秘密は索引に
+  入ります。除く規則は [README.ja.md](../README.ja.md) の「設定ファイル」
+- 大きいコードの最初の索引づくりは、エージェントに任せず、自分の端末で
+  動かすのがよいです(数十分かかり、その間エージェントは待つだけになり
+  ます)。skill の文も、そう勧めるよう書いています
+- `.cf` は、自分で作ります。取ってきたリポジトリに `.cf` が入っていたら、
+  使わずに消して、作り直してください。設定は、作業フォルダの外のフォルダ
+  (source のルート、モデルのフォルダ、用語の対応表)も指せるためです
+  ([design.md](design.md) の「置き場所と、設定の探し方」)
+- 途中で止めても(Ctrl+C など)、次の `index` は、計算済みの埋め込みを
+  使い回して続きから計算します。計算した埋め込みは、1,024 passage ごとに
+  `.cf\index.db.partial` に書いておきます(プロセスを強制終了したときは、
+  最後に書いた後の分だけ計算し直します)。`--full` は、これも使わずに
+  すべて埋め込み直します
+
+### `/context-index`(索引を作るスラッシュコマンド)
+
+プラグインの拡張(`com.github.copilot\extensions\context-foundation\extension.mjs`)
+が足すコマンドです。Copilot CLI のセッションで打つと、モデルを呼ばずに、
+上の `init` と `index` を裏で動かします。トークンを使いません。
+
+```text
+/context-index "<エンジンのソース>" "<設計文書>"
+/context-index
+/context-index full
+```
+
+- 1 行目は、初めて(`.cf` が無いとき)の形です。並べたフォルダで作業
+  フォルダに設定を作り(`init`)、続けて索引を作ります。相対パスは作業
+  フォルダから数えます。空白を含むパスは `"…"` で囲みます。`full` という
+  名前のフォルダは `./full` と書きます
+- 2 行目は、2 回目からの形です。作業フォルダから親へさかのぼって
+  `.cf\config.toml` を探し、その設定で `index` を動かします。変わって
+  いない passage の埋め込みは使い回します。設定があるのにフォルダを
+  並べると、断ります(設定を黙って書き換えないため)。検索するフォルダを
+  変えるときは、`.cf\config.toml` の `[[source]]` を直します
+- 3 行目は、すべて埋め込み直す形です(`index --full`)
+- 用意(setup)が済んでいない・古くなっているときは、何も作らずに止まり、
+  やり直すコマンドを出します。setup は大きな取得(約 700 MB)をするので、
+  このコマンドからは動かしません
+- 裏で動かすので、作業を続けられます。動いている間は、進み具合(ファイルの
+  取り込み、埋め込みの何 % と残りの時間)をときどき出します。同時に動かせる
+  のは 1 つだけです。出力は `.cf\context-index.log` に書きます(毎回書き
+  直します)
+- 終わると、できたこと(かかった時間)か、失敗のわけを出します。わけは
+  終了コードごとです(下の「索引を更新する」の終了コード)。埋め込みモデルが
+  無く、keyword だけの索引になったときも、そう出します
+- 初めての索引を作ったセッションでは、エージェントには始めに「索引が無い」
+  と伝わっています。新しいセッションからは、hook が検索を先に使うよう
+  知らせます。今のセッションでも、MCP の検索の道具は検索のたびに索引を
+  探すので使えるはずです(コードを読んでの判断で、試していません)【未確認】
+- Python は、MCP サーバーと hook と同じく、PATH の `python` で動かします
+- エージェントからは呼べません。利用者が自分で打つので、打ったことを同意と
+  みなします。MCP の道具に索引づくりを足さなかったのは、MCP サーバーを
+  読み取り専用に保つためと、最初の索引づくりが長く(約 8,000 ファイルで
+  30 分ほど)、道具の呼び出しの時間切れにかかりやすいためです
+
+**Copilot CLI の拡張は実験的機能で、機能フラグ `EXTENSIONS` が有効なときだけ
+読み込まれます。** `%USERPROFILE%\.copilot\settings.json` に
+`"feature_flags": { "enabled": ["EXTENSIONS"] }` を足す(すでに
+`feature_flags` があれば、`enabled` の配列に `"EXTENSIONS"` を足す)か、
+環境変数 `COPILOT_CLI_ENABLED_FEATURE_FLAGS=EXTENSIONS` を設定してから
+起動します。拡張はセッションが始まってから読み込まれるので、入力欄に
+`/context` と打って一覧に出てから実行します(一覧に出る前に送ると、ただの
+依頼としてモデルに送られます)。この 2 つは、同じ作者の cxxref で確かめた
+ことで、このプラグインではまだ試していません【未確認】。
+
+GitHub Copilot app は、拡張がセッションに出す知らせのうち、エラーしか表示
+しません(cxxref で確かめたこと)。そのため、アプリで動いていると分かった
+ときは、結果をダイアログにも出します。ダイアログのボタンは、どれを押しても
+閉じるだけです。進み具合はダイアログにしないので、アプリでは出ません。
+出し方は環境変数 `CF_DISPLAY` で変えられます: `auto`(既定。アプリのとき
+だけダイアログにも出す)、`dialog`(いつもダイアログにも出す)、`timeline`
+(ダイアログを出さない)。
+
+## 索引を更新する
+
+索引は、`index` を流したときの内容のままです。ソースを同期したら(Perforce
+の `p4 sync`、`git pull` など)、もう一度流します。Copilot CLI のセッション
+では、`/context-index` と打っても同じです。
+
+- 索引の後に増えたファイルは、作り直すまで検索に出ません。変わった
+  ファイルや消えたファイルを指す結果には印が付きます(`[changed since
+  index]`、`[file no longer exists]`)が、増えたファイルは結果に出ない
+  ので、印も付きません
+- どれだけ古いかは、`status --check` で数えられます。索引の後に変わった・
+  増えた・消えたファイルの数と、その例を出します。フォルダを歩いて
+  ファイルを読むので、大きいコーパスでは数十秒かかります(既定の
+  `status` と検索では行いません)
+- `status --check` が数えるのは、今の版の取り込みの規則で作り直すと変わる
+  ファイルです。ほかの版(0.3.1 など)で作った索引では、規則の違いの分も、
+  ファイルは変わっていないのに、増えた・消えたに数えます。そのときは、
+  索引を作った道具の版と、そのことも出します。一度 `index` を流すと
+  消えます
+- 2 回目からの索引づくりも、取り込みと分割は毎回すべてのファイルで
+  やり直します(約 8,000 ファイルで 36 秒、約 19,000 ファイルで 185 秒)。
+  埋め込むのは、変わった passage の分だけです
+- Copilot のセッションを開いたまま流して構いません。検索は、検索のたびに
+  索引を開き直すので、流し終わった後の検索から新しい索引を使います。
+  Windows で、ちょうど検索中で置き換えられないときは、少し待って繰り
+  返し、それでもだめなら、できあがった索引を `.cf\index.db.new` に残して
+  終了コード 1 で止まります。次の `index` は、そこから埋め込みを使い
+  回します
+
+対話なしで流すコマンドです。作業フォルダを `--config` で渡すので、どこから
+動かしても構いません。`--quiet` は、途中の進み具合を出しません(終わりの
+要約は出ます)。
+
+```text
+python -I "<プラグインのフォルダ>\ctxf.py" index --config "<作業フォルダ>" --quiet
+```
+
+リポジトリを取得した人は、`"<取得したフォルダ>\.venv\Scripts\python.exe" -I
+"<取得したフォルダ>\ctxf.py" --run index --config "<作業フォルダ>" --quiet`
+です。
+
+終了コードは、0 が成功、1 が索引を置き換えられなかった(上のとおり)、2 が
+設定の誤り・source のルートが無い・入るファイルが無い・モデルを読めない
+(埋め込みのある索引を keyword だけで置き換えないため)・モデルを取得
+できなかった(`--download`)、3 が `.cf` が見つからない(`--config` を
+付けないとき)、4 が用意ができていない(setup が済んでいない、プラグインの
+更新で依存の一覧が変わった、仮想環境のもとの Python が消えたなど)、130 が
+途中で止めた、です。2 と 4 のときは、前の索引がそのまま使えます。4 は、
+setup をやり直すまで続きます。4 は入口(`python -I "<…>\ctxf.py" index
+…`)から動かしたときで、上の `--run` の形では、要るパッケージを読めない
+ときは 104、Windows で `.venv` のもとの Python が消えたときは 103 で終わり
+ます。
+
+毎日決まった時刻に流すなら、Windows のタスク スケジューラに登録します
+(例は毎朝 7 時。`<…>` は自分の場所に置き換えます)。この例は、登録して
+動かすところまでは確かめていません【未確認】。
+
+```text
+schtasks /Create /TN "context-foundation index" /SC DAILY /ST 07:00 ^
+  /TR "python -I \"<プラグインのフォルダ>\ctxf.py\" index --config \"<作業フォルダ>\" --quiet"
+```
+
+- タスクは、ログオンしている利用者として動かします(置き場は利用者ごとの
+  `%LOCALAPPDATA%` にあるため)
+- 同期の後に流すのが一番よいので、同期をスクリプトにしているなら、その
+  最後に上の 1 行を足すほうが確かです
+- ドライブが外れていて source のルートが無い日は、何も書かずに終了
+  コード 2 で止まり、前の索引が残ります
+
 ## リポジトリを取得して使う
 
 1. `setup.bat`: 取得したフォルダに `.venv` を作り、依存を入れる。モデルを
    取得するかを尋ねる
 2. `index.bat`: 作業フォルダと検索したいフォルダを尋ねて、索引を作る
 3. `register-copilot.bat`: このフォルダを手元の Marketplace として足し、
-   プラグインを入れる(中身は `ctxf copilot register`)
+   プラグインを入れる(中身は `copilot register`。コマンドの呼び方は
+   [README.ja.md](../README.ja.md) の「コマンド」)
+
+`.bat` は、`.venv` の python で `ctxf.py --run <コマンド>` を動かします。
+フォルダを動かしたり写したりしても、そのまま動きます(写したフォルダは、
+写したフォルダの中のコードを動かし、登録します)。
 
 リポジトリを更新して依存の一覧(`pyproject.toml`)が変わったときは、
 `setup.bat` をもう一度実行します(`.venv` の依存は自動では確かめません)。
+`setup.bat` は、壊れた `.venv` や、範囲の外の Python(3.11 から 3.14 の
+外)で作った `.venv` を作り直します。入れた後に要るパッケージを読み込める
+かも確かめ、読めなければ `.venv` を 1 回だけ作り直して入れ直します(それ
+でも読めなければ、終了コード 1 で止まります)。`.venv` のもとの Python が
+消えたときと、`.venv` の python が要るパッケージを読めなくなったときは、
+入口が気づいて、道具を出さずに「`setup.bat` を動かす」よう知らせます
+(利用者ごとの置き場には切り替えません)。
 
 ```text
 copilot plugin marketplace add <このフォルダ>
@@ -135,9 +393,14 @@ copilot plugin install context-foundation@context-foundation
   フォルダ)から入っているときは、何も変えずに知らせて止まります
 - 0.1 の登録の形(`copilot skill add` と、`hooks\context-foundation.json`)
   が残っていれば、確認のうえで外します
-- 解除は `unregister-copilot.bat`(`ctxf copilot unregister`)です。この
-  フォルダから入れたものだけを外します。状態は `ctxf copilot status` で
+- 解除は `unregister-copilot.bat`(中身は `copilot unregister`)です。この
+  フォルダから入れたものだけを外します。状態は `copilot status` で
   見られます
+- 登録は、取得したリポジトリのフォルダからだけできます。pip で入れた
+  パッケージ(`ctxf` のコマンドだけがあるもの)からは、skill と入口が
+  無いので、知らせて止まります
+- 登録のあと、PATH の `python` が無いか起動しないときは、そう知らせます
+  (MCP サーバーと hook は `python` で起動するため)。登録は止めません
 - フォルダのパスに `& | < > ^ % ( ) ! "` があると、npm で入れた Copilot CLI
   (`copilot.cmd`)に正しく渡せないので、登録を断ります
 
@@ -147,6 +410,7 @@ copilot plugin install context-foundation@context-foundation
 | --- | --- | --- |
 | MCP サーバーと hook(既定) | ツールは `search` と `status` だけ。読み取り専用。hook は、索引のある作業フォルダでだけ、検索を grep より先に使うように 1 文で知らせる | プラグイン(`mcp.json` と `hooks.json`) |
 | skill(控え) | `skills/context-search`。MCP の道具が使えない場面で、検索の CLI を 1 回呼ぶ。最初の用意(setup)のしかたも、ここに書いてある | プラグイン |
+| 拡張(`/context-index`) | 利用者が打つ、索引を作る・作り直すコマンド。モデルを呼ばない。機能フラグ `EXTENSIONS` が要る(上の「`/context-index`」) | プラグイン(`com.github.copilot\extensions`) |
 
 0.2 までは、skill と hook が既定で、MCP サーバーは追加でした。0.3 で入れ
 替えました。理由は、Godot の調整用の 7 問を 3 回ずつ流した結果です
@@ -184,8 +448,23 @@ MCP の形で気を付けること:
 - 道具の名前は、Copilot CLI では `context-foundation-search` と
   `context-foundation-status` になる【実測】
 - 最初の用意(`ctxf.py setup`)が済んでいない PC では、サーバーは道具を
-  1 つも出さずに起動したままになる。始めの 1 文が、skill を読めば用意の
-  しかたが分かる、と知らせる
+  1 つも出さずに起動したままになる。始めの 1 文が、理由(「not set up」
+  「set up for an older version」など)と、skill を読めば用意のしかたが
+  分かることを知らせる。サーバーは、理由と setup のコマンドを、標準誤差に
+  書く(ホストの MCP のログに残る。コマンドで 1 行を終え、次の行に新しい
+  セッションのことを書く)。setup を済ませても、同じセッション
+  には道具は出ない。新しいセッションから出る
+- `.cf` か索引の無い作業フォルダでは、起動の挨拶の指示は「No
+  context-foundation index in this workspace; search with grep.」の 1 文
+  になる。道具の一覧は変わらない(セッションの途中で索引を作れば、その
+  まま使える)
+- 8,192 バイトを超える質問は、誤りとして断る
+- `status` の道具は、source ごとに、どのフォルダかを出す(`sources: engine
+  = corpus/engine (…)`)。検索の結果も、source のルートが作業フォルダ
+  そのものでないときは、`roots:` の行でルートを出す。作業フォルダの外の
+  ルートは、どちらにも絶対パスで出るので、そのパス(利用者の名前を含む
+  こともある)がモデルに送られる。検索の結果では、検索のたびに送られる。
+  避けるには、ルートを作業フォルダの中に置く
 - リポジトリを取得して使う人の `register-copilot.bat --mcp` は、要らなく
   なった(指定しても、何もしない)
 
@@ -210,7 +489,130 @@ MCP の道具は、対話のセッションでは、最初に呼ぶときに許�
 で通りました【実測】。この指定は、`python` で始まる命令をすべて通します。
 計測では、書き込みを断る指定(`--deny-tool write`)と組み合わせています。
 
+## 検索の限界
+
+- 検索は、上位の passage(既定 8 件。MCP の道具では最大 20 件)だけを返します。ほかにも
+  当たる場所があるか、当たったものが質問と関係があるかは、知らせません。
+  識別子が分かっていて、使われている場所をすべて挙げたいとき(この関数は
+  どこから呼ばれているか)は、grep か、cxxref のような参照の索引を使います。
+  無い識別子を聞いても、意味の近い passage が返ります
+- エージェントへの始めの 1 文と道具の説明は、「検索を grep より先に」
+  「検索の語は英語で」と書いています。日本語の設計文書は、日本語の語が
+  検索に入らないと、順位が下がりやすいです(控えの skill の文は、利用者の
+  言葉を後ろに残すよう書いています)
+- この 2 つは、まだ直していません。始めの 1 文と道具の説明は、Godot で
+  エージェントの計測をした形そのもので、変えるには測り直しが要るため
+  です
+
+## うまく動かないとき
+
+最初に、作業フォルダ(Copilot を起動するフォルダ)で次の 1 行を動かします。
+入口の Python、PATH の `python`、使う仮想環境と置き場、モデルの有無、
+今のフォルダ(と `COPILOT_SESSION_CWD`)から見える索引を、1 回で出します。
+
+```text
+python -I "<プラグインのフォルダ>\ctxf.py" where
+```
+
+| 症状 | 見るもの | 直し方 |
+| --- | --- | --- |
+| 道具の一覧に `context-foundation-search` が出ない | `where` の `PATH python:`。`copilot mcp list` に `context-foundation` があるか | `python` が無い・起動しないなら、PATH に足す(上の「入れ方は 2 つ」)。あれば、下の 2 行を見る |
+| 道具が出ず、始めの 1 文が「the search tool is not set up …」「the search tool is set up for …」「the search tool is set up with …」 | `where` の `python:` の行の理由と `setup:` の行 | 理由が「not set up」「set up for an older version」「set up with a Python that is no longer installed」なら、`setup:` の行のコマンドを動かし、新しいセッションを始める。プラグインとして入れた人は `ctxf.py setup`、リポジトリを取得した人(隣の `.venv`)は `setup.bat` |
+| 道具が出ず、検索のコマンドが「set up in a virtual environment whose packages can no longer be loaded」(終了コード 4) | `where` の `model:` の行。この理由は、`where` の `python:` の行(仮想環境の python のパスが出る)にも始めの 1 文にも出ない。`model:` が `unknown (ImportError: …)` などになる。MCP のログにも出る | `setup:` の行のコマンドを動かし、新しいセッションを始める。setup は、読めないパッケージに気づくと、仮想環境を 1 回作り直して入れ直す。それでも直らなければ、文面のとおり仮想環境のフォルダ(リポジトリを取得した人は `.venv`)を消してから、もう一度 setup |
+| setup の後も道具が出ない | 同じセッションのままか | 新しいセッションを始める。動いているセッションには出ない(控えの skill は動く) |
+| 検索が「No context-foundation index」 | `where` の `index:` と `index (COPILOT_SESSION_CWD):` | 作業フォルダで `init` と `index`。アプリで、索引はあるのにこう出るなら、作業フォルダが渡っていない見込み(上の「アプリ」) |
+| 結果の note が「Fell back to keyword」 | note の理由。`where` の `model:` | 「embedding model is not available」なら setup(モデルを取る)。「embedded with different settings」なら `index` で作り直す |
+| 結果に `[changed since index]` が多い・新しいファイルが出ない | `status --check` | `index` を流す(上の「索引を更新する」) |
+| setup が pip で失敗する | 最後の 1 行の原因 | 長いパスなら `CF_HOME` を短く。届かないなら `HTTPS_PROXY` か `PIP_INDEX_URL`(上の「インターネットに出られない PC・PyPI のミラー」) |
+| `index` が終了コード 1 で止まる | 文面の `index.db.new` | 索引を開いているセッションを閉じてから、もう一度 `index` |
+| 日本語が文字化けする(控えの skill) | PowerShell の出力の文字コード | `[Console]::OutputEncoding = [Text.Encoding]::UTF8` を 1 回動かす |
+
+`status`(`--format human` で人が読む形)は、索引の作成日時、source ごとの
+フォルダ、除いたファイルの数(理由ごと)、既定の名前で除いたフォルダの中に
+あった索引に入りうるファイルの数、使える検索(`hybrid / keyword /
+semantic` か keyword だけか)を出します。
+
+不具合を見つけたら、[README.ja.md](../README.ja.md) の「不具合の報告」の
+とおりに知らせてください。
+
+## 保存されるものと消し方
+
+| 場所 | もの | 中身 |
+| --- | --- | --- |
+| 作業フォルダの `.cf` | `config.toml`、`config.toml.bak`(`init --force` の前の設定)、`glossary.tsv`(書いたとき)、`.gitignore` | 設定 |
+| 同上 | `index.db` | 索引。対象のファイルの本文の写しが入る。大きさはソースの 2〜3 倍 |
+| 同上 | `index.db.partial`、`index.db.new`、`index.db.tmp-<番号>` | 索引づくりの途中の埋め込み、置き換えられなかった索引、作っている途中の索引。次の `index` が使い回すか消す |
+| 同上 | `context-index.log` | `/context-index` の出力(進み具合と結果)。毎回書き直す |
+| 同上 | `eval\run-*`(`eval.bat` の既定の出力先) | 評価の結果。検索結果(ソースの場所の一覧)が入る |
+| 利用者ごとの置き場 | `runtime\venv`(約 180 MB)、`runtime\deps.json`、`runtime\setup.lock`(setup の最中だけ) | `ctxf.py setup` が作る仮想環境と、その覚え書き |
+| 同上 | `models`(約 490 MB) | 埋め込みモデル |
+| 同上 | `state.json` | `.bat` の対話が覚える、作業フォルダと `cases.jsonl` の場所 |
+| Copilot の設定フォルダ(`~/.copilot`。`COPILOT_HOME` で変わる) | `installed-plugins\context-foundation\context-foundation` | GitHub から入れたプラグインの写し |
+| 取得したリポジトリのフォルダ | `.venv`(約 190 MB) | `setup.bat` が作る仮想環境 |
+
+利用者ごとの置き場の場所です。環境変数 `CF_HOME` を設定すると、どの OS
+でも、そのフォルダ 1 つにまとまります(モデルだけは `CF_MODEL_CACHE` で
+別にできます)。
+
+| OS | 仮想環境(`runtime`) | モデル(`models`)と `state.json` |
+| --- | --- | --- |
+| Windows | `%LOCALAPPDATA%\context-foundation\runtime` | `%LOCALAPPDATA%\context-foundation\models`、`...\state.json` |
+| Linux・macOS | `~/.local/share/context-foundation/runtime`(`XDG_DATA_HOME` があればその下) | `~/.cache/context-foundation/models`、`~/.cache/context-foundation/state.json` |
+
+Linux と macOS で 2 か所に分かれるのは、0.1 のモデルの置き場を引き継いで
+いるためです。
+
+外すときは、次の順です(GitHub の Marketplace から入れたとき)。
+
+1. `copilot plugin uninstall context-foundation`
+2. `copilot plugin marketplace remove context-foundation`
+3. 利用者ごとの置き場を消す(上の表の場所。Windows なら
+   `%LOCALAPPDATA%\context-foundation`)
+4. 各作業フォルダの `.cf` を消す(索引には、ソースの本文の写しが入って
+   いるので、残したくなければ)
+
+リポジトリを取得して入れたときは、1 と 2 の代わりに
+`unregister-copilot.bat` を動かし、取得したフォルダごと消します(`.venv`
+もその中です)。プラグインを外しても、3 と 4 は残ります。
+
 ## 確かめたこと
+
+### 0.4.1(`/context-index`)
+
+確かめた日は 2026-11-18 です。Copilot CLI とアプリは動かしていません。
+拡張は、Copilot の SDK を偽物(コマンドを受け取り、知らせを画面に出す
+だけ)に差し替えて、Linux(Node.js 22、Python 3.13)で動かしました。
+
+- `.cf` の無い作業フォルダで、フォルダを並べずに打つと、使い方を出して
+  何も作らなかった。用意(setup)の無い PC では、フォルダを並べても、
+  setup のコマンドを出して何も作らなかった【実測】
+- 用意のある PC で、フォルダを並べると、設定と索引ができた。2 回目は
+  作り直しになり、`full` では `index --full` を動かした。設定があるのに
+  フォルダを並べると断った。続けて 2 回打つと、2 つ目は断った【実測】
+- 実物のモデルで、合成の 1,500 ファイルの初めての索引(103 秒)を作り、
+  埋め込みの進み具合が約 1 割ごとに出た。モデルの無い PC では、keyword
+  だけの索引になったことを出した【実測】
+- プラグインの通しの確かめ(`.github/scripts/plugin_smoke.py`)に、偽の
+  SDK で `/context-index` を動かす段を足し、通った【実測】
+
+### 0.4.0(本番に向けた直し)
+
+確かめた日は 2026-11-17 です。Copilot は動かしていません(道具の側だけ
+です)。手元で動かしたのは Windows 11 と Python 3.13 です(ほかに、WSL の
+Ubuntu 24.04 と Python 3.12 でテストだけを流しました)。
+
+- 道具の側の直しは、テスト(合成のコーパス)と、手元の Windows で動かして
+  確かめた【実測】
+- 索引が新しく、source のルートが作業フォルダそのものなら、エージェント
+  向けの検索の出力(CLI の `--format agent` と MCP の `search`)、道具の
+  名前・説明・引数、索引のある作業フォルダの起動の挨拶の指示、始めの
+  1 文は、0.3.1 とバイト単位で同じだった(合成のコーパスと埋め込みの
+  代わりのもので比べた。semantic と hybrid は、実物のモデルでも比べた)
+  【実測】
+- 0.3.1 で作った索引は、作り直さずに検索できた【実測】
+- テストは、WSL の Ubuntu 24.04 と Python 3.12 でも流した【実測】
+- 上の「インターネットに出られない PC・PyPI のミラー」の手順で、PyPI に
+  行かずに setup が通った【実測】
 
 ### 0.3(MCP サーバーを同梱した形)
 
@@ -298,6 +700,19 @@ Haiku 5.5、合成のコーパス、毎回空の設定フォルダ)。
 - 対話のセッションでの動作(確かめたのは `copilot -p`)
 - Claude Haiku 5.5 のほかのモデルで、skill が読まれるか
 - `python` が無い PC、Microsoft Store 版の Python での動作
+- Linux と macOS で、プラグインとして動かすこと(`python3` しか無い PC を
+  含む)。Python の部分のテストは、CI で Ubuntu でも回している
+- 0.4.0 の直しを、Python 3.11・3.14 で手元で動かすこと(CI のテスト
+  だけ)。Linux と 3.12 は、WSL でテストを流しただけ
+- 0.4.0 の Copilot での動作(Copilot は動かしていない)。setup の後に
+  新しいセッションで道具が出ること、`.cf` の無い作業フォルダでの起動の
+  挨拶
+- `/context-index` の、Copilot CLI とアプリでの動作(機能フラグ `EXTENSIONS`
+  で読み込まれること、一覧に出ること、アプリのダイアログ)。Windows での
+  動作(確かめたのは Linux で、偽の SDK を使ったものだけ)
+- 本当のネットワークの共有フォルダ(UNC)の上の作業フォルダ(確かめたのは、
+  自分の PC の管理用の共有だけ)
+- タスク スケジューラでの、索引の定期の更新(上の「索引を更新する」)
 - Visual Studio Code
 
 ## チームの Marketplace に載せる
@@ -311,7 +726,7 @@ Haiku 5.5、合成のコーパス、毎回空の設定フォルダ)。
   "name": "context-foundation",
   "source": { "source": "github", "repo": "noxitro/context-foundation" },
   "description": "Find code and design docs by meaning and keywords, locally.",
-  "version": "0.3.1"
+  "version": "0.4.1"
 }
 ```
 

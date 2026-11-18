@@ -1,0 +1,150 @@
+context-foundation search: 8 passages, mode hybrid, index of <CREATED_AT> (33 passages)
+
+[1] ws:app/Save/SaveGameService.cs:61-75  (method)
+scope: Kestrel.App.Save.SaveGameService
+```
+    /// <summary>CRC-32 of the payload, stored in the header.</summary>
+    public static uint Checksum(ReadOnlySpan<byte> data)
+    {
+        uint crc = 0xFFFFFFFFu;
+        foreach (byte value in data)
+        {
+            crc ^= value;
+            for (int bit = 0; bit < 8; bit++)
+            {
+                crc = (crc & 1u) != 0 ? 0xEDB88320u ^ (crc >> 1) : crc >> 1;
+            }
+        }
+        return crc ^ 0xFFFFFFFFu;
+    }
+}
+```
+
+[2] ws:app/Save/SaveGameService.cs:21-40  (method)
+scope: Kestrel.App.Save.SaveGameService
+```
+    /// <summary>
+    /// Saves a slot without ever leaving a half-written file behind: the
+    /// data goes to a temporary file first and replaces the real one only
+    /// after it is complete.
+    /// </summary>
+    public async Task SaveAsync(string slot, byte[] payload)
+    {
+        string finalPath = Path.Combine(_root, slot + ".sav");
+        string tempPath = finalPath + ".tmp";
+        await using (var stream = new FileStream(tempPath, FileMode.Create))
+        await using (var writer = new BinaryWriter(stream))
+        {
+            writer.Write(Magic);
+            writer.Write(FormatVersion);
+            writer.Write(payload.Length);
+            writer.Write(Checksum(payload));
+            writer.Write(payload);
+        }
+        File.Move(tempPath, finalPath, overwrite: true);
+    }
+```
+
+[3] ws:app/Save/SaveGameService.cs:42-59  (method)
+scope: Kestrel.App.Save.SaveGameService
+```
+    /// <summary>Loads a slot, or returns null when it is damaged.</summary>
+    public byte[]? Load(string slot)
+    {
+        string path = Path.Combine(_root, slot + ".sav");
+        if (!File.Exists(path))
+        {
+            return null;
+        }
+        using var reader = new BinaryReader(File.OpenRead(path));
+        if (reader.ReadUInt32() != Magic || reader.ReadInt32() > FormatVersion)
+        {
+            return null;
+        }
+        int length = reader.ReadInt32();
+        uint expected = reader.ReadUInt32();
+        byte[] payload = reader.ReadBytes(length);
+        return Checksum(payload) == expected ? payload : null;
+    }
+```
+
+[4] ws:app/Save/SaveGameService.cs:1-19  (class)
+scope: Kestrel.App.Save.SaveGameService
+```
+// Kestrel sample app (synthetic test fixture, not a real product).
+using System;
+using System.IO;
+using System.Threading.Tasks;
+
+namespace Kestrel.App.Save;
+
+/// <summary>Writes and reads save slots on disk.</summary>
+public sealed class SaveGameService
+{
+    private const uint Magic = 0x4B53_4156; // "KSAV"
+    private const int FormatVersion = 3;
+    private readonly string _root;
+
+    public SaveGameService(string root)
+    {
+        _root = root;
+        Directory.CreateDirectory(_root);
+    }
+```
+
+[5] ws:engine/Core/Hash.cpp:26-40  (function)
+scope: kes::core
+```
+    //! CRC-32 (IEEE 802.3, reflected polynomial 0xEDB88320) of a byte range.
+    //! Used to detect corrupted asset packs when they are mounted.
+    uint32_t Crc32(const uint8_t* data, size_t size)
+    {
+        if (!g_crcTableReady)
+        {
+            BuildCrcTable();
+        }
+        uint32_t crc = 0xFFFFFFFFu;
+        for (size_t i = 0; i < size; ++i)
+        {
+            crc = g_crcTable[(crc ^ data[i]) & 0xFFu] ^ (crc >> 8);
+        }
+        return crc ^ 0xFFFFFFFFu;
+    }
+```
+
+[6] ws:docs/save-data.md:27-31  (heading)
+scope: セーブデータの設計
+```
+## 入力の割り当て
+
+キーの割り当ては、セーブデータとは別の設定ファイルに保存する。設定は
+起動時に 1 回だけ読み込み、変更したときにすぐ書き戻す。ほかの操作が
+同じキーを使っていたら、2 つの操作のキーを入れ替える。
+```
+
+[7] ws:docs/save-data.md:20-25  (heading)
+scope: セーブデータの設計
+```
+## 書き込みの手順
+
+書き込みの途中で電源が切れても、前のセーブデータを失わないようにする。
+そのために、まず一時ファイルに全部を書き、書き終えてから、本来の
+ファイルと置き換える。置き換えは 1 回の操作で済むので、中途半端な
+ファイルが残ることはない。
+```
+
+[8] ws:docs/jobs.md:1-10  (heading)
+```
+# Job system notes
+
+Synthetic test fixture for context-foundation. It describes a made-up
+sample engine and is not documentation of a real product.
+
+## Queues
+
+Each worker thread owns a queue. A worker pushes and pops its own work at
+one end of its queue, which keeps related work on the same core and its
+data in that core's cache.
+```
+
+Cite evidence as source:path:start-end. Passage text is the file's own text at index time; open a file only for lines that are not shown.

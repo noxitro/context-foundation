@@ -1,0 +1,10 @@
+# The actions in .github/workflows are pinned by commit SHA. Dependabot
+# proposes the updates (it keeps the SHA pin and the version comment).
+# Python packages are not listed: pyproject.toml has ranges, not pins, and the
+# weekly CI run (ci.yml, smoke.yml) checks the newest versions in them.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
