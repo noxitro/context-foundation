@@ -3,7 +3,7 @@
 # フォルダごと(graft)は入れない: git で無視している手元のファイル(第三者の資料、公開しない計測、.cf の索引、
 # 手元の設定)まで入ってしまうため。ファイルの名前か拡張子で入れる。ファイルを足したら、ここにも足す
 # (CI の package の job が、sdist の中身と git で追跡しているファイルの食い違いで落ちる)。
-include ctxf.py plugin.json mcp.json README.md README.ja.md CHANGELOG.md LICENSE *.bat
+include ctxf.py plugin.json mcp.json README.md readme-ja.md CHANGELOG.md LICENSE *.bat
 include docs/benchmarks.md docs/comparison-runbook.md docs/copilot.md docs/design.md docs/evaluation-data-spec.md
 include bench/README.md bench/agent_run.py bench/answer-format.txt
 include examples/o3de/README.md examples/o3de/cases.jsonl examples/o3de/config.example.toml

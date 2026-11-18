@@ -62,7 +62,7 @@ PoC の作りと、そう決めた理由をまとめます。数字は、開発�
 | 理由 | 中身 |
 | --- | --- |
 | `excluded` | 生成物によくある名前、設定の `exclude` |
-| `secret_name` | 秘密を持ちやすい名前(`.env`・鍵・資格情報の設定など。一覧は [README.ja.md](../README.ja.md) の「設定ファイル」)。`include` より先に見る |
+| `secret_name` | 秘密を持ちやすい名前(`.env`・鍵・資格情報の設定など。一覧は [readme-ja.md](../readme-ja.md) の「設定ファイル」)。`include` より先に見る |
 | `not_included` | 既定の拡張子に無い(設定の `include` があれば、それに合わない) |
 | `too_large` | `max_file_bytes`(既定 1 MB)を超える |
 | `empty` | 中身が無い |
@@ -75,7 +75,7 @@ PoC の作りと、そう決めた理由をまとめます。数字は、開発�
 | `symlink_outside` | ファイルのリンクで、指す先がどの source のルートの中にも無い |
 | `bad_name` | 名前を UTF-8 で表せない(Linux の別の文字コードの名前など) |
 
-フォルダは、名前で除きます(一覧は README.ja.md の「設定ファイル」)。
+フォルダは、名前で除きます(一覧は readme-ja.md の「設定ファイル」)。
 除いたフォルダのうち、`build`・`target`・`packages` のようにソースの置き場
 にも使われる名前のものは、中の索引に入りうるファイルを名前だけで数えて、
 `status` に出します(エージェント向けの `status` にも 1 行)。版管理・

@@ -156,7 +156,7 @@ export function progressNote(prev, snap, now, elapsedSec, minGap = 10000) {
   return { note: `context-foundation: ${note}`, state: { phase: snap.phase, at: now } };
 }
 
-// index が 0 以外で終わったときの文(終了コードは README.ja.md の「コマンド」・docs/copilot.md の「索引を更新する」)。
+// index が 0 以外で終わったときの文(終了コードは readme-ja.md の「コマンド」・docs/copilot.md の「索引を更新する」)。
 // out はログの中身、log はログのパス、setup は用意のやり直し方(既定のコマンド)
 export function failureMessage(code, out, log, setup) {
   const tail = logTail(out);

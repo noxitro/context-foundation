@@ -126,7 +126,7 @@ def test_supported_python_range_agrees_everywhere(monkeypatch, tmp_path):
     matrix = re.findall(r'"(\d+\.\d+)"', re.search(r"^\s*python: \[(.*)\]", ci, re.M).group(1))
     assert matrix == ["%d.%d" % (lo[0], m) for m in range(lo[1], hi[1] + 1)]       # テストは範囲のすべての版で
     # 文書が「CI で確かめる」と書く版は、CI の版の並びにある(範囲より新しい版は、使えない版として書かれる)
-    for name in ("CHANGELOG.md", "README.md", "README.ja.md", "docs/copilot.md"):
+    for name in ("CHANGELOG.md", "README.md", "readme-ja.md", "docs/copilot.md"):
         for line in (REPO / name).read_text(encoding="utf-8").splitlines():
             if re.search(r"(?<![A-Za-z])CI(?![A-Za-z])", line):
                 named = {v for v in re.findall(r"(?<![\d.])3\.\d+(?!\d)", line) if int(v.split(".")[1]) <= hi[1]}
