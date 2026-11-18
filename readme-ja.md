@@ -59,7 +59,10 @@ hybrid で 54%)。質問と正解、結果は
 作るスラッシュコマンド `/context-index` を足しました。0.4.2 では、Copilot
 CLI 1.0.113 で読み込まれなかったのを直しました。Windows の Copilot CLI
 1.0.113 と 1.0.112 で、索引づくりと作り直しが、モデルを呼ばずに動くことを
-確かめました【実測】。アプリでは、まだ試していません【未確認】。
+確かめました【実測】。0.4.3 では、用意(setup)をするスラッシュコマンド
+`/context-setup` を足し、入れるところから索引づくりまでを Copilot CLI の
+中だけで進められるようにしました(Copilot CLI 1.0.114 で確かめました
+【実測】)。アプリでは、まだ試していません【未確認】。
 
 対象は、まず GitHub Copilot CLI と、GitHub Copilot のデスクトップアプリ
 です。Visual Studio Code は後回しで、手順も確認もまだありません。
@@ -70,7 +73,7 @@ CLI 1.0.113 で読み込まれなかったのを直しました。Windows の Co
 | --- | --- | --- |
 | OS | Windows。Linux でも Python の部分は動く(`.bat` は Windows 用) | Windows 11(手元)。Windows と Ubuntu(CI のテスト) |
 | Python | 3.11 から 3.14 | 3.13(手元)。3.11・3.12・3.13・3.14(CI のテスト) |
-| Copilot から使うとき | GitHub Copilot CLI と、そのデスクトップアプリ | CLI 1.0.112(0.3 まで)。アプリは未確認 |
+| Copilot から使うとき | GitHub Copilot CLI と、そのデスクトップアプリ | CLI 1.0.112(0.3 まで)。拡張のコマンドは CLI 1.0.112〜1.0.114。アプリは未確認 |
 
 - Copilot から使うときは、`python` という名前のコマンドで Python が起動
   できることも要ります(MCP サーバーと hook は `python` で起動します)。
@@ -105,10 +108,23 @@ copilot plugin install context-foundation@context-foundation
 
 その後、最初に 1 回だけ用意(`ctxf.py setup`。依存のパッケージとモデルを、
 利用者ごとの置き場に取得する)をし、作業フォルダで索引を作ります。どちらも、
-エージェントに頼めば、利用者に尋ねてから動かします。索引は、Copilot CLI の
-セッションで `/context-index <検索したいフォルダ> ...` と打っても作れます
-(モデルを呼ばずに、裏で作ります。機能フラグ `EXTENSIONS` が要ります。
-[docs/copilot.md](docs/copilot.md) の「`/context-index`」)。
+エージェントに頼めば、利用者に尋ねてから動かします。
+
+Copilot CLI なら、すべてセッションで打つコマンドで済みます(ターミナルは
+要りません。詳しくは [docs/copilot.md](docs/copilot.md) の「Copilot CLI の
+中だけで始める」)。
+
+```text
+/plugin marketplace add noxitro/context-foundation
+/plugin install context-foundation@context-foundation
+/settings experimental on
+```
+
+続けて、新しいセッションで `/context-setup`(用意)、
+`/context-index <検索したいフォルダ> ...`(索引)と打ち、もう一度新しい
+セッションを始めます。2 つのコマンドは、モデルを呼ばずに裏で動きます。
+3 行目は、この 2 つ(Copilot CLI の拡張。実験的機能)を読み込むための
+設定です。
 
 **リポジトリを取得して使う(手元で試す人)**: どれもダブルクリックで動きます。
 
@@ -377,9 +393,9 @@ top_k = 8
 `status`)が入っています。セッションの始めの hook が、索引のある作業
 フォルダでだけ「探すときは、検索を grep より先に」と 1 文で知らせ、モデルが
 検索の道具を呼びます。MCP の道具が使えない場面のために、同じ検索を CLI で
-呼ぶ skill `context-search` も入っています。索引を作る・作り直すには、
-セッションで `/context-index` と打ちます(拡張。機能フラグ `EXTENSIONS` が
-要ります)。
+呼ぶ skill `context-search` も入っています。用意をするには `/context-setup`、
+索引を作る・作り直すには `/context-index` と、セッションで打ちます(拡張。
+Copilot CLI の実験的機能で、`/settings experimental on` で読み込まれます)。
 
 - 用意(setup)の後は、Copilot の新しいセッションを始めます。動いている
   セッションには、検索の道具は出ません

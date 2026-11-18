@@ -88,6 +88,10 @@ copilot plugin marketplace add noxitro/context-foundation
 copilot plugin install context-foundation@context-foundation
 ```
 
+Copilot CLI のセッションの中でも、`/plugin marketplace add …` と
+`/plugin install …` で同じことができます(下の「Copilot CLI の中だけで
+始める」)。
+
 GitHub から入れたプラグインは、Copilot の設定フォルダの
 `installed-plugins\context-foundation\context-foundation` に写されます
 【公式】。写されるのは、リポジトリで git が追跡しているファイルだけです
@@ -109,6 +113,32 @@ GitHub から入れたプラグインは、Copilot の設定フォルダの
   いないので、前の版に戻したいときは、下の「チームの Marketplace に
   載せる」のように、コミットの sha で固定します
 
+### Copilot CLI の中だけで始める
+
+入れるところから検索できるところまで、Copilot CLI のセッションで打つ
+コマンドだけで進められます。ターミナルのコマンドも、プラグインのフォルダの
+パスも要りません。前提は、`python` という名前で Python 3.11〜3.14 が起動
+できることです(上の「入れ方は 2 つ」)。
+
+```text
+/plugin marketplace add noxitro/context-foundation
+/plugin install context-foundation@context-foundation
+/settings experimental on
+```
+
+1. 上の 3 行を打つ。3 行目は、拡張(`/context-setup` と `/context-index`)
+   を読み込むための設定です(拡張は Copilot CLI の実験的機能)。打つと、
+   CLI がセッションを読み込み直します
+2. 新しいセッションを始め、`/context-setup` と打つ。Python のパッケージと
+   埋め込みモデルを入れます(下の「`/context-setup`」)
+3. 作業フォルダで、`/context-index <検索したいフォルダ> ...` と打つ。
+   索引を作ります(下の「`/context-index`」)
+4. 新しいセッションを始める。そこから、エージェントが grep より先に検索の
+   道具を使います
+
+2 と 3 は、モデルを呼びません。1 から 3 を、Copilot CLI 1.0.114 で確かめ
+ました【実測】(下の「確かめたこと」の「0.4.3」)。
+
 ### 最初の用意(setup)
 
 検索には、Python のパッケージ(PyPI から約 200 MB)と、埋め込みモデル
@@ -116,6 +146,8 @@ GitHub から入れたプラグインは、Copilot の設定フォルダの
 利用者ごとの置き場(`%LOCALAPPDATA%\context-foundation`。環境変数
 `CF_HOME` で変えられる)に、1 回だけ置きます。
 
+- Copilot CLI で打つ: `/context-setup`(下の「`/context-setup`」)。拡張を
+  読み込んでいれば、これがいちばん簡単です
 - エージェントに頼む: 用意ができていないと、skill がそう知らせ、エージェント
   は利用者に尋ねてから `ctxf.py setup` を動かします
 - 自分で動かす: 次の 1 行です(`<プラグインのフォルダ>` は上の場所)
@@ -148,6 +180,46 @@ python -I "<プラグインのフォルダ>\ctxf.py" setup
   pip の前にそう知らせます。`CF_HOME` を短いフォルダ(例 `C:\cf`)にするか、
   Windows の長いパスを有効にしてから、やり直します
 - 使われる python と置き場は `python -I "<…>\ctxf.py" where` で見られます
+
+### `/context-setup`(用意をするスラッシュコマンド)
+
+`/context-index` と同じ拡張が足すコマンドです。Copilot CLI のセッションで
+打つと、モデルを呼ばずに、上の `ctxf.py setup` を裏で動かします。
+トークンを使いません。
+
+```text
+/context-setup
+/context-setup no-model
+/context-setup gpu
+/context-setup help
+```
+
+- 1 行目がふつうの形です。済んでいれば、確かめるだけで終わります(手元で
+  1 秒)。依存の一覧が変わった版に更新したときも、同じく打ちます
+- `no-model`・`gpu`・`cpu` は、`setup` の `--no-model`・`--gpu`・`--cpu`
+  と同じです(`--` を付けても構いません)。`help` は、何もせずに説明だけを
+  出します。`gpu` と `cpu` を一緒に指定すると、断ります
+- 利用者が自分で打つので、打ったことを同意とみなします。エージェントから
+  は呼べません(大きな取得を、利用者の知らないうちに始めないため)
+- 裏で動かすので、作業を続けられます。段階(仮想環境・パッケージ・モデルの
+  取得)が変わったときと、同じ段階が 1 分続くたびに、経過の秒数を出します。
+  モデルの取得の % は出ません。出力は、利用者ごとの置き場の
+  `context-setup.log` に書きます(毎回書き直します)
+- 終わると、かかった時間と、次にすること(作業フォルダに索引が無ければ
+  `/context-index`、あれば新しいセッション)を出します。失敗したときは、
+  ログの最後の数行(pip が届かない、Python の版が合わないなど、わけと
+  直し方が書いてある)を添えます
+- `/context-index` と `/context-setup` は、同時には動かしません。どちらかが
+  動いている間に打つと、「途中です」と断ります(用意は、索引づくりが使う
+  仮想環境を作り直すことがあるため)
+- リポジトリを取得して `register-copilot.bat` で登録した人(プラグインの
+  隣に `.venv` がある)は、`.venv` が先に使われるので、このコマンドは何も
+  せずに `setup.bat` を案内します
+- Python は、MCP サーバーと hook と同じく、PATH の `python` で動かします。
+  `python` が 3.15 以降なら、断って、3.14 以前で動かすコマンドを出します
+  (上の「入れ方は 2 つ」)
+- 用意が済んでも、動いているセッションには検索の道具は出ません。
+  `/context-index` は、同じセッションのまま打てます
 
 ### インターネットに出られない PC・PyPI のミラー
 
@@ -251,8 +323,8 @@ python -I "<プラグインのフォルダ>\ctxf.py" index
   変えるときは、`.cf\config.toml` の `[[source]]` を直します
 - 3 行目は、すべて埋め込み直す形です(`index --full`)
 - 用意(setup)が済んでいない・古くなっているときは、何も作らずに止まり、
-  やり直すコマンドを出します。setup は大きな取得(約 700 MB)をするので、
-  このコマンドからは動かしません
+  `/context-setup` とターミナルのコマンドを案内します。setup は大きな取得
+  (約 700 MB)をするので、このコマンドからは動かしません
 - 裏で動かすので、作業を続けられます。動いている間は、進み具合(ファイルの
   取り込み、埋め込みの何 % と残りの時間)をときどき出します。同時に動かせる
   のは 1 つだけです。出力は `.cf\context-index.log` に書きます(毎回書き
@@ -270,16 +342,20 @@ python -I "<プラグインのフォルダ>\ctxf.py" index
   読み取り専用に保つためと、最初の索引づくりが長く(約 8,000 ファイルで
   30 分ほど)、道具の呼び出しの時間切れにかかりやすいためです
 
-**Copilot CLI の拡張は実験的機能で、機能フラグ `EXTENSIONS` が有効なときだけ
-読み込まれます。** `%USERPROFILE%\.copilot\settings.json` に
+**Copilot CLI の拡張は実験的機能で、実験的機能を有効にしたときだけ読み込まれ
+ます。** セッションで `/settings experimental on` と打つ(設定の
+`"experimental": true` に残り、次からも有効)か、`copilot --experimental` で
+起動します【公式: `copilot help extensions`】。Copilot CLI 1.0.114 では、
+`/settings experimental on` だけ(機能フラグ無し)で、一覧に
+`/context-setup` と `/context-index` が出ました【実測】。1.0.112 と 1.0.113
+では、機能フラグ `EXTENSIONS` を有効にして動かしました【実測】:
+`%USERPROFILE%\.copilot\settings.json` に
 `"feature_flags": { "enabled": ["EXTENSIONS"] }` を足す(すでに
 `feature_flags` があれば、`enabled` の配列に `"EXTENSIONS"` を足す)か、
 環境変数 `COPILOT_CLI_ENABLED_FEATURE_FLAGS=EXTENSIONS` を設定してから
 起動します。拡張はセッションが始まってから読み込まれるので、入力欄に
 `/context` と打って一覧に出てから実行します(一覧に出る前に送ると、ただの
-依頼としてモデルに送られます)。機能フラグを有効にした Copilot CLI 1.0.112
-と 1.0.113 で、一覧に出て、動きました【実測】(下の「確かめたこと」の
-「0.4.2」)。
+依頼としてモデルに送られます)(下の「確かめたこと」の「0.4.2」「0.4.3」)。
 
 **Copilot CLI 1.0.113 では、0.4.2 より前の版の `/context-index` は読み込まれ
 ません。** 1.0.113 から、CLI が拡張に渡す SDK の名前が
@@ -422,7 +498,7 @@ copilot plugin install context-foundation@context-foundation
 | --- | --- | --- |
 | MCP サーバーと hook(既定) | ツールは `search` と `status` だけ。読み取り専用。hook は、索引のある作業フォルダでだけ、検索を grep より先に使うように 1 文で知らせる | プラグイン(`mcp.json` と `hooks.json`) |
 | skill(控え) | `skills/context-search`。MCP の道具が使えない場面で、検索の CLI を 1 回呼ぶ。最初の用意(setup)のしかたも、ここに書いてある | プラグイン |
-| 拡張(`/context-index`) | 利用者が打つ、索引を作る・作り直すコマンド。モデルを呼ばない。機能フラグ `EXTENSIONS` が要る(上の「`/context-index`」) | プラグイン(`com.github.copilot\extensions`) |
+| 拡張(`/context-setup`・`/context-index`) | 利用者が打つ、用意をするコマンドと、索引を作る・作り直すコマンド。モデルを呼ばない。Copilot CLI の実験的機能を有効にすると読み込まれる(上の「`/context-index`」) | プラグイン(`com.github.copilot\extensions`) |
 
 0.2 までは、skill と hook が既定で、MCP サーバーは追加でした。0.3 で入れ
 替えました。理由は、Godot の調整用の 7 問を 3 回ずつ流した結果です
@@ -529,7 +605,7 @@ python -I "<プラグインのフォルダ>\ctxf.py" where
 | 症状 | 見るもの | 直し方 |
 | --- | --- | --- |
 | 道具の一覧に `context-foundation-search` が出ない | `where` の `PATH python:`。`copilot mcp list` に `context-foundation` があるか | `python` が無い・起動しないなら、PATH に足す(上の「入れ方は 2 つ」)。あれば、下の 2 行を見る |
-| 道具が出ず、始めの 1 文が「the search tool is not set up …」「the search tool is set up for …」「the search tool is set up with …」 | `where` の `python:` の行の理由と `setup:` の行 | 理由が「not set up」「set up for an older version」「set up with a Python that is no longer installed」なら、`setup:` の行のコマンドを動かし、新しいセッションを始める。プラグインとして入れた人は `ctxf.py setup`、リポジトリを取得した人(隣の `.venv`)は `setup.bat` |
+| 道具が出ず、始めの 1 文が「the search tool is not set up …」「the search tool is set up for …」「the search tool is set up with …」 | `where` の `python:` の行の理由と `setup:` の行 | 理由が「not set up」「set up for an older version」「set up with a Python that is no longer installed」なら、`setup:` の行のコマンドを動かし、新しいセッションを始める。プラグインとして入れた人は `ctxf.py setup`(Copilot CLI なら `/context-setup` でも同じ)、リポジトリを取得した人(隣の `.venv`)は `setup.bat` |
 | 道具が出ず、検索のコマンドが「set up in a virtual environment whose packages can no longer be loaded」(終了コード 4) | `where` の `model:` の行。この理由は、`where` の `python:` の行(仮想環境の python のパスが出る)にも始めの 1 文にも出ない。`model:` が `unknown (ImportError: …)` などになる。MCP のログにも出る | `setup:` の行のコマンドを動かし、新しいセッションを始める。setup は、読めないパッケージに気づくと、仮想環境を 1 回作り直して入れ直す。それでも直らなければ、文面のとおり仮想環境のフォルダ(リポジトリを取得した人は `.venv`)を消してから、もう一度 setup |
 | setup の後も道具が出ない | 同じセッションのままか | 新しいセッションを始める。動いているセッションには出ない(控えの skill は動く) |
 | 検索が「No context-foundation index」 | `where` の `index:` と `index (COPILOT_SESSION_CWD):` | 作業フォルダで `init` と `index`。アプリで、索引はあるのにこう出るなら、作業フォルダが渡っていない見込み(上の「アプリ」) |
@@ -557,6 +633,7 @@ semantic` か keyword だけか)を出します。
 | 同上 | `context-index.log` | `/context-index` の出力(進み具合と結果)。毎回書き直す |
 | 同上 | `eval\run-*`(`eval.bat` の既定の出力先) | 評価の結果。検索結果(ソースの場所の一覧)が入る |
 | 利用者ごとの置き場 | `runtime\venv`(約 180 MB)、`runtime\deps.json`、`runtime\setup.lock`(setup の最中だけ) | `ctxf.py setup` が作る仮想環境と、その覚え書き |
+| 同上 | `context-setup.log` | `/context-setup` の出力(setup の出力)。毎回書き直す |
 | 同上 | `models`(約 490 MB) | 埋め込みモデル |
 | 同上 | `state.json` | `.bat` の対話が覚える、作業フォルダと `cases.jsonl` の場所 |
 | Copilot の設定フォルダ(`~/.copilot`。`COPILOT_HOME` で変わる) | `installed-plugins\context-foundation\context-foundation` | GitHub から入れたプラグインの写し |
@@ -588,6 +665,51 @@ Linux と macOS で 2 か所に分かれるのは、0.1 のモデルの置き場
 もその中です)。プラグインを外しても、3 と 4 は残ります。
 
 ## 確かめたこと
+
+### 0.4.3(`/context-setup` を足す)
+
+確かめた日は 2026-11-18 です。Windows 11、Python 3.13 で、Copilot CLI
+1.0.114 の対話の画面を、疑似端末から操作しました。Copilot の設定フォルダ
+(`COPILOT_HOME`)と利用者ごとの置き場(`CF_HOME`)は、どちらも空の
+フォルダにしました。モデルは BYOK(Anthropic の Claude Haiku 5.5)です。
+0.4.3 は `--plugin-dir` で git の作業フォルダから読み、ほかのプラグインは
+読ませていません(`COPILOT_PLUGIN_DIR_ONLY`)。題材は、テスト用の合成の
+11 ファイル(コードと文書)の作業フォルダです。アプリは動かしていません。
+
+- 実験的機能が無効のままでは、一覧に `/context-setup` も `/context-index`
+  も出なかった。`/settings experimental on` と打つと、CLI がセッションを
+  読み込み直し、設定に `"experimental": true` が残った。次に起動した
+  セッションでは、機能フラグ `EXTENSIONS` が無くても、一覧に 2 つが出た
+  【実測】
+- 用意の無い PC で `/context-index src docs` と打つと、何も作らずに、
+  `/context-setup` とターミナルのコマンドを案内した【実測】
+- `/context-setup` で、仮想環境・パッケージ・モデルの取得の段階が順に出て、
+  32 秒で「用意ができました」と出た。続けて、同じセッションで
+  `/context-index src docs` が、埋め込みつきの索引を作った(2 秒)【実測】。
+  32 秒と短いのは、この PC に pip の取得の控え(キャッシュ)があったためと
+  みられる【推測】。初めての PC では、取得の分だけ長くなる
+- 済んだ後にもう一度 `/context-setup` と打つと、1 秒で終わり、作業フォルダに
+  索引があるので新しいセッションを始めるよう案内した。`/context-setup gpu
+  cpu` は断り、`/context-setup help` は説明だけを出した【実測】
+- この間、モデルの呼び出しは 0 回だった。5 つのセッションの記録に、利用者の
+  依頼もモデルの応答も 1 件も無い【実測】
+- 同じ設定フォルダで、セッションの中から `/plugin marketplace add
+  noxitro/context-foundation` と `/plugin install
+  context-foundation@context-foundation` を打つと、GitHub に
+  ログインしていなくても入った。次のセッションで、入れたプラグイン(0.4.2)の
+  `/context-index` が一覧に出た【実測】
+- 偽の SDK で、`/context-setup` の最中に `/context-index` ともう 1 つの
+  `/context-setup` を呼ぶと、どちらも「用意(setup)の途中です」と断った。
+  プラグインの隣に `.venv` があると、何もせずに `setup.bat` を案内した
+  【実測】。実物の画面では、用意が 1 秒で終わったので、断る場面は作れな
+  かった
+- モデルの取得の % は、ログに出なかった(huggingface_hub は、端末でない
+  出力には進み具合を書かない)。そのため、経過の秒数だけを出す【実測】
+
+確かめていないこと: アプリでの動作、Copilot CLI 1.0.113 以前での
+`/context-setup`、初めての PC での取得の時間、失敗(PyPI に届かない、
+Python 3.15 など)の文の実物の画面での出方(単体テストで文の形だけを
+確かめた)【未確認】。
 
 ### 0.4.2(`/context-index` を Copilot CLI 1.0.113 に合わせる)
 
@@ -766,11 +888,10 @@ Haiku 5.5、合成のコーパス、毎回空の設定フォルダ)。
 - 0.4.0 の Copilot での動作(Copilot は動かしていない)。setup の後に
   新しいセッションで道具が出ること、`.cf` の無い作業フォルダでの起動の
   挨拶
-- `/context-index` の、アプリでの動作(結果がダイアログに出るか)。
-  Copilot CLI で、機能フラグ `EXTENSIONS` を外すと読み込まれないこと
-  (確かめたのは、有効にした設定だけ)。Copilot CLI での、進み具合の表示・
-  続けて打ったときに断ること・用意(setup)の無い PC での動き(上の
-  「0.4.2」)
+- `/context-index` と `/context-setup` の、アプリでの動作(結果がダイアログに
+  出るか)。Copilot CLI での、`/context-index` の進み具合の表示・続けて
+  打ったときに断ること(上の「0.4.2」)。実験的機能と機能フラグが無いと
+  読み込まれないことは、1.0.114 で確かめた(上の「0.4.3」)
 - 本当のネットワークの共有フォルダ(UNC)の上の作業フォルダ(確かめたのは、
   自分の PC の管理用の共有だけ)
 - タスク スケジューラでの、索引の定期の更新(上の「索引を更新する」)
@@ -787,7 +908,7 @@ Haiku 5.5、合成のコーパス、毎回空の設定フォルダ)。
   "name": "context-foundation",
   "source": { "source": "github", "repo": "noxitro/context-foundation" },
   "description": "Find code and design docs by meaning and keywords, locally.",
-  "version": "0.4.2"
+  "version": "0.4.3"
 }
 ```
 

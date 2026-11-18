@@ -50,12 +50,16 @@ The plugin adds a read-only **MCP server** with two tools, `search` and
 grepping, only in workspaces that have an index. A **skill**
 (`context-search`) that runs the same search through the command line stays
 as a fallback for when the MCP tools are not available. A Copilot CLI
-**extension** adds the slash command `/context-index`, which the user types
-to build or update the index in the background without calling the model
-(extensions are experimental in Copilot CLI and load only with the
-`EXTENSIONS` feature flag). Python dependencies
+**extension** adds two slash commands that the user types and that run in
+the background without calling the model: `/context-setup` installs the
+Python dependencies and the embedding model, and `/context-index` builds or
+updates the index (extensions are experimental in Copilot CLI and load after
+`/settings experimental on`). Python dependencies
 (about 200 MB) and the embedding model (about 490 MB) live outside the
-plugin, in a per-user folder that `python -I ctxf.py setup` fills once.
+plugin, in a per-user folder that `/context-setup` (or
+`python -I ctxf.py setup`) fills once. With these, everything from installing
+the plugin (`/plugin install`) to building the index can be done inside a
+Copilot CLI session.
 Until version 0.2 the skill was the default; why the MCP server replaced it
 is in [docs/copilot.md](docs/copilot.md).
 
@@ -174,8 +178,10 @@ are covered by the CI tests (and the tests were also run on Ubuntu under WSL
 with Python 3.12), and version 0.4.0 has not been tried in Copilot yet.
 Version 0.4.1 adds `/context-index`. Version 0.4.2 fixes it for Copilot CLI
 1.0.113, which did not load it. In Copilot CLI 1.0.113 and 1.0.112 on
-Windows, building and rebuilding the index worked with no model calls; it
-has not been tried in the app yet.
+Windows, building and rebuilding the index worked with no model calls.
+Version 0.4.3 adds `/context-setup`; in Copilot CLI 1.0.114 on Windows, the
+setup and the first index worked from inside one session with no model
+calls. Neither command has been tried in the app yet.
 
 ## Supported environments
 

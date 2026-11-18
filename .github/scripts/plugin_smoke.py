@@ -1,7 +1,7 @@
 """プラグインとして入れた人の道筋を、まっさらな環境で通しで確かめる(CI から呼ぶ。手元でも動く)。
 
   setup(利用者ごとの置き場に仮想環境とモデル)→ init → index → search → eval → MCP サーバー → 始めの 1 文
-  → /context-index(Copilot CLI の拡張。node があるときだけ。SDK は偽物に差し替える)
+  → /context-index・/context-setup(Copilot CLI の拡張。node があるときだけ。SDK は偽物に差し替える)
 
 テスト(pytest)は、埋め込みモデルの実物を使わない。ここでは、実物のモデルを取得して、テスト用の小さな
 コーパス(tests/fixtures)で、検索が答えを上位に出すところまでを見る。標準ライブラリだけで動く。
@@ -46,7 +46,7 @@ FAKE_SDK = """export async function joinSession(opts) {
 """
 DRIVER = """import { pathToFileURL } from "node:url";
 await import(pathToFileURL(process.argv[2]).href);
-globalThis.__commands.find((c) => c.name === "context-index").handler({ args: process.argv[3] ?? "" });
+globalThis.__commands.find((c) => c.name === process.argv[3]).handler({ args: process.argv[4] ?? "" });
 """
 
 
@@ -166,16 +166,22 @@ def main() -> int:
         shutil.copytree(corpus / "engine", ws2 / "engine")
         ext_env = dict(env, FAKE_CWD=str(ws2), CF_DISPLAY="timeline")
         fake_sdk("@github/copilot-sdk")
-        p = run([node, work / "drive.mjs", ext, "engine"], env=ext_env, timeout=600)
+        p = run([node, work / "drive.mjs", ext, "context-index", "engine"], env=ext_env, timeout=600)
         check(p.returncode == 0 and "索引ができました" in p.stdout and "keyword だけ" not in p.stdout
               and (ws2 / ".cf" / "index.db").is_file(), "/context-index が、設定と埋め込みつきの索引を作る(@github の SDK)",
               p.stdout + p.stderr)
         fake_sdk("@microsoft/copilot-sdk")
-        p = run([node, work / "drive.mjs", ext, ""], env=ext_env, timeout=600)
+        p = run([node, work / "drive.mjs", ext, "context-index", ""], env=ext_env, timeout=600)
         check(p.returncode == 0 and "次の検索からこの索引を使います" in p.stdout,
               "/context-index が、索引を作り直す(@microsoft の SDK)", p.stdout + p.stderr)
+        # 用意はすでに済んでいるので、確かめるだけで終わる(取得はしない)。ログは利用者ごとの置き場に書く
+        p = run([node, work / "drive.mjs", ext, "context-setup", ""], env=ext_env, timeout=600)
+        log = Path(env["CF_HOME"]) / "context-setup.log"
+        check(p.returncode == 0 and "用意ができました" in p.stdout and "索引があります" in p.stdout and log.is_file()
+              and "already installed" in log.read_text(encoding="utf-8"),
+              "/context-setup が、済んでいる用意を確かめて終わる(@microsoft の SDK)", p.stdout + p.stderr)
     else:
-        print("  skipped: /context-index(node か python が PATH に無い)")
+        print("  skipped: /context-index・/context-setup(node か python が PATH に無い)")
 
     shutil.rmtree(work, ignore_errors=True)
     print("ALL OK")

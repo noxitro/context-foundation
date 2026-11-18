@@ -17,6 +17,41 @@
   固定します([docs/copilot.md](docs/copilot.md) の「チームの Marketplace
   に載せる」)
 
+## 0.4.3(2026-11-18)
+
+用意(setup)をするスラッシュコマンド `/context-setup` を足しました。
+プラグインを入れるところから索引づくりまでを、Copilot CLI のセッションで
+打つコマンドだけで進められます。検索の順位の付け方、索引の形式、
+エージェント向けの検索の出力、MCP の道具は変えていません。
+
+- `/context-setup [no-model] [gpu | cpu]`: `ctxf.py setup` を裏で動かし、
+  段階(仮想環境・パッケージ・モデルの取得)を画面に出す。モデルは呼ばない。
+  済んでいれば確かめるだけで終わる。終わると、次にすること
+  (`/context-index` か、新しいセッション)を出す。出力は、利用者ごとの
+  置き場の `context-setup.log`
+- `/context-index` と `/context-setup` は同時に動かさない(どちらかの最中に
+  打つと断る)。リポジトリを取得して使う人(隣に `.venv`)には、
+  `/context-setup` は `setup.bat` を案内するだけ
+- 用意ができていないときの `/context-index` の文と、エージェント向けの
+  「用意ができていない」の文が、`/context-setup` も案内するようになった
+- 拡張の読み込み方の説明を、`/settings experimental on`(実験的機能)に
+  改めた。Copilot CLI 1.0.114 では、機能フラグ `EXTENSIONS` が無くても
+  読み込まれた【実測】
+- モデルの取得の行を、すぐログに書き出すようにした(`model download`)
+- Copilot CLI 1.0.114 で、空の設定フォルダから、実験的機能の設定・
+  `/context-setup`(実物の取得)・`/context-index` を通し、モデルの呼び
+  出しが 0 回だったことを確かめた。`/plugin install` で入れられることも
+  確かめた【実測】。アプリでは、まだ試していない【未確認】
+  (docs/copilot.md の「確かめたこと」)
+
+### 更新のあとにすること
+
+1. **setup のやり直しと、索引の作り直しは要りません。** 依存の一覧も、
+   索引の形式も変わっていません
+2. `copilot plugin update context-foundation` で更新し、新しいセッションを
+   始めます。`/context` と打って、一覧に `/context-setup` が出れば読み込ま
+   れています
+
 ## 0.4.2(2026-11-18)
 
 Copilot CLI 1.0.113 で、`/context-index` が読み込まれなかったのを直し
