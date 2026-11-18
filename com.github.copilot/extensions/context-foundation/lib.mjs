@@ -1,9 +1,11 @@
-// /context-index の、Copilot の SDK に依らない部分(テストできるように分けた。lib.test.mjs を
+// /context-index と /context-setup の、Copilot の SDK に依らない部分(テストできるように分けた。lib.test.mjs を
 // tests/test_plugin.py が node --test で流す)。出し方(makeNotifier など)は cxxref の拡張と同じ作り。
 import { existsSync, realpathSync, statSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, join, resolve, win32 } from "node:path";
 
 export const USAGE = "使い方: /context-index [full] [<フォルダ> ...]";
+export const SETUP_USAGE = "使い方: /context-setup [no-model] [gpu | cpu]";
 
 // プラグインのルート(plugin.json と ctxf.py のあるフォルダ)。start から親へさかのぼる
 export function pluginRoot(start) {
@@ -169,14 +171,115 @@ export function failureMessage(code, out, log, setup) {
       return `索引を作れませんでした(設定の誤り・フォルダが無い・入るファイルが無い・モデルを読めないなど)。前の索引はそのまま使えます。ログ: ${log}${more}`;
     case 4: {
       const cmd = repairCommand(out) || setup;
-      return "この PC の用意(setup)が済んでいないか、古くなっているので、索引を作りませんでした。" +
-        "ターミナルで次を実行してから、もう一度 /context-index を打ってください" +
+      // 隣の .venv(リポジトリを取得した人)を直すのは setup.bat などで、/context-setup では直らない
+      const how = usesLocalVenv(cmd)
+        ? "ターミナルで次を実行してから、もう一度 /context-index を打ってください"
+        : "/context-setup を打つか、ターミナルで次を実行して用意をしてから、もう一度 /context-index を打ってください";
+      return "この PC の用意(setup)が済んでいないか、古くなっているので、索引を作りませんでした。" + how +
         `(PyPI から約 200 MB のパッケージ、Hugging Face から 490 MB のモデルを取得し、数分かかります):\n${cmd}`;
     }
     case 130:
       return `索引づくりが止められました。次の /context-index は、計算済みの埋め込みを使い回して続きから計算します。ログ: ${log}`;
     default:
       return `索引づくりに失敗しました(終了コード ${code})。ログ: ${log}${more}`;
+  }
+}
+
+// 直すコマンドが、隣の .venv(リポジトリを取得した人)向けか(ctxf.py の repair_command の形)
+const usesLocalVenv = (cmd) => /setup\.bat|-m venv --clear \.venv/.test(cmd ?? "");
+
+// ---- /context-setup(この PC の用意。ctxf.py setup を裏で動かす)
+
+export const SETUP_HELP = `${SETUP_USAGE}
+検索に要る Python のパッケージ(PyPI から約 200 MB)と、埋め込みモデル(Hugging Face から約 490 MB)を、利用者ごとの置き場に入れます。` +
+  `1 回だけで済みます(済んでいれば、確かめるだけで終わります)。裏で動かし、モデルは呼びません。
+- no-model: モデルを取らない(検索は keyword だけになる)
+- gpu: (Windows)索引づくりの埋め込みを GPU で計算する onnxruntime-directml を入れる。cpu で戻す。選び方は次の用意に引き継ぐ`;
+
+const SETUP_WORDS = { "no-model": "--no-model", gpu: "--gpu", cpu: "--cpu" };
+
+// /context-setup の引数。{ args: ctxf.py setup に渡す指定 } か { help: true } か { error }。
+// no-model・gpu・cpu は、-- を付けても付けなくてもよい
+export function parseSetupArgs(arg) {
+  const words = splitArgs(arg).map((w) => w.toLowerCase().replace(/^--?/, ""));
+  if (words.some((w) => w === "help" || w === "h")) return { help: true };
+  const unknown = words.filter((w) => !Object.hasOwn(SETUP_WORDS, w));
+  if (unknown.length) return { error: `知らない指定です: ${unknown.join(" ")}\n${SETUP_USAGE}` };
+  const args = [...new Set(words.map((w) => SETUP_WORDS[w]))];
+  if (args.includes("--gpu") && args.includes("--cpu")) return { error: `gpu と cpu は一緒に指定できません\n${SETUP_USAGE}` };
+  return { args };
+}
+
+// ctxf.py の data_home と同じ、利用者ごとの置き場(CF_HOME。無ければ %LOCALAPPDATA%\context-foundation など)
+export function dataHome(env, platform = process.platform, home = homedir()) {
+  if (env.CF_HOME) return env.CF_HOME;
+  if (platform === "win32" && env.LOCALAPPDATA) return join(env.LOCALAPPDATA, "context-foundation");
+  return join(env.XDG_DATA_HOME || join(home, ".local", "share"), "context-foundation");
+}
+
+// プラグインの隣に .venv があるか(リポジトリを取得して register-copilot.bat で登録した人)。入口はその .venv を
+// 先に使うので、ctxf.py setup が利用者ごとの置き場に作っても使われない(直すのは setup.bat)
+export const hasLocalVenv = (plugin) => existsSync(join(plugin, ".venv"));
+
+// ctxf.py setup のログから、今の段階を返す。読めなければ { phase: "start" }
+//   "venv"      仮想環境を作っている
+//   "packages"  Python のパッケージを入れている
+//   "packaged"  パッケージが入った(すでに入っていた)
+//   "model"     埋め込みモデルを確かめている
+//   "download"  モデルのファイルを取得している({ file } 付き。ログがファイルなので、取得の % は書かれない)
+//   "done"      用意ができた
+export function parseSetupProgress(text) {
+  let snap = { phase: "start" };
+  for (const line of (text ?? "").split(/\r?\n/)) {
+    let m;
+    if (/creating the virtual environment/.test(line)) snap = { phase: "venv" };
+    else if (/installing the Python packages/.test(line)) snap = { phase: "packages" };
+    else if (/^\s*Python packages: /.test(line)) snap = { phase: "packaged" };
+    else if (/embedding model: checking/.test(line)) snap = { phase: "model" };
+    else if ((m = line.match(/^取得します: \S+ (\S+)/))) snap = { phase: "download", file: m[1] };
+    else if (/^Setup is done/.test(line)) snap = { phase: "done" };
+  }
+  return snap;
+}
+
+// ctxf.py setup のログの、利用者ごとの置き場("runtime folder: …" の行)。無ければ ""
+export const setupRuntimeFolder = (out) => ((out ?? "").match(/^\s*runtime folder: (.+)$/m)?.[1] ?? "").trim();
+
+// 用意の進み具合を画面に出すか決める(progressNote と同じ考え方)。出すのは、段階か取得するファイルが変わったときと、
+// 同じ段階が 1 分以上続いているとき(1 分ごと)。{ note(出さなければ ""), state(次の prev) }
+export function setupProgressNote(prev, snap, now, elapsedSec) {
+  const quiet = { note: "", state: prev };
+  if (snap.phase === "done") return quiet;  // できたことは、終わりの知らせで出す
+  const changed = prev.phase !== snap.phase || prev.file !== snap.file;
+  if (!changed && now - prev.at < 60000) return quiet;
+  const state = { phase: snap.phase, file: snap.file, at: now };
+  if (snap.phase === "start" && changed) return { note: "", state };  // 始めてすぐは出さない
+  // [何をしているか, 括弧に添えること]
+  const what = {
+    start: ["準備しています", ""],
+    venv: ["仮想環境を作っています", ""],
+    packages: ["Python のパッケージを PyPI から入れています", "初めては約 200 MB"],
+    packaged: ["Python のパッケージが入りました", ""],
+    model: ["埋め込みモデルを確かめています", ""],
+    download: ["埋め込みモデルを Hugging Face から取得しています", snap.file ?? ""],
+  }[snap.phase];
+  if (what === undefined) return quiet;
+  const [label, detail] = what;
+  return { note: `context-foundation: ${label}(${detail ? `${detail}、` : ""}${elapsedSec} 秒)`, state };
+}
+
+// setup が 0 以外で終わったときの文(終了コードは ctxf.py の setup)。out はログの中身、log はログのパス
+export function setupFailureMessage(code, out, log) {
+  const tail = logTail(out, 6);
+  const more = tail ? `\n${tail}` : "";
+  switch (code) {
+    case 2:
+      return `用意を始められませんでした(この Python では用意できないか、指定が合わない)。ログ: ${log}${more}`;
+    case 3:
+      return `別の用意(setup)が動いています。終わってから、もう一度 /context-setup を打ってください。ログ: ${log}${more}`;
+    default:
+      return `用意に失敗しました(終了コード ${code})。わけはログの最後の行です。直してから、もう一度 /context-setup を打つと、` +
+        `済んだところは飛ばして続けます。ログ: ${log}${more}`;
   }
 }
 

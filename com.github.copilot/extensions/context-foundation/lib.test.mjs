@@ -6,8 +6,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  escapeMarkdown, failureMessage, findWorkspace, initSources, joinOptions, keywordOnly, lastCwd, loadSdk, logTail, makeNotifier, parseIndexArgs,
-  parseProgress, planIndex, pluginRoot, progressNote, repairCommand, SDK_NAMES, splitArgs, wantDialog,
+  dataHome, escapeMarkdown, failureMessage, findWorkspace, hasLocalVenv, initSources, joinOptions, keywordOnly, lastCwd, loadSdk, logTail,
+  makeNotifier, parseIndexArgs, parseProgress, parseSetupArgs, parseSetupProgress, planIndex, pluginRoot, progressNote, repairCommand,
+  SDK_NAMES, SETUP_HELP, setupFailureMessage, setupProgressNote, setupRuntimeFolder, splitArgs, wantDialog,
 } from "./lib.mjs";
 
 const here = fileURLToPath(new URL(".", import.meta.url));
@@ -110,11 +111,93 @@ test("repairCommand は入口の英語の知らせから直すコマンドを取
 test("failureMessage は終了コードごとに、わけと次にすることを出す", () => {
   const log = "C:\\w\\.cf\\context-index.log";
   assert.match(failureMessage(4, "", log, "SETUP"), /setup.*\nSETUP$/s);
+  assert.match(failureMessage(4, "", log, "SETUP"), /\/context-setup を打つか/);
+  // 隣の .venv(リポジトリを取得した人)は setup.bat で直す。/context-setup は勧めない
+  const local = 'context-foundation is broken. To repair it, ask the user to run "C:\\r\\setup.bat"; after that, the search tool ...';
+  const m = failureMessage(4, local, log, "SETUP");
+  assert.match(m, /\n"C:\\r\\setup\.bat"$/);
+  assert.doesNotMatch(m, /context-setup/);
   assert.match(failureMessage(2, "a\nb\nsource のルートがありません:\n  engine: E:\\x\n", log, "S"), /前の索引はそのまま使えます.*engine: E:\\x$/s);
   assert.match(failureMessage(1, "", log, "S"), /index\.db\.new/);
   assert.match(failureMessage(130, "", log, "S"), /続きから/);
   assert.match(failureMessage(7, "", log, "S"), /終了コード 7/);
   assert.equal(logTail("1\n\n2\n3\n4\n5\n"), "2\n3\n4\n5");
+});
+
+test("parseSetupArgs: no-model・gpu・cpu(-- はあってもなくても)、help、知らない指定", () => {
+  assert.deepEqual(parseSetupArgs(""), { args: [] });
+  assert.deepEqual(parseSetupArgs("No-Model --gpu gpu"), { args: ["--no-model", "--gpu"] });
+  assert.deepEqual(parseSetupArgs("cpu"), { args: ["--cpu"] });
+  assert.deepEqual(parseSetupArgs("--help"), { help: true });
+  assert.match(parseSetupArgs("gpu cpu").error, /一緒に指定できません/);
+  assert.match(parseSetupArgs("full").error, /知らない指定です: full/);
+  assert.match(parseSetupArgs("constructor").error, /知らない指定です/);  // Object の持ち物の名前を指定と取り違えない
+  assert.match(SETUP_HELP, /no-model.*gpu/s);
+});
+
+test("dataHome は ctxf.py の data_home と同じ順で置き場を決める", () => {
+  assert.equal(dataHome({ CF_HOME: "C:\\cf", LOCALAPPDATA: "C:\\L" }, "win32"), "C:\\cf");
+  assert.equal(dataHome({ LOCALAPPDATA: "C:\\L" }, "win32"), join("C:\\L", "context-foundation"));
+  assert.equal(dataHome({ XDG_DATA_HOME: "/x" }, "linux", "/h"), join("/x", "context-foundation"));
+  assert.equal(dataHome({}, "linux", "/h"), join("/h", ".local", "share", "context-foundation"));
+});
+
+test("hasLocalVenv は、プラグインの隣の .venv を見る", () => {
+  const root = mkdtempSync(join(tmpdir(), "cf-venv-"));
+  assert.equal(hasLocalVenv(root), false);
+  mkdirSync(join(root, ".venv"));
+  assert.equal(hasLocalVenv(root), true);
+});
+
+// ctxf.py setup のログの形(_setup の _say と、model download の行。Copilot CLI 1.0.114 の /context-setup で書かれたもの)
+const SETUP_LINES = [
+  "== context-foundation setup",
+  "  runtime folder: C:\\cf\\runtime",
+  "  creating the virtual environment ...",
+  "  installing the Python packages from PyPI (about 200 MB the first time) ...",
+  "  Python packages: installed",
+  "  embedding model: checking (downloads about 490 MB the first time) ...",
+  "取得します: intfloat/multilingual-e5-small onnx/model.onnx (約 470 MB)",
+  "取得します: intfloat/multilingual-e5-small tokenizer.json (約 17 MB)",
+];
+
+test("parseSetupProgress は setup のログの最後の段階を返す", () => {
+  const upto = (n) => parseSetupProgress(SETUP_LINES.slice(0, n).join("\r\n"));
+  assert.deepEqual(upto(2), { phase: "start" });
+  assert.deepEqual(upto(3), { phase: "venv" });
+  assert.deepEqual(upto(4), { phase: "packages" });
+  assert.deepEqual(upto(5), { phase: "packaged" });
+  assert.deepEqual(upto(6), { phase: "model" });
+  assert.deepEqual(upto(7), { phase: "download", file: "onnx/model.onnx" });
+  assert.deepEqual(upto(8), { phase: "download", file: "tokenizer.json" });
+  assert.deepEqual(parseSetupProgress([...SETUP_LINES, "モデルを置きました: C:\\m", "Setup is done. Next, ..."].join("\n")),
+    { phase: "done" });
+  assert.equal(setupRuntimeFolder(SETUP_LINES.join("\n")), "C:\\cf\\runtime");
+  assert.equal(setupRuntimeFolder("nothing"), "");
+});
+
+test("setupProgressNote は段階か取得するファイルが変わったとき・同じ段階が 1 分続くたびに出す", () => {
+  let r = setupProgressNote({}, { phase: "start" }, 0, 0);
+  assert.equal(r.note, "");  // 始めてすぐは出さない
+  assert.equal(setupProgressNote(r.state, { phase: "start" }, 61000, 61).note, "context-foundation: 準備しています(61 秒)");
+  r = setupProgressNote(r.state, { phase: "packages" }, 5000, 5);
+  assert.equal(r.note, "context-foundation: Python のパッケージを PyPI から入れています(初めては約 200 MB、5 秒)");
+  assert.equal(setupProgressNote(r.state, { phase: "packages" }, 30000, 30).note, "");
+  assert.match(setupProgressNote(r.state, { phase: "packages" }, 66000, 66).note, /約 200 MB、66 秒\)$/);
+  r = setupProgressNote(r.state, { phase: "download", file: "onnx/model.onnx" }, 70000, 70);
+  assert.equal(r.note, "context-foundation: 埋め込みモデルを Hugging Face から取得しています(onnx/model.onnx、70 秒)");
+  assert.equal(setupProgressNote(r.state, { phase: "download", file: "onnx/model.onnx" }, 120000, 120).note, "");
+  assert.match(setupProgressNote(r.state, { phase: "download", file: "onnx/model.onnx" }, 131000, 131).note, /131 秒/);
+  assert.match(setupProgressNote(r.state, { phase: "download", file: "tokenizer.json" }, 82000, 82).note, /tokenizer\.json、82 秒/);
+  assert.equal(setupProgressNote(r.state, { phase: "done" }, 83000, 83).note, "");
+});
+
+test("setupFailureMessage は終了コードごとに、わけと次にすることを出す", () => {
+  const log = "C:\\cf\\context-setup.log";
+  assert.match(setupFailureMessage(2, "Python 3.15.0 is not supported ...\n", log), /この Python では.*3\.15\.0/s);
+  assert.match(setupFailureMessage(3, "Another setup is running (x).\n", log), /別の用意.*Another setup/s);
+  assert.match(setupFailureMessage(1, "  installing ...\n  pip failed (exit code 1). pip could not reach PyPI.\n", log),
+    /終了コード 1.*pip could not reach PyPI\.$/s);
 });
 
 test("initSources と keywordOnly は ctxf.py の出力を読む", () => {

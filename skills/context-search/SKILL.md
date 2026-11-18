@@ -59,13 +59,16 @@ before running one, say what it does, and run it only after they agree.
   `python -I "<...>\ctxf.py" setup` downloads about 200 MB of packages from
   PyPI and a 490 MB model from Hugging Face into the user's local app data
   folder, and takes a few minutes. `setup --help` only prints what it does.
-  After setup, the search tool appears only in a new session; in this
-  session, keep using this skill
+  In Copilot CLI with extensions on, the user can instead type
+  `/context-setup` in the session: it runs the same setup in the
+  background without calling the model. After setup, the search tool
+  appears only in a new session; in this session, keep using this skill
 - "No context-foundation index": ask which folders to search (the engine
   source, reference apps, design docs). Then suggest the user type
   `/context-index "<folder>" "<folder>"` in the session: it builds the
-  index in the background without calling the model (it needs the
-  `EXTENSIONS` feature flag of Copilot CLI). Without it, the commands
+  index in the background without calling the model (it needs extensions,
+  an experimental feature of Copilot CLI: `/settings experimental on`).
+  Without it, the commands
   are `python -I "<...>\ctxf.py" init "<folder>" "<folder>"`, then
   `python -I "<...>\ctxf.py" index`, in the workspace. The first index of
   a large codebase takes tens of minutes (about 30 minutes for 8,000

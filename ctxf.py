@@ -188,6 +188,9 @@ def repair_command(kind=""):
 
 NEW_SESSION_NOTE = ("A Copilot session that is already running does not get the search tool after setup: "
                     "start a new session (the context-search skill works meanwhile).")
+# Copilot CLI の拡張の /context-setup(利用者が打つ)。隣の .venv のときは直らないので、そのときは書かない
+SLASH_SETUP_NOTE = ("In Copilot CLI with extensions on, the user can instead type /context-setup, which runs the same "
+                    "setup without the agent.")
 # 隣の .venv が壊れているときは、控えの skill も同じ python で動くので、勧めない
 LOCAL_VENV_NEW_SESSION_NOTE = ("A Copilot session that is already running does not get the search tool after setup: "
                                "start a new session.")
@@ -197,7 +200,7 @@ def not_ready_message(reason, kind=""):
     return ("context-foundation is " + reason + " on this PC. Search with grep meanwhile. To set it up, ask the user "
             "first (it downloads " + SETUP_SIZE_NOTE + " and takes a few minutes), then run: " + repair_command(kind)
             + "\n"
-            + (LOCAL_VENV_NEW_SESSION_NOTE if kind == LOCAL_VENV else NEW_SESSION_NOTE) + "\n")
+            + (LOCAL_VENV_NEW_SESSION_NOTE if kind == LOCAL_VENV else SLASH_SETUP_NOTE + " " + NEW_SESSION_NOTE) + "\n")
 
 
 SESSION_HINT = (

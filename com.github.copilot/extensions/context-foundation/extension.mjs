@@ -9,13 +9,25 @@
 //     - この PC の用意(setup)ができていなければ、何も作らずに、用意の仕方を出す(大きな取得は、利用者が自分で始める)
 //     裏で動かし、走っている間は進み具合をときどき出し、終わったらそう出す。ログは .cf\context-index.log。
 //
-// 拡張は Copilot CLI の実験的機能で、機能フラグ EXTENSIONS が有効なときだけ読み込まれる。
+// /context-setup [no-model] [gpu | cpu]
+//     この PC の用意(ctxf.py setup。Python のパッケージ約 200 MB と、埋め込みモデル約 490 MB を、利用者ごとの置き場に
+//     入れる)をする。利用者が打つコマンドなので、打ったことを同意とみなす(エージェントからは呼べない)。
+//     済んでいれば、確かめるだけで終わる。リポジトリを取得して隣に .venv がある人は、setup.bat を案内して何もしない。
+//     裏で動かし、進み具合をときどき出す。ログは利用者ごとの置き場の context-setup.log。
+//     索引づくりと用意は、同時には動かさない(用意は、索引づくりが使う仮想環境を作り直すことがある)。
+//
+// 拡張は Copilot CLI の実験的機能で、実験的機能を有効にしたとき(--experimental か /settings experimental on。
+// 1.0.114 で確かめた)か、機能フラグ EXTENSIONS を有効にしたとき(1.0.112・1.0.113 で確かめた)だけ読み込まれる。
 // SDK は、ホストの版で名前が違う(lib.mjs の SDK_NAMES)ので、静的な import にせず、名前を順に試して読む。
 import { spawn } from "node:child_process";
-import { closeSync, existsSync, openSync, readFileSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { failureMessage, initSources, joinOptions, keywordOnly, lastCwd, loadSdk, makeNotifier, parseProgress, planIndex, pluginRoot, progressNote } from "./lib.mjs";
+import {
+  dataHome, failureMessage, findWorkspace, hasLocalVenv, initSources, joinOptions, keywordOnly, lastCwd, loadSdk, makeNotifier,
+  parseProgress, parseSetupArgs, parseSetupProgress, planIndex, pluginRoot, progressNote, SETUP_HELP, setupFailureMessage,
+  setupProgressNote, setupRuntimeFolder,
+} from "./lib.mjs";
 
 const { joinSession } = await loadSdk((name) => import(name));
 
@@ -56,35 +68,39 @@ function readText(path) {
   }
 }
 
-let running = null; // 走っている索引づくり(同時に 1 つだけ)
+let running = null; // 走っている索引づくりか用意(同時に 1 つだけ)。何が走っているかの文
+
+// 走っているものがあれば断る(true を返す)。await の前に印を付けるので、続けて呼ばれても 2 つ目は始めない
+function busy() {
+  if (!running) return false;
+  tell(`context-foundation: ${running}の途中です。終わるまで待ってください`, "warning").catch(() => { });
+  return true;
+}
 
 // 利用者に見せる文は tell、進み具合は say で出す。GitHub Copilot app は session.log の info と warning を表示しない
 // (error だけ出る)ので、アプリで動いているときは tell の文をダイアログにも出す(lib.mjs の makeNotifier。
 // CF_DISPLAY で切り替えられる)。session は下の joinSession で決まり、コマンドが呼ばれるのはその後
 const { tell, say } = makeNotifier(() => session, process.env);
 
-// 索引づくりの間、ログを数秒おきに見て、進み具合を画面に出す。止める関数を返す
-function watchProgress(log, t0) {
+// 索引づくりか用意の間、ログを数秒おきに見て、進み具合を画面に出す。止める関数を返す
+function watchProgress(log, t0, parse = parseProgress, decide = progressNote) {
   let state = {};
   const timer = setInterval(() => {
     const now = Date.now();
-    const r = progressNote(state, parseProgress(readText(log)), now, Math.round((now - t0) / 1000));
+    const r = decide(state, parse(readText(log)), now, Math.round((now - t0) / 1000));
     state = r.state;
     if (r.note) say(r.note).catch(() => { });
   }, 3000);
   return () => clearInterval(timer);
 }
 
+const plugin = () => pluginRoot(dirname(fileURLToPath(import.meta.url)));
+
 async function indexCommand(ctx) {
-  // await の前に印を付ける(続けて呼ばれても、2 つ目は始めない)
-  if (running) {
-    await tell(`context-foundation: 索引を作っている途中です(${running})。終わるまで待ってください`, "warning");
-    return;
-  }
-  running = "準備中";
+  if (busy()) return;
+  running = "索引づくり";
   try {
-    const plugin = pluginRoot(dirname(fileURLToPath(import.meta.url)));
-    const ctxf = join(plugin, "ctxf.py");
+    const ctxf = join(plugin(), "ctxf.py");
     const setup = `python -I "${ctxf}" setup`;
     const cwd = lastCwd(await session.getEvents()) || process.cwd();
     const plan = planIndex(ctx.args, cwd);
@@ -93,7 +109,7 @@ async function indexCommand(ctx) {
       return;
     }
     const ws = plan.workspace;
-    running = ws;
+    running = `索引づくり(${ws})`;
     const t0 = Date.now();
     let made = "";
     if (plan.action === "init") {
@@ -136,7 +152,64 @@ async function indexCommand(ctx) {
   }
 }
 
+async function setupCommand(ctx) {
+  const opts = parseSetupArgs(ctx.args);
+  if (opts.help || opts.error) {
+    await tell(`context-foundation: ${opts.help ? SETUP_HELP : opts.error}`, opts.error ? "error" : undefined);
+    return;
+  }
+  if (busy()) return;
+  running = "用意(setup)";
+  try {
+    const root = plugin();
+    if (hasLocalVenv(root)) {
+      await tell(`context-foundation: このプラグインは、取得したリポジトリの .venv(${join(root, ".venv")})で動いています。` +
+        `用意をやり直すときは、ターミナルで次を実行してください: "${join(root, "setup.bat")}"`, "error");
+      return;
+    }
+    const home = dataHome(process.env);
+    mkdirSync(home, { recursive: true });
+    const log = join(home, "context-setup.log");
+    const t0 = Date.now();
+    const model = !opts.args.includes("--no-model");
+    await tell("context-foundation: 用意(setup)を始めました。" +
+      `Python のパッケージ(PyPI から約 200 MB)${model ? "と、埋め込みモデル(Hugging Face から約 490 MB)" : ""}を、${home} に入れます。` +
+      "初めては数分かかります(済んでいれば、確かめるだけで終わります)。裏で動かすので、作業を続けてかまいません。" +
+      `ログ: ${log}`);
+    const stop = watchProgress(log, t0, parseSetupProgress, setupProgressNote);
+    const r = await run([join(root, "ctxf.py"), "setup", ...opts.args], log).finally(stop);
+    const sec = Math.round((Date.now() - t0) / 1000);
+    if (r.error) {
+      await tell(`context-foundation: ${cannotStart(r)}`, "error");
+      return;
+    }
+    if (r.code !== 0) {
+      await tell(`context-foundation: ${setupFailureMessage(r.code, readText(log), log)}`, "error");
+      return;
+    }
+    const out = readText(log);
+    const ws = findWorkspace(lastCwd(await session.getEvents()) || process.cwd());
+    const next = ws && existsSync(join(ws, ".cf", "index.db"))
+      ? `この作業フォルダには索引があります(${ws})。検索の道具は、新しいセッションから出ます(動いているセッションには出ません)`
+      : ws
+        ? "次に /context-index を打って、索引を作ってください。できたら、新しいセッションを始めます"
+        : "次に、検索したいフォルダを並べて /context-index を打ち、索引を作ってください(例: /context-index Engine Docs)。" +
+          "できたら、新しいセッションを始めます";
+    await tell(`context-foundation: 用意ができました(${sec} 秒、置き場: ${setupRuntimeFolder(out) || home})。` +
+      (model ? "" : "モデルは取っていないので、検索は keyword だけです。") + next);
+  } finally {
+    running = null;
+  }
+}
+
 const commands = [
+  {
+    name: "context-setup",
+    description: "[no-model] [gpu | cpu] — この PC の検索の用意(context-foundation)。Python のパッケージ約 200 MB と埋め込みモデル約 490 MB を入れる。初めに 1 回。裏で動かす(モデルは呼ばない)",
+    handler: (ctx) => {
+      setupCommand(ctx).catch((err) => tell(`context-foundation: ${err?.message ?? err}`, "error"));
+    },
+  },
   {
     // 拡張のコマンドには引数のヒントを付けられないので、説明文の先頭に引数を書く
     name: "context-index",

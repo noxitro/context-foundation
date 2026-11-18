@@ -200,7 +200,8 @@ def cmd_model(args) -> int:
         return EXIT_USAGE
     if args.action == "download":
         try:
-            folder = download_model(spec, log=print)
+            # すぐ書き出す(/context-setup は、ファイルに書かれたこの行で、取得の段階を知る)
+            folder = download_model(spec, log=lambda s: print(s, flush=True))
         except ModelUnavailable as e:
             sys.stderr.write(f"{e}\n")
             return EXIT_USAGE
