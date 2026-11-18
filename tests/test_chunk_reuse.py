@@ -111,9 +111,10 @@ def test_same_size_and_mtime_but_different_text_is_rechunked(tmp_path, corpus_co
     _build(ws, corpus_copy)
     p = corpus_copy / "engine" / "Core" / "JobScheduler.cpp"
     st = p.stat()
-    text = p.read_text(encoding="utf-8")
-    assert "victim" in text
-    p.write_text(text.replace("victim", "VICTIM"), encoding="utf-8")       # 同じ長さ
+    data = p.read_bytes()
+    assert b"victim" in data
+    # バイトのまま書く(write_text は Windows で改行を CRLF にして、大きさが変わる)
+    p.write_bytes(data.replace(b"victim", b"VICTIM"))                      # 同じ長さ
     os.utime(p, ns=(st.st_atime_ns, st.st_mtime_ns))
     assert p.stat().st_size == st.st_size and p.stat().st_mtime_ns == st.st_mtime_ns
     r = _build(ws, corpus_copy)
