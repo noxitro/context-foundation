@@ -253,7 +253,7 @@ def cmd_wizard(args) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    ap = argparse.ArgumentParser(prog="ctxf", description="コードと設計文書から、自然文の質問で根拠の箇所を探す検索の PoC",
+    ap = argparse.ArgumentParser(prog="ctxf", description="コードと設計文書から、自然文の質問で根拠の箇所を探す検索の道具",
                                  allow_abbrev=False)
     ap.add_argument("--version", action="version", version=f"context-foundation {__version__}")
     sub = ap.add_subparsers(dest="cmd", required=True, metavar="<コマンド>")
