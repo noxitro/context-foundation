@@ -233,6 +233,46 @@ def test_setup_done_says_a_new_session_is_needed(monkeypatch, tmp_path, capsys):
     assert "new session" in ctxf.not_ready_message("not set up")
 
 
+def test_setup_does_not_download_the_model_and_says_it_is_not_installed(monkeypatch, tmp_path, capsys):
+    """埋め込みモデル(PyPI の外の OSS)は、setup では取得しない。無ければ、そう知らせ、入手先と取得のコマンドを出す。"""
+    ctxf = load_launcher(monkeypatch, tmp_path / "home")
+    ctxf._write_stamp(ctxf.dependencies(), gpu=False)
+    monkeypatch.setattr(ctxf, "_venv_python", lambda venv: "py")
+    monkeypatch.setattr(ctxf, "_healthy", lambda py, check: True)
+    started = []
+    monkeypatch.setattr(ctxf.subprocess, "call", lambda cmd, *a, **k: started.append(cmd) or 0)
+    monkeypatch.setattr(ctxf, "_setup_model_info", lambda py: {
+        "state": "missing", "name": "intfloat/multilingual-e5-small", "license": "MIT", "size_mb": 487,
+        "url": "https://huggingface.co/intfloat/multilingual-e5-small", "folder": "/m", "own_folder": False})
+    assert ctxf._setup([]) == 0
+    out = capsys.readouterr().out
+    assert not any("download" in map(str, cmd) for cmd in started), started
+    assert "embedding model: not installed (intfloat/multilingual-e5-small, license MIT, about 487 MB" in out
+    assert "https://huggingface.co/intfloat/multilingual-e5-small" in out and "keyword-only" in out
+    assert 'ctxf.py" model download' in out and "Setup is done" in out
+
+
+def test_setup_model_report_for_each_state(monkeypatch, tmp_path):
+    ctxf = load_launcher(monkeypatch, tmp_path / "home")
+    assert ctxf.model_report({"state": "installed", "name": "m", "folder": "/m"}).strip() == \
+        "embedding model: installed (m, /m)"
+    assert "not used" in ctxf.model_report({"state": "off", "config": "/w/.cf/config.toml"})
+    assert "model info" in ctxf.model_report({"state": "unknown", "error": "x"})
+    own = ctxf.model_report({"state": "missing", "name": "m", "license": "", "folder": "/mine", "own_folder": True})
+    assert "not installed" in own and "model_dir: /mine" in own and "put the model files" in own
+    assert "model download" not in own
+
+
+def test_setup_model_check_runs_without_downloading(monkeypatch, tmp_path, outside_any_workspace):
+    """setup が仮想環境の python で動かす確認(MODEL_SETUP_CHECK)は、モデルの有無を読むだけ。"""
+    ctxf = load_launcher(monkeypatch, tmp_path / "home")
+    monkeypatch.setenv("CF_MODEL_CACHE", str(tmp_path / "no-models"))
+    info = ctxf._setup_model_info(sys.executable)
+    assert info["state"] == "missing" and info["name"] == "intfloat/multilingual-e5-small", info
+    assert info["license"] == "MIT" and info["url"].startswith("https://huggingface.co/") and info["size_mb"] > 400
+    assert not (tmp_path / "no-models").exists()
+
+
 def test_messages_name_a_runnable_command_when_started_through_the_launcher(tmp_path, outside_any_workspace):
     plugin = plugin_copy(tmp_path, with_src=True)
     entry = f'python -I "{plugin / "ctxf.py"}"'

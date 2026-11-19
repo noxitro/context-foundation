@@ -17,6 +17,41 @@
   固定します([docs/copilot.md](docs/copilot.md) の「チームの Marketplace
   に載せる」)
 
+## 0.4.8(2026-11-19)
+
+埋め込みモデル(Hugging Face の OSS)を、利用者の PC に自動では入れない
+ようにしました。pip のパッケージは、これまでどおり setup が入れます。
+検索の順位の付け方、索引の形式、MCP の道具と検索の出力は変えていません。
+
+- モデルは PyPI の外から取得する OSS で、使ってよいかは利用する環境
+  (ライセンス、利用の条件、ネットワーク)で確かめる必要がある。
+  これまでは `ctxf.py setup`・`/context-setup` が既定で取得し、
+  `setup.bat`・`index.bat` は取得するかを尋ねていた(既定は「はい」)
+- `ctxf.py setup`・`/context-setup` は、Python のパッケージだけを入れ、
+  終わりに「embedding model: not installed」と、モデルの名前・ライセンス・
+  大きさ・入手先・取得のコマンド(`ctxf.py model download`)を出す。
+  入っていれば「embedding model: installed」。`--no-model` は、この知らせも
+  出さない指定になった(前の版の指定のままでも動く)
+- `setup.bat`・`index.bat` は、取得するかを尋ねず、「埋め込みモデルが
+  インストールされていません」と、入手先と取得のコマンドを出す
+- モデルが無いときの文面(索引づくり・検索の note・`where`)も、
+  「インストールされていません。入手先とライセンスを確かめてから
+  `model download`」に変えた
+- skill に、エージェントが `model download`・`index --download` を自分では
+  動かさず、インストールされていないことを利用者に伝えるよう書いた
+- 取得は、利用者が自分で `model download`(か `index --download`)を
+  実行したときだけ。CI の smoke test は、setup の後に `model download` を
+  流す
+
+### 更新のあとにすること
+
+1. **setup のやり直しと、索引の作り直しは要りません**(入っているモデルは
+   そのまま使えます)
+2. `copilot plugin update context-foundation` で更新し、新しいセッションを
+   始めます
+3. 新しい PC で意味での検索を使うときは、setup の後に、入手先とライセンスを
+   確かめてから `python -I "<…>\ctxf.py" model download` を実行します
+
 ## 0.4.7(2026-11-19)
 
 索引の無い作業フォルダで、MCP サーバーが道具を出さないようにしました。

@@ -1,6 +1,6 @@
 """プラグインとして入れた人の道筋を、まっさらな環境で通しで確かめる(CI から呼ぶ。手元でも動く)。
 
-  setup(利用者ごとの置き場に仮想環境とモデル)→ init → index → search → eval → MCP サーバー → 始めの 1 文
+  setup(利用者ごとの置き場に仮想環境。モデルは取得しない)→ model download → init → index → search → eval → MCP サーバー → 始めの 1 文
   → /context-index・/context-setup(Copilot CLI の拡張。node があるときだけ。SDK は偽物に差し替える)
 
 テスト(pytest)は、埋め込みモデルの実物を使わない。ここでは、実物のモデルを取得して、テスト用の小さな
@@ -98,7 +98,14 @@ def main() -> int:
 
     if "--skip-setup" not in sys.argv:
         p = run([*ctxf, "setup"], env=env)
-        check(p.returncode == 0, "setup が、仮想環境と埋め込みモデルを用意する", p.stdout + p.stderr)
+        models = Path(env["CF_HOME"]) / "models"
+        had_model = models.is_dir() and any(models.rglob("*.onnx"))      # CI のキャッシュから戻したもの
+        check(p.returncode == 0 and "Python packages:" in p.stdout
+              and ("embedding model: installed" if had_model else "embedding model: not installed") in p.stdout,
+              "setup が仮想環境を用意し、埋め込みモデルは取得せずに有無を知らせる", p.stdout + p.stderr)
+        # モデルは、利用者が確かめたうえで自分で取得するもの。ここでは、その手順(model download)を流す
+        p = run([*ctxf, "model", "download"], env=env)
+        check(p.returncode == 0, "model download が、埋め込みモデルを取得する", p.stdout + p.stderr)
     p = run([*ctxf, "where"], env=env)
     check(p.returncode == 0 and "(runtime)" in p.stdout, "入口が、利用者ごとの置き場の仮想環境を使う", p.stdout)
 
