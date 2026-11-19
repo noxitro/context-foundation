@@ -218,15 +218,20 @@ def test_identifier_cache_gives_the_same_tokens():
     texts = [p.read_text(encoding="utf-8") for p in sorted(CORPUS.rglob("*")) if p.is_file()
              and p.suffix in (".cpp", ".h", ".cs", ".md")]
     texts += ["GetBufferPool get_buffer_pool HTTPServer2Config __init__ x86_64 " + "A" * 100]
-    textproc._identifier_tokens_cached.cache_clear()
+    textproc._identifier_tokens_lru.cache_clear()
     uncached = [[t for m in textproc._RUN.finditer(s) for t in (
         textproc._cjk_tokens(m.group(0)) if textproc._CJK.match(m.group(0))
         else textproc._identifier_tokens(m.group(0)) if m.group(0)[0].isascii()
         else [m.group(0).lower()[:textproc.MAX_TOKEN_LEN]])] for s in texts]
     assert [textproc.tokenize(s) for s in texts] == uncached
     assert [textproc.tokenize(s) for s in texts] == uncached        # 覚えた後も同じ
-    info = textproc._identifier_tokens_cached.cache_info()
+    info = textproc._identifier_tokens_lru.cache_info()
     assert info.hits > 0 and info.maxsize == textproc.IDENTIFIER_CACHE_SIZE
+    # 長い連なりは覚えない(出す語は同じ)
+    long_run = "Ab" * textproc.IDENTIFIER_CACHE_MAX_LEN
+    before = textproc._identifier_tokens_lru.cache_info().currsize
+    assert textproc.tokenize(long_run) == textproc._identifier_tokens(long_run)
+    assert textproc._identifier_tokens_lru.cache_info().currsize == before
     # 覚えた結果を書き換えられない(呼び出し側が list を変えても、次の結果に響かない)
     out = textproc.tokenize("GetBufferPool")
     out.append("x")

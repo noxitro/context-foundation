@@ -1,8 +1,8 @@
 // /context-index と /context-setup の、Copilot の SDK に依らない部分(テストできるように分けた。lib.test.mjs を
 // tests/test_plugin.py が node --test で流す)。出し方(makeNotifier など)は cxxref の拡張と同じ作り。
-import { existsSync, readdirSync, realpathSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, resolve, win32 } from "node:path";
+import { basename, dirname, join, resolve, win32 } from "node:path";
 
 export const USAGE = "使い方: /context-index [full] [<フォルダ> ...]";
 export const SETUP_USAGE = "使い方: /context-setup [no-model] [gpu | cpu]";
@@ -27,11 +27,65 @@ export function lastCwd(events) {
   return cwd;
 }
 
-// 作業フォルダから親へさかのぼって、設定(.cf\config.toml)のあるフォルダ。無ければ ""(ctxf.py の find_config と同じ探し方)
-export function findWorkspace(start) {
+// 設定ファイル(config.toml)のパス。無ければ ""。ctxf.py の find_config と同じ探し方で、MCP サーバーや検索と
+// 同じ設定を選ぶ: 環境変数 CF_CONFIG があればそれ(ファイルか、config.toml か .cf\config.toml を持つフォルダ。
+// 指す先に無ければ例外)、無ければ作業フォルダから親へさかのぼって、最初の .cf\config.toml
+export function findConfig(start, env = {}) {
+  const explicit = env.CF_CONFIG;
+  if (explicit) {
+    const p = resolve(explicit.replace(/^~(?=$|[\\/])/, () => homedir()));
+    if (isFile(p)) return p;
+    if (isDir(p)) {
+      for (const cand of [join(p, "config.toml"), join(p, ".cf", "config.toml")]) {
+        if (isFile(cand)) return cand;
+      }
+    }
+    throw new Error(`環境変数 CF_CONFIG の指す設定ファイルが見つかりません: ${explicit}`);
+  }
   for (let d = resolve(start); ; d = dirname(d)) {
-    if (existsSync(join(d, ".cf", "config.toml"))) return d;
+    const cand = join(d, ".cf", "config.toml");
+    if (isFile(cand)) return cand;
     if (dirname(d) === d) return "";
+  }
+}
+
+// 設定ファイルから見た作業フォルダ(.cf の親。.cf の中に無い設定なら、設定のあるフォルダ。config.py と同じ)
+export function workspaceOf(config) {
+  const dir = dirname(config);
+  return basename(dir) === ".cf" ? dirname(dir) : dir;
+}
+
+// 設定の [index] path から、索引のファイルのパス(設定のあるフォルダからの相対。既定は index.db)。
+// text は設定ファイルの中身(省けば読む)。TOML を全部は読まず、[index] の表の path = "…" か '…' の行だけを見る。
+// 読めなければ既定の名前(誤りは ctxf.py が設定を読むときに出す)
+export function indexFile(config, text) {
+  if (text === undefined) {
+    try {
+      text = readFileSync(config, "utf8");
+    } catch {
+      text = "";
+    }
+  }
+  let table = "";
+  let name = "";
+  for (const line of text.split(/\r?\n/)) {
+    const head = /^\s*\[\s*([^\[\]]+?)\s*\]\s*(#.*)?$/.exec(line);
+    if (head) {
+      table = head[1];
+      continue;
+    }
+    if (table !== "index") continue;
+    const m = /^\s*path\s*=\s*(?:"((?:[^"\\]|\\.)*)"|'([^']*)')\s*(#.*)?$/.exec(line);
+    if (m) name = m[1] !== undefined ? m[1].replace(/\\(["\\])/g, "$1") : m[2];
+  }
+  return join(dirname(config), name || "index.db");
+}
+
+function isFile(p) {
+  try {
+    return statSync(p).isFile();
+  } catch {
+    return false;
   }
 }
 
@@ -50,21 +104,26 @@ export function parseIndexArgs(arg) {
   return { full, folders: full ? words.slice(1) : words };
 }
 
-// 何をするか。{ action: "index", workspace, full } か { action: "init", workspace, folders, full } か
-// { action: "choose", workspace, full } か { error }。
-// - 作業フォルダか親に設定があれば、その索引を作り直す(フォルダを並べたら断る。設定を黙って書き換えない)
+// 何をするか。{ action: "index", workspace, config, full } か { action: "init", workspace, folders, full } か
+// { action: "choose", workspace, full } か { error }。config は設定ファイルのパス(findConfig。env は環境変数)。
+// - 設定があれば(CF_CONFIG か、作業フォルダか親)、その索引を作り直す(フォルダを並べたら断る。設定を黙って書き換えない)
 // - 無ければ、並べたフォルダで作業フォルダに設定を作ってから索引を作る。並べていなければ、フォルダを選ばせる(choose)
-export function planIndex(arg, cwd) {
+export function planIndex(arg, cwd, env = {}) {
   const { full, folders } = parseIndexArgs(arg);
-  const ws = findWorkspace(cwd);
-  if (ws) {
+  let config;
+  try {
+    config = findConfig(cwd, env);
+  } catch (err) {
+    return { error: `${err.message}(CF_CONFIG を外すか、指す先を直してください)` };
+  }
+  if (config) {
     if (folders.length) {
       return {
-        error: `設定がすでにあります(${join(ws, ".cf", "config.toml")})。フォルダを並べずに /context-index と打つと、` +
+        error: `設定がすでにあります(${config})。フォルダを並べずに /context-index と打つと、` +
           "その設定で索引を作り直します。検索するフォルダを変えるなら、設定ファイルの [[source]] を直してください",
       };
     }
-    return { action: "index", workspace: ws, full };
+    return { action: "index", workspace: workspaceOf(config), config, full };
   }
   if (!folders.length) return { action: "choose", workspace: resolve(cwd), full };
   const missing = folders.map((f) => resolve(cwd, f)).filter((p) => !isDir(p));
@@ -248,13 +307,13 @@ export function progressNote(prev, snap, now, elapsedSec, minGap = 10000) {
 }
 
 // index が 0 以外で終わったときの文(終了コードは readme-ja.md の「コマンド」・docs/copilot.md の「索引を更新する」)。
-// out はログの中身、log はログのパス、setup は用意のやり直し方(既定のコマンド)
-export function failureMessage(code, out, log, setup) {
+// out はログの中身、log はログのパス、setup は用意のやり直し方(既定のコマンド)、index は索引のファイル(indexFile)
+export function failureMessage(code, out, log, setup, index = ".cf\\index.db") {
   const tail = logTail(out);
   const more = tail ? `\n${tail}` : "";
   switch (code) {
     case 1:
-      return "索引を置き換えられませんでした(この索引で検索しているプログラムが開いている)。できあがった索引は .cf\\index.db.new に" +
+      return `索引を置き換えられませんでした(この索引で検索しているプログラムが開いている)。できあがった索引は ${index}.new に` +
         `残したので、少し待ってからもう一度 /context-index を打つと、そこから使い回します。ログ: ${log}${more}`;
     case 2:
       return `索引を作れませんでした(設定の誤り・フォルダが無い・入るファイルが無い・モデルを読めないなど)。前の索引はそのまま使えます。ログ: ${log}${more}`;
