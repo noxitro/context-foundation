@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   chooseFallback, dataHome, escapeMarkdown, failureMessage, findWorkspace, folderChoices, folderSchema, hasLocalVenv, MAX_FOLDER_CHOICES, pickedFolders, WHOLE_WORKSPACE, initSources, joinOptions, keywordOnly, lastCwd, loadSdk, logTail,
-  makeNotifier, parseIndexArgs, parseProgress, parseSetupArgs, parseSetupProgress, planIndex, pluginRoot, progressNote, repairCommand,
+  makeNotifier, modelMissing, parseIndexArgs, parseProgress, parseSetupArgs, parseSetupProgress, planIndex, pluginRoot, progressNote, repairCommand,
   SDK_NAMES, SETUP_HELP, setupFailureMessage, setupProgressNote, setupRuntimeFolder, splitArgs, wantDialog,
 } from "./lib.mjs";
 
@@ -194,16 +194,16 @@ test("hasLocalVenv は、プラグインの隣の .venv を見る", () => {
   assert.equal(hasLocalVenv(root), true);
 });
 
-// ctxf.py setup のログの形(_setup の _say と、model download の行。Copilot CLI 1.0.114 の /context-setup で書かれたもの)
+// ctxf.py setup のログの形(_setup の _say と model_report の行)。setup は埋め込みモデルを取得しない
 const SETUP_LINES = [
   "== context-foundation setup",
   "  runtime folder: C:\\cf\\runtime",
   "  creating the virtual environment ...",
   "  installing the Python packages from PyPI (about 200 MB the first time) ...",
   "  Python packages: installed",
-  "  embedding model: checking (downloads about 490 MB the first time) ...",
-  "取得します: intfloat/multilingual-e5-small onnx/model.onnx (約 470 MB)",
-  "取得します: intfloat/multilingual-e5-small tokenizer.json (約 17 MB)",
+  "  embedding model: not installed (intfloat/multilingual-e5-small, license MIT, about 487 MB, from https://huggingface.co/intfloat/multilingual-e5-small)",
+  "    Setup does not install it: it is open-source software from outside PyPI, and whether it may be used depends on this PC's environment (licence, terms of use, network). Search is keyword-only (BM25) until it is installed.",
+  '    To use it, check the model\'s source and licence, then run: python -I "C:\\p\\ctxf.py" model download',
 ];
 
 test("parseSetupProgress は setup のログの最後の段階を返す", () => {
@@ -212,16 +212,23 @@ test("parseSetupProgress は setup のログの最後の段階を返す", () => 
   assert.deepEqual(upto(3), { phase: "venv" });
   assert.deepEqual(upto(4), { phase: "packages" });
   assert.deepEqual(upto(5), { phase: "packaged" });
-  assert.deepEqual(upto(6), { phase: "model" });
-  assert.deepEqual(upto(7), { phase: "download", file: "onnx/model.onnx" });
-  assert.deepEqual(upto(8), { phase: "download", file: "tokenizer.json" });
-  assert.deepEqual(parseSetupProgress([...SETUP_LINES, "モデルを置きました: C:\\m", "Setup is done. Next, ..."].join("\n")),
-    { phase: "done" });
+  assert.deepEqual(upto(8), { phase: "packaged" });  // モデルの有無を出すだけで、取得の段階は無い
+  assert.deepEqual(parseSetupProgress([...SETUP_LINES, "Setup is done. Next, ..."].join("\n")), { phase: "done" });
   assert.equal(setupRuntimeFolder(SETUP_LINES.join("\n")), "C:\\cf\\runtime");
   assert.equal(setupRuntimeFolder("nothing"), "");
 });
 
-test("setupProgressNote は段階か取得するファイルが変わったとき・同じ段階が 1 分続くたびに出す", () => {
+test("modelMissing は、setup のログから埋め込みモデルが無いことと、利用者が自分で取得するコマンドを読む", () => {
+  assert.deepEqual(modelMissing(SETUP_LINES.join("\r\n")), { command: 'python -I "C:\\p\\ctxf.py" model download' });
+  const ownFolder = "  embedding model: not installed (m, license unknown, in the folder set by [embedding] model_dir: D:\\m)\n" +
+    "    Setup does not install it: ...\n    To use it, put the model files in that folder.\n";
+  assert.deepEqual(modelMissing(ownFolder), { command: "" });
+  assert.equal(modelMissing("  embedding model: installed (m, C:\\m)\n"), null);
+  assert.equal(modelMissing("  embedding model: not used (embedding is off in C:\\w\\.cf\\config.toml)\n"), null);
+  assert.equal(modelMissing(""), null);
+});
+
+test("setupProgressNote は段階が変わったとき・同じ段階が 1 分続くたびに出す", () => {
   let r = setupProgressNote({}, { phase: "start" }, 0, 0);
   assert.equal(r.note, "");  // 始めてすぐは出さない
   assert.equal(setupProgressNote(r.state, { phase: "start" }, 61000, 61).note, "context-foundation: 準備しています(61 秒)");
@@ -229,11 +236,8 @@ test("setupProgressNote は段階か取得するファイルが変わったと�
   assert.equal(r.note, "context-foundation: Python のパッケージを PyPI から入れています(初めては約 200 MB、5 秒)");
   assert.equal(setupProgressNote(r.state, { phase: "packages" }, 30000, 30).note, "");
   assert.match(setupProgressNote(r.state, { phase: "packages" }, 66000, 66).note, /約 200 MB、66 秒\)$/);
-  r = setupProgressNote(r.state, { phase: "download", file: "onnx/model.onnx" }, 70000, 70);
-  assert.equal(r.note, "context-foundation: 埋め込みモデルを Hugging Face から取得しています(onnx/model.onnx、70 秒)");
-  assert.equal(setupProgressNote(r.state, { phase: "download", file: "onnx/model.onnx" }, 120000, 120).note, "");
-  assert.match(setupProgressNote(r.state, { phase: "download", file: "onnx/model.onnx" }, 131000, 131).note, /131 秒/);
-  assert.match(setupProgressNote(r.state, { phase: "download", file: "tokenizer.json" }, 82000, 82).note, /tokenizer\.json、82 秒/);
+  r = setupProgressNote(r.state, { phase: "packaged" }, 70000, 70);
+  assert.equal(r.note, "context-foundation: Python のパッケージが入りました(70 秒)");
   assert.equal(setupProgressNote(r.state, { phase: "done" }, 83000, 83).note, "");
 });
 
