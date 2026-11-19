@@ -1,7 +1,7 @@
 # Evaluation data specification
 
 This specification defines a repeatable, corpus-independent format for
-comparing an existing search workflow with a retrieval proof of concept.
+comparing an existing search workflow with a retrieval tool.
 
 Do not store the questions, annotations, file paths, source content, or run
 results of a private corpus in this public repository. Keep those evaluation
@@ -40,7 +40,7 @@ Rules:
 
 - A method name that starts with `agent_` is an agent method. Every other
   method is retrieval only: it returns ranked passages and writes no answer.
-- The agent host for this proof of concept is GitHub Copilot CLI.
+- The agent host for this tool is GitHub Copilot CLI.
 - `agent_grep` is the baseline. It is the candidate with the search tool
   removed and nothing else changed.
 - Instruction files that the agent host loads from the workspace
@@ -146,7 +146,7 @@ Guidance on counts, for the held-out questions:
 
 - Write at least three questions in every category, and at least two in
   `unanswerable`, so that the per-category breakdown means something.
-- Give the largest share to the categories the proof of concept is for:
+- Give the largest share to the categories the tool is for:
   `natural_language_only`, `doc_to_code` and `code_to_doc`.
 - Keep `identifier_known` small. Its job is to show that the new tool does
   not make the already-solved case worse.
@@ -317,7 +317,7 @@ evidence moved, and compare answer correctness as well as hit rates.
 
 ## Why built-in semantic search is not the default
 
-The proof of concept targets GitHub Copilot CLI and the GitHub Copilot app
+The tool targets GitHub Copilot CLI and the GitHub Copilot app
 first, and corpora that are not hosted on GitHub and must stay on the local
 machine. Checked on 2026-11-16:
 
@@ -339,7 +339,7 @@ machine. Checked on 2026-11-16:
   <https://code.visualstudio.com/docs/agents/reference/workspace-context>
 
 So the options found either are not documented for the first target
-surfaces or send files to an external service. This proof of concept
+surfaces or send files to an external service. This tool
 computes embeddings locally instead and measures whether that is worth it.
 
 ## Decision thresholds

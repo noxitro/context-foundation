@@ -10,25 +10,27 @@ analysis.
 
 日本語の説明(目的・導入・使い方)は [readme-ja.md](readme-ja.md) にあります。
 
-## Initial plan
+## How it was built
 
-1. **Define the scope and evaluation.** Select one corpus and prepare 20–30
+1. **Define the scope and evaluation.** Select a corpus and prepare 20–30
    representative questions. Annotate the relevant files and line ranges for
    each question, then record results from the existing search workflow,
    including task time and answer quality.
-2. **Build a retrieval-only proof of concept.** Ingest code and documents and
-   return ranked passages with file paths, line ranges, and supporting text.
-   Preserve syntactic units when chunking code and use document headings as
-   chunk boundaries. Compare keyword and semantic retrieval before committing
-   to an embedding model or vector database.
+2. **Build retrieval only.** Ingest code and documents and return ranked
+   passages with file paths, line ranges, and supporting text. Preserve
+   syntactic units when chunking code and use document headings as chunk
+   boundaries. Compare keyword and semantic retrieval before committing to an
+   embedding model or vector database.
 3. **Provide a read-only agent interface.** Expose retrieval to the agent
    without giving it anything else to do. Leave answer generation and code
-   changes to the agent. Every build re-chunks all files; embeddings of
+   changes to the agent. Every build re-chunks changed files; embeddings of
    unchanged passages are reused from the previous index.
-4. **Compare and decide whether to continue.** Run the same questions against
-   the existing workflow and the proof of concept. Evaluate evidence found in
-   the top results, answer correctness, task time, search latency, and index
-   creation and update costs.
+4. **Compare with the existing workflow.** Run the same questions against
+   the existing workflow (grep and file reads) and with this tool added.
+   Evaluate evidence found in the top results, answer correctness, task time,
+   search latency, and index creation and update costs. The comparison is
+   made on public C++ game engines (Godot and O3DE); this project does not
+   evaluate on private codebases.
 
 ## Target surfaces
 
@@ -100,9 +102,9 @@ worked example under [`examples/o3de`](examples/o3de/README.md), for a public
 open-source corpus. The example holds questions and the locations of their
 answers, not source text.
 
-## Initial scope boundaries
+## Scope boundaries
 
-The first proof of concept does not include:
+This tool does not include:
 
 - Replacing precise C++ reference analysis such as cxxref
 - A production service shared across multiple repositories
@@ -128,8 +130,10 @@ The first proof of concept does not include:
 
 ## Status
 
-Steps 1 to 3 are implemented as a proof of concept, together with the tools
-for step 4:
+The tool (version 0.4) is past the proof-of-concept stage: it installs as a
+Copilot plugin, sets itself up and builds its index from inside a Copilot CLI
+session, and has been compared with the existing workflow on two public C++
+game engines. It provides:
 
 - the evaluation data format, schemas and validation;
 - ingest, syntax-aware chunking for C, C++ and C# and heading-based chunking
@@ -143,29 +147,42 @@ for step 4:
 - passages without content (an include block, namespace braces, forward
   declarations) are kept out of the semantic ranking;
 - the Copilot plugin and marketplace (MCP server, hook and fallback skill),
-  and registration from a local clone;
+  `/context-setup` and `/context-index` in Copilot CLI, and registration from
+  a local clone;
 - an evaluation runner for the retrieval-only methods and a runner for the
   agent methods.
 
-The comparison (step 4) has been run on a public codebase (Godot) only.
-Neither candidate met the thresholds set beforehand, and the agent with this
-tool did not differ from the grep-only baseline in answer quality, time or
-cost. After that, version 0.3 changed how the search reaches the agent (an
-MCP server instead of the skill). Re-run on the same held-out questions, the
-agent with this tool answered as well as the baseline (75.9% and 74.7% of
-answers acceptable), with a median time 35% lower and a median cost 32%
-lower. With the answer key as written beforehand, both stay below the 80%
-threshold for acceptable answers. A review of that key, made after the
-results by reviewers who had not seen them, removed the points that the
-questions do not ask for; with the reviewed key the figures are 93.1% and
-88.5%, and the agent with this tool meets the thresholds set for it. The
-reviewed key is the one taken for the verdict on Godot. The search-only
-method does not meet its threshold (50% of questions with a relevant passage
-in the top five). The comparison has not been run on a private corpus:
-the retrieval evaluations and the comparisons with the existing workflow
-use the synthetic corpus and public codebases only. Index build time and
-search latency were also measured on part of a larger engine codebase that
-is not public (245,457 passages).
+### Validation on public C++ game engines
+
+The agent with this tool (the current form: an MCP server and a session-start
+hint, since version 0.3) was compared with the same agent using grep and file
+reads only, on held-out questions, three runs per question, with Copilot CLI
+and Claude Haiku 5.5 (answers graded by AI against answer points fixed
+beforehand; 80% acceptable answers is the threshold):
+
+| Engine | Acceptable answers (this tool / grep only) | Median time | Median cost | Verdict |
+| --- | --- | --- | --- | --- |
+| Godot (29 questions) | 93.1% / 88.5% (reviewed key) | 35% lower | 32% lower | Meets the thresholds |
+| O3DE (27 questions, version 0.4.7) | 77.8% / 90.1% | 33% lower | 30% lower | Does not: answers are less complete |
+
+- On both engines the tool cuts time and cost by about a third, and the
+  agent finds the main location as often as with grep. On O3DE it more often
+  answers from the returned passages without opening the file, and misses a
+  related point nearby (see [examples/o3de](examples/o3de/README.md)).
+- On Godot, the answer key as written beforehand puts both methods below 80%
+  (75.9% and 74.7%); a review of the key made after the results, by reviewers
+  who had not seen them, gives the figures above, and is the one taken for
+  the verdict. An earlier form (the skill, up to version 0.2) showed no gain
+  on either engine.
+- Searching alone, with the question as the query, does not meet its
+  threshold: a relevant passage is in the top five for 50% (Godot) and 54%
+  (O3DE) of questions. Search latency is well within the three-second
+  threshold, including on part of a larger engine codebase that is not
+  public (245,457 passages).
+- The evaluation is limited to public C++ engines, which the model partly
+  remembers (an advantage for grep), to one model, and to AI grading.
+  Private codebases are not evaluated by this project.
+
 What has been measured so far, and what has not, is listed in
 [docs/benchmarks.md](docs/benchmarks.md) (in Japanese).
 
@@ -182,8 +199,9 @@ Windows, building and rebuilding the index worked with no model calls.
 Version 0.4.3 adds `/context-setup`; in Copilot CLI 1.0.114 on Windows, the
 setup and the first index worked from inside one session with no model
 calls. Version 0.4.4 lets the first `/context-index` without folders show a
-checklist of the workspace's folders to pick from. Neither command has been
-tried in the app yet.
+checklist of the workspace's folders to pick from. Version 0.4.7 stops the
+MCP server from offering its tools in workspaces without an index. Neither
+command has been tried in the app yet.
 
 ## Supported environments
 

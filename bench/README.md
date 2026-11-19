@@ -143,7 +143,15 @@ BYOK のときは AI credits が記録されないので、`--price` で単価�
   無視します)
 - 1 回ごとの結果は、モデルの気まぐれで変わります。1 問 3 回でも、小さな
   差は読み取れません
-- 確かめたのは、Copilot CLI 1.0.112 と Claude Haiku 5.5(BYOK)、合成の
-  コーパスでの 5 回だけです。`agent_grep_cxxref` は、実行していません。
-  `--no-custom-instructions` を付けた実行も、していません(`--dry-run` で、
-  オプションが渡ることだけを確かめました)
+- `agent_cf` は、この道具を置いたフォルダも、エージェントが読める場所
+  として渡します(skill が検索の CLI を呼ぶため)。そのフォルダに質問や
+  正解があると、エージェントから読めます。このリポジトリには、公開の
+  評価例(`examples/o3de`)が入っています。その質問で測るときは、
+  評価例とテストを除いた写しから動かしてください(`git archive` で
+  書き出して、`examples` と `tests` を消す)
+- 確かめたのは、Copilot CLI 1.0.112 と Claude Haiku 5.5(BYOK)です。
+  合成のコーパスでの 5 回のほかに、公開されているコード 2 つで、
+  `agent_grep` と `agent_cf` を流しました
+  ([計測の一覧](../docs/benchmarks.md))。`--no-custom-instructions` を
+  付けた実行は、そのうちの O3DE での 166 回です。`agent_grep_cxxref` は、
+  実行していません
