@@ -5,6 +5,7 @@
 # (CI の package の job が、sdist の中身と git で追跡しているファイルの食い違いで落ちる)。
 include ctxf.py plugin.json mcp.json README.md readme-ja.md CHANGELOG.md LICENSE *.bat
 include docs/benchmarks.md docs/comparison-runbook.md docs/copilot.md docs/design.md docs/evaluation-data-spec.md
+include docs/production.md
 include bench/README.md bench/agent_run.py bench/answer-format.txt
 include examples/o3de/README.md examples/o3de/cases.jsonl examples/o3de/config.example.toml
 include skills/context-search/SKILL.md skills/context-search/ctxf.py
