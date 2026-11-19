@@ -54,12 +54,18 @@ grepping, only in workspaces that have an index. A **skill**
 as a fallback for when the MCP tools are not available. A Copilot CLI
 **extension** adds two slash commands that the user types and that run in
 the background without calling the model: `/context-setup` installs the
-Python dependencies and the embedding model, and `/context-index` builds or
+Python dependencies, and `/context-index` builds or
 updates the index (extensions are experimental in Copilot CLI and load after
 `/settings experimental on`). Python dependencies
 (about 200 MB) and the embedding model (about 490 MB) live outside the
-plugin, in a per-user folder that `/context-setup` (or
-`python -I ctxf.py setup`) fills once. With these, everything from installing
+plugin, in a per-user folder. `/context-setup` (or `python -I ctxf.py setup`)
+installs the Python dependencies once. It does not install the embedding
+model: the model is open-source software from outside PyPI (Hugging Face),
+and whether it may be used depends on the user's environment (licence,
+terms of use, network). Setup only reports that the model is not installed,
+with its source and licence; after checking, the user runs
+`python -I ctxf.py model download` themselves. Without the model, search is
+keyword-only. With these, everything from installing
 the plugin (`/plugin install`) to building the index can be done inside a
 Copilot CLI session.
 Until version 0.2 the skill was the default; why the MCP server replaced it

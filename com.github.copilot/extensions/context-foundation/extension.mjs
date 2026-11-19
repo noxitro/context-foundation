@@ -11,7 +11,7 @@
 //     裏で動かし、走っている間は進み具合をときどき出し、終わったらそう出す。ログは .cf\context-index.log。
 //
 // /context-setup [no-model] [gpu | cpu]
-//     この PC の用意(ctxf.py setup。Python のパッケージ約 200 MB と、埋め込みモデル約 490 MB を、利用者ごとの置き場に
+//     この PC の用意(ctxf.py setup。Python のパッケージ約 200 MB を、利用者ごとの置き場に
 //     入れる)をする。利用者が打つコマンドなので、打ったことを同意とみなす(エージェントからは呼べない)。
 //     済んでいれば、確かめるだけで終わる。リポジトリを取得して隣に .venv がある人は、setup.bat を案内して何もしない。
 //     裏で動かし、進み具合をときどき出す。ログは利用者ごとの置き場の context-setup.log。
@@ -26,7 +26,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   chooseFallback, dataHome, failureMessage, findConfig, folderChoices, folderSchema, hasLocalVenv, indexFile, initSources, joinOptions,
-  keywordOnly, lastCwd, loadSdk, makeNotifier, parseProgress, parseSetupArgs, parseSetupProgress, pickedFolders, planIndex,
+  keywordOnly, lastCwd, loadSdk, makeNotifier, modelMissing, parseProgress, parseSetupArgs, parseSetupProgress, pickedFolders, planIndex,
   pluginRoot, progressNote, SETUP_HELP, setupFailureMessage, setupProgressNote, setupRuntimeFolder, workspaceOf,
 } from "./lib.mjs";
 
@@ -216,9 +216,8 @@ async function setupCommand(ctx) {
     mkdirSync(home, { recursive: true });
     const log = join(home, "context-setup.log");
     const t0 = Date.now();
-    const model = !opts.args.includes("--no-model");
     await tell("context-foundation: 用意(setup)を始めました。" +
-      `Python のパッケージ(PyPI から約 200 MB)${model ? "と、埋め込みモデル(Hugging Face から約 490 MB)" : ""}を、${home} に入れます。` +
+      `Python のパッケージ(PyPI から約 200 MB)を、${home} に入れます(埋め込みモデルは入れません)。` +
       "初めては数分かかります(済んでいれば、確かめるだけで終わります)。裏で動かすので、作業を続けてかまいません。" +
       `ログ: ${log}`);
     const stop = watchProgress(log, t0, parseSetupProgress, setupProgressNote);
@@ -246,8 +245,15 @@ async function setupCommand(ctx) {
         ? "次に /context-index を打って、索引を作ってください。できたら、新しいセッションを始めます"
         : "次に /context-index を打ち、索引に入れるフォルダを選んでください(並べて打っても構いません。例: /context-index Engine Docs)。" +
           "できたら、新しいセッションを始めます";
+    // 埋め込みモデル(PyPI の外の OSS)は、利用者の環境で確かめてから入れるものなので、入れずに、無いことを知らせる
+    const missing = modelMissing(out);
+    const modelNote = !missing ? ""
+      : "埋め込みモデルはインストールされていません(Hugging Face の OSS なので、setup では入れません)。" +
+        "意味での検索には要ります。入手先とライセンスを確かめ、この PC で使ってよければ、" +
+        (missing.command ? `ターミナルで次を実行してください: ${missing.command}\n` : "設定の model_dir のフォルダにモデルを置いてください。\n") +
+        "入れるまでは、検索は keyword だけです。\n";
     await tell(`context-foundation: 用意ができました(${sec} 秒、置き場: ${setupRuntimeFolder(out) || home})。` +
-      (model ? "" : "モデルは取っていないので、検索は keyword だけです。") + next);
+      modelNote + next);
   } finally {
     running = null;
   }
@@ -256,7 +262,7 @@ async function setupCommand(ctx) {
 const commands = [
   {
     name: "context-setup",
-    description: "[no-model] [gpu | cpu] — この PC の検索の用意(context-foundation)。Python のパッケージ約 200 MB と埋め込みモデル約 490 MB を入れる。初めに 1 回。裏で動かす(モデルは呼ばない)",
+    description: "[no-model] [gpu | cpu] — この PC の検索の用意(context-foundation)。Python のパッケージ約 200 MB を入れる(埋め込みモデルは入れず、有無を知らせる)。初めに 1 回。裏で動かす(モデルは呼ばない)",
     handler: (ctx) => {
       setupCommand(ctx).catch((err) => tell(`context-foundation: ${err?.message ?? err}`, "error"));
     },

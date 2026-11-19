@@ -1,6 +1,6 @@
 """.bat から呼ぶ、対話の形(日本語)。ダブルクリックで使う人のためのもの。
 
-  wizard setup   初回の用意の続き(埋め込みモデルを取得するかを尋ねる)
+  wizard setup   初回の用意の続き(埋め込みモデルが入っているかを知らせる。取得はしない)
   wizard index   作業フォルダと検索したいフォルダを尋ねて、設定を作り、索引を作る
   wizard search  質問を尋ねて、結果を人が読む形で出す(繰り返す)
   wizard eval    cases.jsonl を尋ねて、検索だけの手法の評価を回す
@@ -14,6 +14,7 @@ import sys
 import time
 from pathlib import Path
 
+from . import command_hint
 from .config import CONFIG_DIR_NAME, CONFIG_FILE_NAME, MODES, ConfigError, config_template, load_config
 
 
@@ -97,10 +98,18 @@ def _had_embeddings(cfg) -> bool:
 
 
 def _offer_model(embedding_cfg) -> bool:
-    """埋め込みモデルが無ければ、取得するかを尋ねる。使える状態なら True。"""
-    from .embed import MODEL_PRESETS, ModelUnavailable, download_model, model_files, resolve_model
+    """埋め込みモデルが使える状態なら True。無ければ「インストールされていません」と、入手先と取得のコマンドを出す。
+
+    モデルは PyPI の外の OSS なので、ここでは取得しない(尋ねもしない)。この PC で使ってよいかは、利用者が
+    入手先とライセンスを確かめて決め、自分で `model download` を実行する。"""
+    from .embed import MODEL_PRESETS, ModelUnavailable, model_files, model_folder, resolve_model
     try:
         spec = resolve_model(embedding_cfg)
+    except ModelUnavailable as e:      # 設定の誤り(既定の候補に無いモデルなど)
+        print()
+        print(f"埋め込みモデルを使えません: {e}")
+        return False
+    try:
         model_files(spec)
         return True
     except ModelUnavailable:
@@ -108,20 +117,18 @@ def _offer_model(embedding_cfg) -> bool:
     preset = MODEL_PRESETS.get(spec.name)
     size = sum(preset.files[n][0] for n in (spec.onnx_file, spec.tokenizer_file) if n in preset.files) if preset else 0
     print()
-    print("意味検索(日本語の質問で英語のコードを探す、など)には、埋め込みモデルが要ります。")
-    print(f"  モデル: {spec.name}(ライセンス {spec.license or '不明'}、約 {size / 1e6:.0f} MB)")
-    print("  入手先: https://huggingface.co/" + spec.repo)
-    print("  取得のときに送るのは、ファイルの名前だけです(ソースや質問は送りません)。計算は、この PC の中で行います。")
-    # 入力が閉じられているときは、取得しない(尋ねずに数百 MB を取得しない)
-    if not yes("今、取得しますか", when_closed=False):
-        print("  取得しませんでした。keyword(BM25)だけの検索になります。後で setup.bat から取得できます")
-        return False
-    try:
-        download_model(spec, log=lambda s: print("  " + s))
-    except Exception as e:   # ネットワークの失敗など
-        print(f"  取得に失敗しました({type(e).__name__}: {e})。keyword だけで続けます")
-        return False
-    return True
+    print("埋め込みモデルがインストールされていません。意味検索(日本語の質問で英語のコードを探す、など)に要ります。")
+    print(f"  モデル: {spec.name}(ライセンス {spec.license or '不明'}" + (f"、約 {size / 1e6:.0f} MB" if size else "") + ")")
+    if spec.model_dir:
+        print(f"  置き場([embedding] model_dir): {model_folder(spec)}")
+        print("  このフォルダにモデルのファイルを置くと使えます。")
+    else:
+        print("  入手先: https://huggingface.co/" + spec.repo)
+        print("  このモデルは PyPI の外の OSS なので、自動では入れません。入手先とライセンスを確かめ、この PC で")
+        print("  使ってよければ、次のコマンドで取得します(取得のときに送るのは、ファイルの名前だけです):")
+        print(f"    {command_hint('model download')}")
+    print("  入れるまでは、keyword(BM25)だけの検索になります。")
+    return False
 
 
 def wizard_setup() -> int:
@@ -197,7 +204,7 @@ def wizard_index() -> int:
                   "すべての passage を埋め込み直すことになります(時間がかかります)")
             # 入力が閉じられているときは、置き換えない(尋ねずに埋め込みを捨てない)
             if not yes("keyword だけの索引に置き換えますか", default=False, when_closed=False):
-                print("やめました。前の索引はそのまま使えます。モデルは setup.bat から取得できます")
+                print("やめました。前の索引はそのまま使えます。モデルを入れてから、もう一度実行してください")
                 return 2
     print()
     print("索引を作ります。大きなコードでは時間がかかります(埋め込みは 1 秒に 50 件ほど)。")

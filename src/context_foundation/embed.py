@@ -1,8 +1,9 @@
 """埋め込み(意味検索のベクトル)を、手元の CPU で計算する。
 
 - モデルは ONNX の形のものを onnxruntime で動かす(PyTorch は使わない)。外部の API は呼ばない
-- モデルの取得は、明示的に頼まれたときだけ(`ctxf model download`、索引づくりの `--download`)。
-  検索のときには取得しない。モデルが無ければ、呼び出し側が keyword だけに切り替える
+- モデルの取得は、利用者が明示的に頼んだときだけ(`ctxf model download`、索引づくりの `--download`)。
+  setup・検索・索引づくりでは取得しない(PyPI の外の OSS なので、使ってよいかは利用者の環境で確かめる)。
+  モデルが無ければ「インストールされていません」と知らせ、呼び出し側が keyword だけに切り替える
 - モデルは設定で差し替えられる。既定の候補は、下の MODEL_PRESETS(入手先・版・ライセンス・大きさを固定)
 - 索引づくりの埋め込みは、入っている onnxruntime に GPU の実行先があれば、GPU で計算する(GPU_PROVIDERS)。
   検索のときの質問の埋め込みは、いつも CPU(短い文 1 つなので速さは変わらず、GPU のセッションは作るのが遅い)
@@ -146,8 +147,9 @@ def model_files(spec: ModelSpec) -> tuple[Path, Path]:
     missing = [str(x) for x in (onnx, tok) if not x.is_file()]
     if missing:
         raise ModelUnavailable(
-            "埋め込みモデルが手元にありません: " + ", ".join(missing) +
-            f"\n取得するには `{command_hint('model download')}`。"
+            "埋め込みモデルがインストールされていません: " + ", ".join(missing) +
+            "\nこのモデルは PyPI の外の OSS なので、setup では入れません。入手先とライセンスを確かめ、この PC で"
+            f"使ってよければ `{command_hint('model download')}` で取得します。"
             "モデル無しでも keyword(BM25)の検索は使えます")
     return onnx, tok
 

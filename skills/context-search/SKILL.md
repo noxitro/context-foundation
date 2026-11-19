@@ -55,14 +55,23 @@ before running one, say what it does, and run it only after they agree.
 
 - "is not set up on this PC", "not set up completely", "set up for an
   older version" or "set up with a Python that is no longer installed": the
-  Python packages or the embedding model are missing or out of date.
+  Python packages are missing or out of date.
   `python -I "<...>\ctxf.py" setup` downloads about 200 MB of packages from
-  PyPI and a 490 MB model from Hugging Face into the user's local app data
-  folder, and takes a few minutes. `setup --help` only prints what it does.
+  PyPI into the user's local app data folder, and takes a few minutes.
+  `setup --help` only prints what it does.
   In Copilot CLI with extensions on, the user can instead type
   `/context-setup` in the session: it runs the same setup in the
   background without calling the model. After setup, the search tool
   appears only in a new session; in this session, keep using this skill
+- "embedding model: not installed", or a note that the embedding model is
+  not available: search still works, keyword-only. The model is
+  open-source software from outside PyPI (Hugging Face), and whether it may
+  be used depends on the user's environment, so it is never installed
+  automatically. Do not run `model download` or `index --download`
+  yourself, even if the user agrees to setup. Tell the user the model is
+  not installed, with the source and licence that setup printed, and that
+  they can run `python -I "<...>\ctxf.py" model download` themselves after
+  checking them
 - "No context-foundation index": ask which folders to search (the engine
   source, reference apps, design docs). Then suggest the user type
   `/context-index "<folder>" "<folder>"` in the session (with no folders,

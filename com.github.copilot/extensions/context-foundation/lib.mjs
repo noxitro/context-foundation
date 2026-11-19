@@ -240,6 +240,16 @@ export function initSources(out) {
 }
 
 // できた索引が keyword だけか(埋め込みモデルが無かった)。ctxf.py index のログから見る
+// ctxf.py setup のログ(model_report の行)から、埋め込みモデルがインストールされていないか。されていなければ
+// { command }(利用者が自分で取得するコマンド。[embedding] model_dir のときは "")。されている・使わない・分からない
+// ときは null
+export function modelMissing(out) {
+  const text = out ?? "";
+  if (!/^ {2}embedding model: not installed/m.test(text)) return null;
+  const m = text.match(/^ {4}To use it, check the model's source and licence, then run: (.+)$/m);
+  return { command: m ? m[1].trim() : "" };
+}
+
 export const keywordOnly = (out) => /keyword\(BM25\)だけの索引を作ります|今回は keyword だけの索引になります/.test(out ?? "");
 
 // ctxf.py index の進み具合(標準エラーに出す行)から、今の段階を返す。読めなければ { phase: "start" }
@@ -314,7 +324,7 @@ export function failureMessage(code, out, log, setup, index = ".cf\\index.db") {
         ? "ターミナルで次を実行してから、もう一度 /context-index を打ってください"
         : "/context-setup を打つか、ターミナルで次を実行して用意をしてから、もう一度 /context-index を打ってください";
       return "この PC の用意(setup)が済んでいないか、古くなっているので、索引を作りませんでした。" + how +
-        `(PyPI から約 200 MB のパッケージ、Hugging Face から 490 MB のモデルを取得し、数分かかります):\n${cmd}`;
+        `(PyPI から約 200 MB のパッケージを取得し、数分かかります):\n${cmd}`;
     }
     case 130:
       return `索引づくりが止められました。次の /context-index は、計算済みの埋め込みを使い回して続きから計算します。ログ: ${log}`;
@@ -329,9 +339,11 @@ const usesLocalVenv = (cmd) => /setup\.bat|-m venv --clear \.venv/.test(cmd ?? "
 // ---- /context-setup(この PC の用意。ctxf.py setup を裏で動かす)
 
 export const SETUP_HELP = `${SETUP_USAGE}
-検索に要る Python のパッケージ(PyPI から約 200 MB)と、埋め込みモデル(Hugging Face から約 490 MB)を、利用者ごとの置き場に入れます。` +
+検索に要る Python のパッケージ(PyPI から約 200 MB)を、利用者ごとの置き場に入れます。` +
   `1 回だけで済みます(済んでいれば、確かめるだけで終わります)。裏で動かし、モデルは呼びません。
-- no-model: モデルを取らない(検索は keyword だけになる)
+埋め込みモデル(Hugging Face の OSS)は入れません。インストールされているかと入手先を知らせるだけです。` +
+  `使ってよいかを確かめたうえで、ターミナルで ctxf.py model download を実行すると入ります(無ければ検索は keyword だけ)。
+- no-model: 埋め込みモデルの有無も知らせない
 - gpu: (Windows)索引づくりの埋め込みを GPU で計算する onnxruntime-directml を入れる。cpu で戻す。選び方は次の用意に引き継ぐ`;
 
 const SETUP_WORDS = { "no-model": "--no-model", gpu: "--gpu", cpu: "--cpu" };
@@ -363,18 +375,13 @@ export const hasLocalVenv = (plugin) => existsSync(join(plugin, ".venv"));
 //   "venv"      仮想環境を作っている
 //   "packages"  Python のパッケージを入れている
 //   "packaged"  パッケージが入った(すでに入っていた)
-//   "model"     埋め込みモデルを確かめている
-//   "download"  モデルのファイルを取得している({ file } 付き。ログがファイルなので、取得の % は書かれない)
 //   "done"      用意ができた
 export function parseSetupProgress(text) {
   let snap = { phase: "start" };
   for (const line of (text ?? "").split(/\r?\n/)) {
-    let m;
     if (/creating the virtual environment/.test(line)) snap = { phase: "venv" };
     else if (/installing the Python packages/.test(line)) snap = { phase: "packages" };
     else if (/^\s*Python packages: /.test(line)) snap = { phase: "packaged" };
-    else if (/embedding model: checking/.test(line)) snap = { phase: "model" };
-    else if ((m = line.match(/^取得します: \S+ (\S+)/))) snap = { phase: "download", file: m[1] };
     else if (/^Setup is done/.test(line)) snap = { phase: "done" };
   }
   return snap;
@@ -383,14 +390,14 @@ export function parseSetupProgress(text) {
 // ctxf.py setup のログの、利用者ごとの置き場("runtime folder: …" の行)。無ければ ""
 export const setupRuntimeFolder = (out) => ((out ?? "").match(/^\s*runtime folder: (.+)$/m)?.[1] ?? "").trim();
 
-// 用意の進み具合を画面に出すか決める(progressNote と同じ考え方)。出すのは、段階か取得するファイルが変わったときと、
+// 用意の進み具合を画面に出すか決める(progressNote と同じ考え方)。出すのは、段階が変わったときと、
 // 同じ段階が 1 分以上続いているとき(1 分ごと)。{ note(出さなければ ""), state(次の prev) }
 export function setupProgressNote(prev, snap, now, elapsedSec) {
   const quiet = { note: "", state: prev };
   if (snap.phase === "done") return quiet;  // できたことは、終わりの知らせで出す
-  const changed = prev.phase !== snap.phase || prev.file !== snap.file;
+  const changed = prev.phase !== snap.phase;
   if (!changed && now - prev.at < 60000) return quiet;
-  const state = { phase: snap.phase, file: snap.file, at: now };
+  const state = { phase: snap.phase, at: now };
   if (snap.phase === "start" && changed) return { note: "", state };  // 始めてすぐは出さない
   // [何をしているか, 括弧に添えること]
   const what = {
@@ -398,8 +405,6 @@ export function setupProgressNote(prev, snap, now, elapsedSec) {
     venv: ["仮想環境を作っています", ""],
     packages: ["Python のパッケージを PyPI から入れています", "初めては約 200 MB"],
     packaged: ["Python のパッケージが入りました", ""],
-    model: ["埋め込みモデルを確かめています", ""],
-    download: ["埋め込みモデルを Hugging Face から取得しています", snap.file ?? ""],
   }[snap.phase];
   if (what === undefined) return quiet;
   const [label, detail] = what;

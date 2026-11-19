@@ -20,7 +20,8 @@ on:
   push:
     branches: [main]
   # Every Monday as well: setup installs the newest packages from PyPI (and
-  # the model from Hugging Face), which can break the tool between pushes.
+  # the smoke test fetches the model from Hugging Face with `model download`,
+  # which setup never does on its own), which can break the tool between pushes.
   schedule:
     - cron: "0 4 * * 1"
   workflow_dispatch:
@@ -71,7 +72,7 @@ jobs:
         run: python .github/scripts/plugin_smoke.py
 
       # The tests marked `model` (query and passage prefixes, pooling,
-      # truncation) with the model that setup has just fetched. A skipped
+      # truncation) with the model that `model download` has just fetched. A skipped
       # test would mean that the model is missing: fail then.
       - name: Run the tests that use the real model
         shell: bash
