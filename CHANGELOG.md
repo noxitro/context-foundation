@@ -42,6 +42,11 @@
 - 取得は、利用者が自分で `model download`(か `index --download`)を
   実行したときだけ。CI の smoke test は、setup の後に `model download` を
   流す
+- クラウドのセッション(Claude Code on the web)の始めに、共通の git
+  フック(秘密情報などを commit・push の前に止める検査)を入れる
+  `.claude/settings.json` と `.claude/hooks/session-start.sh` を置いた。
+  これまでは、クラウドのセッションからの push が、push の後の CI でしか
+  検査されていなかった。手元の PC では動かない
 
 ### 更新のあとにすること
 
