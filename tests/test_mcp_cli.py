@@ -259,7 +259,8 @@ def test_session_hint_only_where_an_index_exists(indexed_workspace, tmp_path, ou
                        input=json.dumps({"cwd": str(sub)}), text=True, encoding="utf-8", cwd=tmp_path, env=ready,
                        timeout=60)
     ctx = json.loads(r.stdout)["additionalContext"]
-    assert "context-foundation-search tool first" in ctx and "context-search skill" in ctx and len(ctx) < 700
+    # 長さの上限: 0.4.9 で、関連する処理を見てから答える文を足した(O3DE の評価で、品質を保ったまま費用が下がった文面)
+    assert "context-foundation-search tool first" in ctx and "context-search skill" in ctx and len(ctx) < 900
     r = subprocess.run([sys.executable, "-I", str(REPO / "ctxf.py"), "session-hint", "--mcp"], capture_output=True,
                        input=json.dumps({"cwd": str(tmp_path)}), text=True, encoding="utf-8", cwd=tmp_path, env=ready,
                        timeout=60)
@@ -530,6 +531,15 @@ def _golden(name: str) -> bytes:
     return (GOLDEN / name).read_bytes()
 
 
+def assert_golden(name: str, actual: bytes, folder: Path = GOLDEN) -> None:
+    """正解のファイルと 1 バイトも違わないこと。文言を意図して変えたときは、CF_UPDATE_GOLDEN=1 を付けて流すと、
+    今の出力で正解を書き直す(書き直した差分は、コミットの前に人が読む)。"""
+    if os.environ.get("CF_UPDATE_GOLDEN") == "1":
+        (folder / name).write_bytes(actual)
+        return
+    assert actual == (folder / name).read_bytes(), name
+
+
 def _normalize_date(text: str) -> bytes:
     """先頭の行の索引の日時を、正解と同じ <CREATED_AT> にする(ほかは 1 バイトも変えない)。"""
     import re
@@ -555,7 +565,7 @@ def root_workspace(tmp_path_factory) -> Path:
 def test_cli_agent_output_is_the_031_output(root_workspace, name):
     r = run_cli("search", *GOLDEN_SEARCHES[name], "--format", "agent", cwd=root_workspace)
     assert r.returncode == 0, r.stderr
-    assert _normalize_date(r.stdout) == _golden(name)
+    assert_golden(name, _normalize_date(r.stdout))
 
 
 def test_mcp_text_is_the_031_text(root_workspace):
@@ -566,17 +576,19 @@ def test_mcp_text_is_the_031_text(root_workspace):
         is_error, text = server.tool("search", {"query": "job scheduler steal", "mode": "keyword", "top_k": 3})
     finally:
         server.close()
-    assert init["instructions"].encode("utf-8") == _golden("mcp_instructions.txt")
+    assert_golden("mcp_instructions.txt", init["instructions"].encode("utf-8"))
     # 説明・引数の定義と、項目の並びまで同じ(道具の定義は、毎回モデルに送られる)
-    assert (json.dumps(tools, ensure_ascii=False, indent=1) + "\n").encode("utf-8") == _golden("mcp_tools.json")
-    assert not is_error and _normalize_date(text) == _golden("search_keyword_top3.txt")
+    assert_golden("mcp_tools.json", (json.dumps(tools, ensure_ascii=False, indent=1) + "\n").encode("utf-8"))
+    assert not is_error
+    assert_golden("search_keyword_top3.txt", _normalize_date(text))
 
 
 def test_session_hint_for_a_ready_indexed_workspace_is_the_031_text(root_workspace, tmp_path):
     r = subprocess.run([sys.executable, "-I", str(REPO / "ctxf.py"), "session-hint", "--mcp"], capture_output=True,
                        input=json.dumps({"cwd": str(root_workspace)}).encode("utf-8"), cwd=tmp_path,
                        env=dict(os.environ, CF_PYTHON=sys.executable), timeout=60)
-    assert r.returncode == 0 and r.stdout == _golden("session_hint_mcp.json")
+    assert r.returncode == 0
+    assert_golden("session_hint_mcp.json", r.stdout)
 
 
 def test_golden_files_hold_nothing_of_this_machine():

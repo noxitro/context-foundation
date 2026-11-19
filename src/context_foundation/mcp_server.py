@@ -35,8 +35,8 @@ PROTOCOL_VERSIONS = ("2025-06-18", "2025-03-26", "2024-11-05")
 INSTRUCTIONS = (
     "Call `search` first, before grepping, to find where something is implemented or documented in this workspace. "
     "Describe what the code does in English and add identifiers you expect. It returns ranked passages with "
-    "source:path:start-end and their text, usually enough to answer and cite; grep or open files afterwards only "
-    "for what the passages do not show.")
+    "source:path:start-end and their text, which point you to the right place; before answering, grep the names "
+    "in the passages you rely on to find related code (the other variant, the caller, the next step).")
 # 索引の無い作業フォルダ(プラグインは利用者ごとに入るので、どの作業フォルダでもサーバーが起動する)での挨拶。
 # 検索を grep より先に呼ぶようには促さない(呼んでも、索引が無いという誤りが返るだけ)
 INSTRUCTIONS_NO_INDEX = "No context-foundation index in this workspace; search with grep."
@@ -50,8 +50,9 @@ TOOLS = [
         "description": (
             "Find where something is implemented or documented in this workspace. Searches a local index of the "
             "code and design docs by meaning and by keywords, and returns ranked passages as source:path:start-end "
-            "with scope, signature and text - usually enough to answer and cite without opening files. Call it "
-            "before grep."),
+            "with scope, signature, text and the other names in the same file. Call it before grep, unless the "
+            "question already names the exact identifier; then, before answering, check the related names that "
+            "matter."),
         "inputSchema": {
             "type": "object",
             "properties": {

@@ -88,6 +88,7 @@ class SearchConfig:
     glossary: str = ""                 # 用語の対応表(.cf からの相対か絶対パス)。空なら .cf/glossary.tsv があれば使う
     builtin_glossary: bool = True      # 既定の対応表(日本語 → 英語の一般の語)も使うか
     preload: bool = True               # MCP サーバーが、起動のときに埋め込みモデルとベクトルを先に読み込むか
+    related: int = 8                   # 上位の passage に、同じファイルのほかの名前をいくつ添えるか(0 なら添えない)
 
 
 @dataclass
@@ -282,7 +283,7 @@ def load_config(path: str | os.PathLike) -> Config:
 
     t = data.get("search", {})
     _check_keys(t, {"mode", "top_k", "candidates", "rrf_k", "hybrid_weighting", "weight_body", "weight_symbols",
-                    "weight_path", "glossary", "builtin_glossary", "preload", "max_output_bytes"}, "search")
+                    "weight_path", "glossary", "builtin_glossary", "preload", "max_output_bytes", "related"}, "search")
     cfg.search = SearchConfig(
         mode=_take(t, "mode", str, "hybrid"), top_k=_take(t, "top_k", int, 8),
         candidates=_take(t, "candidates", int, 50), rrf_k=_take(t, "rrf_k", int, 60),
@@ -291,7 +292,9 @@ def load_config(path: str | os.PathLike) -> Config:
         weight_path=_take(t, "weight_path", float, 2.0),
         max_output_bytes=_take(t, "max_output_bytes", int, 12_000),
         glossary=_take(t, "glossary", str, ""), builtin_glossary=_take(t, "builtin_glossary", bool, True),
-        preload=_take(t, "preload", bool, True))
+        preload=_take(t, "preload", bool, True), related=_take(t, "related", int, 8))
+    if cfg.search.related < 0:
+        raise ConfigError("[search] related は 0 以上です")
     if cfg.search.hybrid_weighting not in ("coverage", "equal"):
         raise ConfigError("[search] hybrid_weighting は coverage か equal です")
     if cfg.search.mode not in MODES:
@@ -332,6 +335,8 @@ def config_template(sources: list[tuple[str, str]], embedding_enabled: bool = Tr
             f"root = {toml_string(root)}",
             "# include = ['**/*.cpp', '**/*.h']   # 省くと、既定の拡張子(C・C++・C#・Markdown・その他の文字のファイル)",
             "# exclude = ['**/ThirdParty/**']     # 既定の除外(build・.git など)に足す",
+            "# 実装の場所を探すのが主なら、テスト・サンプルを除くと検索が当たりやすい(docs/production.md):",
+            "# exclude = ['**/Tests/**', '**/Test/**', '**/Mocks/**', '**/Samples/**', '**/Benchmarks/**']",
             "",
         ]
     out += [
@@ -341,6 +346,7 @@ def config_template(sources: list[tuple[str, str]], embedding_enabled: bool = Tr
         "[search]",
         'mode = "hybrid"       # hybrid / keyword / semantic',
         "top_k = 8",
+        "# related = 8         # 上位の passage に添える、同じファイルのほかの名前の数(0 で添えない)",
         "",
     ]
     return "\n".join(out)

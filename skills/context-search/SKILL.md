@@ -34,8 +34,10 @@ python -I "<base directory of this skill>\ctxf.py" search "<question>"
   enclosing namespace, class or heading), `sig:` (the declaration) and the
   passage text. Lower-ranked hits may list the location only
 - The text is the indexed content of those lines. Use it as evidence and
-  cite it as `source:path:start-end`. Open the file only if you need
-  lines outside the passage
+  cite it as `source:path:start-end`. The hits are starting points:
+  before answering, grep the function, class and macro names from the
+  passages you rely on to find related code (the other variant, the
+  caller, the next step)
 - `[changed since index]` means the file was edited after indexing; open
   it to check the current lines. `[file no longer exists]` means it was
   deleted; its text is not shown, do not cite it. Files added after

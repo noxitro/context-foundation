@@ -216,11 +216,13 @@ SESSION_HINT = (
 # 始め、検索を 1 回も使わなかった(docs/benchmarks.md)。検索は keyword も見るので、識別子でも引ける
 SESSION_HINT_MCP = (
     "This workspace has a context-foundation index (.cf folder: the code and design docs, searchable by meaning "
-    "and keywords). To find where something is implemented or documented, call the context-foundation-search tool "
+    "and keywords). If the question already names the exact function, class or macro, grep that name first. "
+    "Otherwise, to find where something is implemented or documented, call the context-foundation-search tool "
     "first, before grepping: describe what the code does in English and add identifiers you expect. One call "
-    "returns ranked passages with source:path:start-end and their text, usually enough to answer and cite. Grep "
-    "or open files afterwards only for what the passages do not show. If that tool is not available, load the "
-    "context-search skill instead.")
+    "returns ranked passages with source:path:start-end and their text: use them to find the right place, not as "
+    "the whole answer. Before answering, cover related code (the other variant, the caller, the next step): each "
+    "top passage lists the other names in its file ('same file also has'); open the relevant ones, and grep only "
+    "for what they do not cover. If that tool is not available, load the context-search skill instead.")
 
 
 def session_hint_not_ready(reason, kind=""):
