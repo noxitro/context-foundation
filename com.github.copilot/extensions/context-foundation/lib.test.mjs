@@ -6,9 +6,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  chooseFallback, dataHome, escapeMarkdown, failureMessage, findWorkspace, folderChoices, folderSchema, hasLocalVenv, MAX_FOLDER_CHOICES, pickedFolders, WHOLE_WORKSPACE, initSources, joinOptions, keywordOnly, lastCwd, loadSdk, logTail,
+  chooseFallback, dataHome, escapeMarkdown, failureMessage, findConfig, folderChoices, folderSchema, hasLocalVenv, indexFile, MAX_FOLDER_CHOICES, pickedFolders, WHOLE_WORKSPACE, initSources, joinOptions, keywordOnly, lastCwd, loadSdk, logTail,
   makeNotifier, parseIndexArgs, parseProgress, parseSetupArgs, parseSetupProgress, planIndex, pluginRoot, progressNote, repairCommand,
-  SDK_NAMES, SETUP_HELP, setupFailureMessage, setupProgressNote, setupRuntimeFolder, splitArgs, wantDialog,
+  SDK_NAMES, SETUP_HELP, setupFailureMessage, setupProgressNote, setupRuntimeFolder, splitArgs, wantDialog, workspaceOf,
 } from "./lib.mjs";
 
 const here = fileURLToPath(new URL(".", import.meta.url));
@@ -47,22 +47,58 @@ test("splitArgs と parseIndexArgs: 引用符・full・./full", () => {
   assert.deepEqual(parseIndexArgs("./full"), { full: false, folders: ["./full"] });
 });
 
-test("findWorkspace は親へさかのぼって .cf\\config.toml を探す", () => {
+test("findConfig は親へさかのぼって .cf\\config.toml を探す(作業フォルダの直下の config.toml は見ない)", () => {
   const root = tree();
-  assert.equal(findWorkspace(join(root, "indexed", "deep", "er")), join(root, "indexed"));
-  assert.equal(findWorkspace(join(root, "ws", "sub")), "");
+  const cfg = join(root, "indexed", ".cf", "config.toml");
+  assert.equal(findConfig(join(root, "indexed", "deep", "er")), cfg);
+  assert.equal(findConfig(join(root, "ws", "sub")), "");
+  writeFileSync(join(root, "indexed", "config.toml"), "[app]\n");    // ほかの道具の設定
+  assert.equal(findConfig(join(root, "indexed")), cfg);
+  assert.equal(workspaceOf(cfg), join(root, "indexed"));
+});
+
+test("findConfig は CF_CONFIG を先に見る(ctxf.py の find_config と同じ)", () => {
+  const root = tree();
+  const cfg = join(root, "indexed", ".cf", "config.toml");
+  assert.equal(findConfig(join(root, "ws"), { CF_CONFIG: cfg }), cfg);
+  assert.equal(findConfig(join(root, "ws"), { CF_CONFIG: join(root, "indexed") }), cfg);
+  assert.equal(findConfig(join(root, "ws"), { CF_CONFIG: join(root, "indexed", ".cf") }), cfg);
+  assert.throws(() => findConfig(join(root, "indexed"), { CF_CONFIG: join(root, "nowhere") }), /CF_CONFIG/);
+  const flat = join(root, "shared");                                      // .cf の中に無い設定
+  mkdirSync(flat);
+  writeFileSync(join(flat, "config.toml"), "");
+  assert.equal(findConfig(join(root, "ws"), { CF_CONFIG: flat }), join(flat, "config.toml"));
+  assert.equal(workspaceOf(join(flat, "config.toml")), flat);
+});
+
+test("indexFile は [index] path を読む(無ければ index.db)", () => {
+  const cfg = join("W", ".cf", "config.toml");
+  const at = (name) => join("W", ".cf", name);
+  assert.equal(indexFile(cfg, ""), at("index.db"));
+  assert.equal(indexFile(cfg, '[[source]]\nid = "e"\nroot = "E"\npath = "x.db"\n'), at("index.db"));  // [index] の外
+  assert.equal(indexFile(cfg, '[index]\nmax_line_chars = 9000\npath = "engine.db"  # 名前を変えた\n[search]\n'), at("engine.db"));
+  assert.equal(indexFile(cfg, "[ index ]\r\npath='sub/a.db'\r\n"), at(join("sub", "a.db")));
+  assert.equal(indexFile(cfg, '[index]\npath = "a\\\\b.db"\n'), at("a\\b.db"));
+  const root = tree();
+  assert.equal(indexFile(join(root, "nowhere", "config.toml")), join(root, "nowhere", "index.db"));   // 読めない
+  writeFileSync(join(root, "indexed", ".cf", "config.toml"), '[index]\npath = "engine.db"\n');
+  assert.equal(indexFile(join(root, "indexed", ".cf", "config.toml")), join(root, "indexed", ".cf", "engine.db"));
 });
 
 test("planIndex: 設定があれば作り直し、無ければフォルダを並べて init、並べていなければ選ばせる", () => {
   const root = tree();
-  assert.deepEqual(planIndex("", join(root, "indexed", "deep")), { action: "index", workspace: join(root, "indexed"), full: false });
-  assert.deepEqual(planIndex("full", join(root, "indexed")), { action: "index", workspace: join(root, "indexed"), full: true });
+  const config = join(root, "indexed", ".cf", "config.toml");
+  assert.deepEqual(planIndex("", join(root, "indexed", "deep")), { action: "index", workspace: join(root, "indexed"), config, full: false });
+  assert.deepEqual(planIndex("full", join(root, "indexed")), { action: "index", workspace: join(root, "indexed"), config, full: true });
   assert.match(planIndex("Engine", join(root, "indexed")).error, /設定がすでにあります/);  // 設定を黙って書き換えない
   const ws = join(root, "ws");
   assert.deepEqual(planIndex("", ws), { action: "choose", workspace: ws, full: false });
   assert.deepEqual(planIndex("full", ws), { action: "choose", workspace: ws, full: true });
   assert.deepEqual(planIndex('Engine "My Docs"', ws), { action: "init", workspace: ws, folders: ["Engine", "My Docs"], full: false });
   assert.match(planIndex("Engine Nowhere", ws).error, /フォルダがありません: .*Nowhere/);
+  // CF_CONFIG があれば、作業フォルダに設定が無くても、その索引を作り直す(MCP サーバーと検索も、その設定を使う)
+  assert.deepEqual(planIndex("", ws, { CF_CONFIG: config }), { action: "index", workspace: join(root, "indexed"), config, full: false });
+  assert.match(planIndex("", ws, { CF_CONFIG: join(root, "nowhere") }).error, /CF_CONFIG/);
 });
 
 test("folderChoices は直下のフォルダから、隠しフォルダと索引に入らない名前を除く", () => {
@@ -164,6 +200,7 @@ test("failureMessage は終了コードごとに、わけと次にすること�
   assert.doesNotMatch(m, /context-setup/);
   assert.match(failureMessage(2, "a\nb\nsource のルートがありません:\n  engine: E:\\x\n", log, "S"), /前の索引はそのまま使えます.*engine: E:\\x$/s);
   assert.match(failureMessage(1, "", log, "S"), /index\.db\.new/);
+  assert.match(failureMessage(1, "", log, "S", join("W", ".cf", "engine.db")), /engine\.db\.new に/);
   assert.match(failureMessage(130, "", log, "S"), /続きから/);
   assert.match(failureMessage(7, "", log, "S"), /終了コード 7/);
   assert.equal(logTail("1\n\n2\n3\n4\n5\n"), "2\n3\n4\n5");
