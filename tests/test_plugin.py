@@ -135,6 +135,16 @@ def test_extension_adds_the_index_command_and_its_library_passes_its_tests():
     assert r.returncode == 0, r.stdout + r.stderr
 
 
+def test_extension_skips_the_same_folder_names_as_ingest():
+    # /context-index のフォルダを選ぶ一覧は、索引に入らない名前(ingest.py の DEFAULT_EXCLUDED_DIRS)を出さない。
+    # 拡張は Python を読み込めないので、同じ一覧を手で写している。ずれたら落とす
+    from context_foundation.ingest import DEFAULT_EXCLUDED_DIRS
+    lib = (REPO / "com.github.copilot" / "extensions" / "context-foundation" / "lib.mjs").read_text(encoding="utf-8")
+    body = re.search(r"export const SKIP_DIRS = new Set\(\[(.*?)\]\);", lib, re.S)
+    assert body, "lib.mjs に SKIP_DIRS が無い"
+    assert set(re.findall(r'"([^"]+)"', body.group(1))) == DEFAULT_EXCLUDED_DIRS
+
+
 def test_launcher_without_a_runtime_says_how_to_set_up(monkeypatch, tmp_path):
     ctxf = load_launcher(monkeypatch, tmp_path / "home")
     monkeypatch.setattr(ctxf, "HERE", str(tmp_path / "plugin"))     # 隣に .venv の無い、入れたばかりのプラグイン
