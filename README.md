@@ -162,13 +162,18 @@ beforehand; 80% acceptable answers is the threshold):
 
 | Engine | Acceptable answers (this tool / grep only) | Median time | Median cost | Verdict |
 | --- | --- | --- | --- | --- |
-| Godot (29 questions) | 93.1% / 88.5% (reviewed key) | 35% lower | 32% lower | Meets the thresholds |
-| O3DE (27 questions, version 0.4.7) | 77.8% / 90.1% | 33% lower | 30% lower | Does not: answers are less complete |
+| Godot (29 questions, version 0.3) | 93.1% / 88.5% (reviewed key) | 35% lower | 32% lower | Meets the thresholds |
+| O3DE (27 questions, version 0.4.8) | 95.1% / 90.1% | 4% lower | 3% lower | Quality holds; small time and cost gain |
 
-- On both engines the tool cuts time and cost by about a third, and the
-  agent finds the main location as often as with grep. On O3DE it more often
-  answers from the returned passages without opening the file, and misses a
-  related point nearby (see [examples/o3de](examples/o3de/README.md)).
+- On O3DE, version 0.4.7 cut time and cost by about a third, but it more
+  often answered from the returned passages without opening the file, and
+  missed a related point nearby (77.8% acceptable answers). Version 0.4.8
+  lists the other functions of the same file next to the top passages and
+  asks the agent to check related code before answering. Answer quality is
+  no longer below grep, and most of the time and cost gain is given back
+  (total cost 7% lower, output tokens 13% lower): answer quality comes first
+  (see [examples/o3de](examples/o3de/README.md)).
+- Godot has not been measured again with version 0.4.8.
 - On Godot, the answer key as written beforehand puts both methods below 80%
   (75.9% and 74.7%); a review of the key made after the results, by reviewers
   who had not seen them, gives the figures above, and is the one taken for
@@ -201,7 +206,11 @@ setup and the first index worked from inside one session with no model
 calls. Version 0.4.4 lets the first `/context-index` without folders show a
 checklist of the workspace's folders to pick from. Version 0.4.7 stops the
 MCP server from offering its tools in workspaces without an index. Neither
-command has been tried in the app yet.
+command has been tried in the app yet. Version 0.4.8 adds the related-code
+change described above.
+
+How to run it in production (setup, configuration, operation, limits) is in
+[docs/production.md](docs/production.md) (in Japanese).
 
 ## Supported environments
 

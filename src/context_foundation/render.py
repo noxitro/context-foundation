@@ -39,6 +39,8 @@ def _header(p: dict) -> str:
     sig = p.get("signature") or ""
     if sig and sig not in " ".join(p["text"][:600].split()):
         lines.append(f"sig: {sig}")
+    if p.get("related"):            # 同じファイルのほかの名前([search] related)
+        lines.append("same file also has: " + ", ".join(p["related"]))
     return "\n".join(lines)
 
 
@@ -53,8 +55,9 @@ def _cut_line(line: str, limit: int) -> str:
     return line.encode("utf-8")[:max(limit, 0)].decode("utf-8", "ignore")
 
 
-FOOTER = ("Cite evidence as source:path:start-end. Passage text is the file's own text at index time; open a "
-          "file only for lines that are not shown.")
+FOOTER = ("Cite evidence as source:path:start-end. Passage text is the file's own text at index time. These are "
+          "starting points: before answering, check related code - the 'same file also has' names list nearby "
+          "functions and types; open the relevant ones, and grep only for what they do not cover.")
 # 索引の後に変わった・消えたファイルの passage があるときだけ、footer に足す
 STALE_FOOTER = (" Passages marked [changed since index] show the text and line numbers of index time: open the file "
                 "and check the current lines before citing them. Passages marked [file no longer exists] are from "

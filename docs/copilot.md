@@ -690,6 +690,21 @@ Linux と macOS で 2 か所に分かれるのは、0.1 のモデルの置き場
 
 ## 確かめたこと
 
+### 0.4.8(関連の処理を見てから答える)
+
+確かめた日は 2026-11-19 です。Windows 11、Copilot CLI 1.0.114 を
+`copilot -p` で動かし(空の設定フォルダ、BYOK の Claude Haiku 5.5、
+指示のファイルを読ませない設定)、O3DE の評価用の 27 問を 3 回ずつ流し
+ました。
+
+- 81 回とも最後まで通り、検索の道具が使われ、上位の passage に添えた
+  同じファイルの名前(`same file also has: ...`)が結果に出た【実測】
+- 道具の説明と始めの 1 文は 0.4.7 より長くなった(始めの 1 文は
+  840 文字)。それを含めても、入力トークンの中央値は既存の手順より
+  5% 少なかった【実測】(数字と品質は docs/benchmarks.md の「0.4.8 の
+  直し」)
+- アプリでは、まだ試していない【未確認】
+
 ### 0.4.7(索引の無い作業フォルダでは、道具を出さない)
 
 確かめた日は 2026-11-19 です。Windows 11、Copilot CLI 1.0.114 の対話の
@@ -981,7 +996,7 @@ Haiku 5.5、合成のコーパス、毎回空の設定フォルダ)。
   "name": "context-foundation",
   "source": { "source": "github", "repo": "noxitro/context-foundation" },
   "description": "Find code and design docs by meaning and keywords, locally.",
-  "version": "0.4.7"
+  "version": "0.4.8"
 }
 ```
 

@@ -69,6 +69,32 @@ def keyword_coverage(db, tokens: list[str]) -> float:
     return found / len(tokens)
 
 
+# 同じファイルのほかの名前を添えるとき、名前を取る passage の種類(名前が中身を表すもの)
+RELATED_KINDS = ("function", "class", "struct", "enum", "macro", "typedef", "union", "declaration")
+RELATED_FIRST = 3          # 名前を添えるのは、上位のこの件数の passage だけ(出力が膨らまないように)
+
+
+def _add_related(db, passages: list[dict], limit: int) -> None:
+    """上位の passage に、同じファイルにあるほかの関数・クラスの名前を、行の順に limit 個まで添える(p["related"])。
+    検索が返した passage の近くにある関連の処理(別の版、呼び出し元、次の手順)を、grep の往復なしで見せるため。
+    名前は索引の symbols から取る(ファイルは読まない)。上位に出ている passage の名前は除く。"""
+    shown = {s for p in passages for s in (p.get("symbols") or [])}
+    for p in passages[:RELATED_FIRST]:
+        fid = p.get("file_id")
+        if fid is None:
+            continue
+        names: list[str] = []
+        rows = db.execute("SELECT kind, symbols FROM chunks WHERE file_id = ? ORDER BY start_line", (fid,))
+        for kind, symbols in rows:
+            if kind not in RELATED_KINDS:
+                continue
+            for s in json.loads(symbols):
+                if s and s not in shown and s not in names:
+                    names.append(s)
+        if names:
+            p["related"] = names[:limit] + ([f"+{len(names) - limit} more"] if len(names) > limit else [])
+
+
 class Searcher:
     """索引 1 つに対する検索。作ったまま使い回すと、モデルとベクトルを読み込んだまま保つ(MCP サーバーと評価で使う)。"""
 
@@ -352,6 +378,8 @@ class Searcher:
                 passages = list(self._reranker(query, passages))[:top_k]
             if check_stale and passages:
                 self._mark_stale(db, passages, meta, notes)
+            if self.search_cfg.related > 0 and passages:
+                _add_related(db, passages, self.search_cfg.related)
             timings["fetch_ms"] = round((time.perf_counter() - t) * 1000, 1)
 
         for rank, p in enumerate(passages, 1):

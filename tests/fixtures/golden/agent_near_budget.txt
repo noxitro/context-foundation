@@ -233,13 +233,11 @@ sig: void Pass6::Execute(Context& ctx)
     value_6_12 = compute_6(12, buffer_pool_slot_12);
     value_6_13 = compute_6(13, buffer_pool_slot_13);
     value_6_14 = compute_6(14, buffer_pool_slot_14);
-    value_6_15 = compute_6(15, buffer_pool_slot_15);
-    value_6_16 = compute_6(16, buffer_pool_slot_16);
 ```
-(+21 more lines, not shown)
+(+23 more lines, not shown)
 
 More matches (text not shown):
 [7] engine:Render/Pass7.cpp:1-38  (function)  void Pass7::Execute(Context& ctx)
 [8] engine:Render/Pass8.cpp:1-38  (function)  void Pass8::Execute(Context& ctx)
 
-Cite evidence as source:path:start-end. Passage text is the file's own text at index time; open a file only for lines that are not shown.
+Cite evidence as source:path:start-end. Passage text is the file's own text at index time. These are starting points: before answering, check related code - the 'same file also has' names list nearby functions and types; open the relevant ones, and grep only for what they do not cover.

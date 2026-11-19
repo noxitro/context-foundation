@@ -60,6 +60,30 @@ def test_keyword_matches_identifier_parts(searcher):
     assert resp.mode == "keyword" and resp.timings["search_ms"] >= 0
 
 
+def test_top_passage_lists_other_names_in_its_file(indexed_workspace):
+    """[search] related(既定 8): 上位の passage に、同じファイルのほかの関数の名前を行の順に添える。上位に出ている
+    passage の名前は除く。0 なら添えない(出力は 0.4.7 と同じ)。"""
+    cfg_path = indexed_workspace / ".cf" / "config.toml"
+    resp = Searcher.from_config(load_config(cfg_path)).search("job scheduler steal", mode="keyword", top_k=1)
+    top = resp.passages[0]
+    assert top["path"] == "Core/JobScheduler.cpp" and "Steal" in top["signature"]
+    related = top["related"]
+    assert "Steal" not in " ".join(related) and any("WorkerLoop" in s for s in related)
+    assert any("Submit" in s for s in related)
+    assert [i for i, s in enumerate(related) if "Submit" in s] < [i for i, s in enumerate(related) if "WorkerLoop" in s]
+    assert "same file also has: " in to_agent(resp)
+
+    cfg = load_config(cfg_path)
+    cfg.search.related = 0
+    resp = Searcher.from_config(cfg).search("job scheduler steal", mode="keyword", top_k=1)
+    assert "related" not in resp.passages[0] and "same file also has: " not in to_agent(resp)
+
+
+def test_negative_related_is_rejected(tmp_path):
+    with pytest.raises(ConfigError, match="related"):
+        load_config(write_config(tmp_path, extra="[search]\nrelated = -1\n"))
+
+
 def test_keyword_japanese_document(searcher):
     resp = searcher.search("書き込みの途中で電源が切れても失わない", mode="keyword", top_k=3)
     assert resp.passages[0]["path"] == "save-data.md"
@@ -547,8 +571,12 @@ def test_output_that_fit_in_0_3_1_is_the_031_output():
     """0.3.1 で上限に収まっていた出力は 1 バイトも変えない(正解は 0.3.1 の to_agent で作ったもの)。1 回目の
     並べ方(場所だけの行を 1 件 150 バイトとみる見積もり)を変えると、ここで落ちる。"""
     out = to_agent(_near_budget_response())
-    assert out.encode("utf-8") == (FIXTURES / "golden" / "agent_near_budget.txt").read_bytes()
-    assert "(+21 more lines, not shown)" in out and "More matches (text not shown):" in out
+    golden = FIXTURES / "golden" / "agent_near_budget.txt"
+    if os.environ.get("CF_UPDATE_GOLDEN") == "1":       # 文言を意図して変えたとき(test_mcp_cli の assert_golden と同じ)
+        golden.write_bytes(out.encode("utf-8"))
+    assert out.encode("utf-8") == golden.read_bytes()
+    # 0.4.8 で footer を長くした分(関連する処理を見てから答える文)、本文の見える行が 2 行減った
+    assert "(+23 more lines, not shown)" in out and "More matches (text not shown):" in out
 
 
 @pytest.mark.parametrize("over", [1, 2, 7, 40])
