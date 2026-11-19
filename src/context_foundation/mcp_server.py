@@ -12,6 +12,10 @@
 (設定の [search] preload = false で止められる)。
 設定(.cf)は、--config が無ければ、エージェントの作業フォルダから親へ探す。エージェントの作業フォルダは、
 ホストが環境変数で知らせていればその場所(session_dir)、無ければサーバーの作業フォルダ。
+
+プラグインは利用者ごとに入るので、索引の無い作業フォルダでもサーバーは起動する。そこでは道具を出さない
+(道具の定義は、使わない回でも毎回モデルに送られるため)。代わりに数秒おきに索引の有無を見て、変わったら
+notifications/tools/list_changed で知らせる(/context-index で索引を作ると、同じセッションのうちに道具が出る)。
 """
 from __future__ import annotations
 
@@ -94,6 +98,9 @@ class _State:
         # 検索と、起動時の先読み(warm_up)が、同じ索引とモデルを同時に読み込まないようにする
         self.lock = threading.RLock()
         self.warm_up_started = False
+        # 最後に道具の一覧を返したときに、索引があったか(None は、まだ返していない)。変わったら知らせる
+        self.listed_with_index: bool | None = None
+        self.watch_started = False
 
     def searcher(self):
         from .search import Searcher
@@ -159,6 +166,30 @@ def start_warm_up(state: _State) -> threading.Thread | None:
     return th
 
 
+# 索引の有無を見る間隔(秒)。見るのは、設定のファイルを親へ探すことと、索引のファイルがあるかだけ
+WATCH_SECONDS = 3.0
+LIST_CHANGED = {"jsonrpc": "2.0", "method": "notifications/tools/list_changed"}
+
+
+def watch_index(state: _State, notify, stop: threading.Event, interval: float = WATCH_SECONDS) -> None:
+    """索引の有無が、最後に道具の一覧を返したときと変わったら、notify(LIST_CHANGED) を呼ぶ(ホストが一覧を
+    取り直す)。一覧をまだ返していない間と、知らせた後に取り直されるまでの間は、知らせ直さない。"""
+    sent_for: bool | None = None
+    while not stop.wait(interval):
+        listed = state.listed_with_index
+        if listed is None:
+            continue
+        now = has_index(state)
+        if now != listed and sent_for != now:
+            sent_for = now
+            try:
+                notify(LIST_CHANGED)
+            except Exception:       # 書けない(ホストが閉じた)なら、見るのをやめる
+                return
+        elif now == listed:
+            sent_for = None
+
+
 def call_tool(state: _State, name: str, args: dict) -> tuple[bool, str]:
     """(誤りか, 文面) を返す。先読みが動いていれば、終わるのを待ってから検索する。"""
     with state.lock:
@@ -222,13 +253,15 @@ def handle(state: _State, msg: dict) -> dict | None:
         start_warm_up(state)
         want = params.get("protocolVersion")
         return ok({"protocolVersion": want if want in PROTOCOL_VERSIONS else PROTOCOL_VERSIONS[0],
-                   "capabilities": {"tools": {"listChanged": False}},
+                   "capabilities": {"tools": {"listChanged": True}},
                    "serverInfo": {"name": "context-foundation", "version": __version__},
                    "instructions": INSTRUCTIONS if has_index(state) else INSTRUCTIONS_NO_INDEX})
     if method == "ping":
         return ok({})
     if method == "tools/list":
-        return ok({"tools": TOOLS})
+        # 索引の無い作業フォルダでは、道具を出さない(定義が毎回モデルに送られるため)。できたら watch_index が知らせる
+        state.listed_with_index = has_index(state)
+        return ok({"tools": TOOLS if state.listed_with_index else []})
     if method == "tools/call":
         name, args = params.get("name"), params.get("arguments") or {}
         if not isinstance(name, str) or not isinstance(args, dict):
@@ -269,10 +302,28 @@ def _encode(reply) -> bytes:
         return json.dumps(reply, allow_nan=False).encode("ascii") + b"\n"
 
 
-def serve(config: str | None = None, stdin=None, stdout=None) -> int:
+def serve(config: str | None = None, stdin=None, stdout=None, watch_interval: float = WATCH_SECONDS) -> int:
     stdin = stdin or sys.stdin.buffer
     stdout = stdout or sys.stdout.buffer
     state = _State(config)
+    out_lock = threading.Lock()     # 返事と、裏のスレッドの知らせが、同じ行に混ざらないように
+
+    def write(data: bytes) -> None:
+        with out_lock:
+            stdout.write(data)
+            stdout.flush()
+
+    stop = threading.Event()
+    if watch_interval > 0:
+        threading.Thread(target=watch_index, args=(state, lambda m: write(_encode(m)), stop, watch_interval),
+                         name="cf-watch-index", daemon=True).start()
+    try:
+        return _serve_loop(state, stdin, write)
+    finally:
+        stop.set()
+
+
+def _serve_loop(state: _State, stdin, write) -> int:
     while True:
         line = stdin.readline()
         if not line:
@@ -298,5 +349,4 @@ def serve(config: str | None = None, stdin=None, stdout=None) -> int:
             except Exception:
                 traceback.print_exc(file=sys.stderr)
                 data = ENCODE_FAILED
-            stdout.write(data)
-            stdout.flush()
+            write(data)
