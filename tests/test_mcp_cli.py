@@ -463,9 +463,54 @@ def test_initialize_instructions_depend_on_index(indexed_workspace, tmp_path, ou
     try:
         init = server.call("initialize", {"protocolVersion": "2025-06-18"})["result"]
         assert init["instructions"] == "No context-foundation index in this workspace; search with grep."
+        assert init["capabilities"]["tools"]["listChanged"] is True
+        # 索引の無い作業フォルダでは、道具を出さない(定義が毎回モデルに送られるため)
+        assert server.call("tools/list")["result"]["tools"] == []
+    finally:
+        server.close()
+
+
+def test_tools_appear_with_a_notification_when_an_index_is_built(indexed_workspace, tmp_path, outside_any_workspace):
+    """索引の無い作業フォルダで起動したサーバーは、索引ができると notifications/tools/list_changed を送り、
+    取り直した一覧に道具を出す(/context-index で作ると、同じセッションのうちに道具が出る)。"""
+    import shutil
+    import threading
+    ws = tmp_path / "later"
+    ws.mkdir()
+    server = Mcp(ws)
+    try:
+        server.call("initialize", {"protocolVersion": "2025-06-18"})
+        assert server.call("tools/list")["result"]["tools"] == []
+        shutil.copytree(indexed_workspace / ".cf", ws / ".cf")      # 索引ができた
+        got = []
+        reader = threading.Thread(target=lambda: got.append(server.p.stdout.readline()), daemon=True)
+        reader.start()
+        reader.join(timeout=20)
+        assert got and json.loads(got[0]) == {"jsonrpc": "2.0", "method": "notifications/tools/list_changed"}
         assert [t["name"] for t in server.call("tools/list")["result"]["tools"]] == ["search", "status"]
     finally:
         server.close()
+
+
+def test_watch_index_notifies_once_per_change(monkeypatch):
+    """取り直されるまでは知らせ直さない。一覧をまだ返していなければ知らせない。"""
+    import threading
+    from context_foundation import mcp_server
+    state = mcp_server._State(None)
+    answers = iter([True, True, True, False])
+    monkeypatch.setattr(mcp_server, "has_index", lambda s: next(answers, False))
+    sent, stop = [], threading.Event()
+    calls = {"n": 0}
+
+    def wait(timeout):            # stop.wait の代わり: 呼ばれるたびに 1 回まわす
+        calls["n"] += 1
+        if calls["n"] == 2:
+            state.listed_with_index = False     # 1 回目は一覧の前(知らせない)。2 回目から、索引ありに変わった
+        return calls["n"] > 5
+    monkeypatch.setattr(stop, "wait", wait)
+    mcp_server.watch_index(state, sent.append, stop, interval=0)
+    # 2 回目と 3 回目は True(変わった): 1 回だけ知らせる。4 回目に False(元に戻った)ので、印を消す
+    assert sent == [mcp_server.LIST_CHANGED]
 
 
 # --- 測った構成の出力が 0.3.1 と同じこと(不変条件 1)。正解は tests/fixtures/golden/ に、0.3.1 のコードで作ったもの
