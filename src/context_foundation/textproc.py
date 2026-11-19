@@ -79,9 +79,16 @@ def _identifier_tokens(run: str) -> list[str]:
 
 
 # 識別子を分けた結果を覚えておく。コードでは同じ識別子が何度も出てくる(手元のヘッダーで 93% が再出現)ので、
-# 索引づくりの語の分け方が 2.4 倍ほど速くなる。出す語は、覚えないときと同じ(テストで確かめる)
+# 索引づくりの語の分け方が 2.4 倍ほど速くなる。出す語は、覚えないときと同じ(テストで確かめる)。
+# 覚えるのは IDENTIFIER_CACHE_MAX_LEN 文字までの連なりだけ。長い連なり(16 進や base64 のかたまりなど)は、
+# 何度も出ることが少なく、1 つが数千文字になるので、覚えると数百 MB を抱えたままになることがある
 IDENTIFIER_CACHE_SIZE = 1 << 16
-_identifier_tokens_cached = lru_cache(maxsize=IDENTIFIER_CACHE_SIZE)(lambda run: tuple(_identifier_tokens(run)))
+IDENTIFIER_CACHE_MAX_LEN = MAX_TOKEN_LEN * 2
+_identifier_tokens_lru = lru_cache(maxsize=IDENTIFIER_CACHE_SIZE)(lambda run: tuple(_identifier_tokens(run)))
+
+
+def _identifier_tokens_cached(run: str):
+    return _identifier_tokens_lru(run) if len(run) <= IDENTIFIER_CACHE_MAX_LEN else _identifier_tokens(run)
 
 
 def _cjk_tokens(run: str) -> list[str]:

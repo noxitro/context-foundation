@@ -129,8 +129,9 @@ GitHub から入れたプラグインは、Copilot の設定フォルダの
 1. 上の 3 行を打つ。3 行目は、拡張(`/context-setup` と `/context-index`)
    を読み込むための設定です(拡張は Copilot CLI の実験的機能)。打つと、
    CLI がセッションを読み込み直します
-2. 新しいセッションを始め、`/context-setup` と打つ。Python のパッケージと
-   埋め込みモデルを入れます(下の「`/context-setup`」)
+2. 新しいセッションを始め、`/context-setup` と打つ。Python のパッケージを
+   入れます。埋め込みモデルは入れず、インストールされていないことと入手先を
+   知らせます(下の「`/context-setup`」と「埋め込みモデルは自動では入れない」)
 3. 作業フォルダで `/context-index` と打ち、出てきた一覧で索引に入れる
    フォルダを選ぶ(`/context-index <フォルダ> ...` と並べても構いません)。
    索引を作ります(下の「`/context-index`」)
@@ -142,10 +143,12 @@ GitHub から入れたプラグインは、Copilot の設定フォルダの
 
 ### 最初の用意(setup)
 
-検索には、Python のパッケージ(PyPI から約 200 MB)と、埋め込みモデル
-(Hugging Face から約 490 MB)が要ります。これを、プラグインのフォルダの外の
-利用者ごとの置き場(`%LOCALAPPDATA%\context-foundation`。環境変数
-`CF_HOME` で変えられる)に、1 回だけ置きます。
+検索には、Python のパッケージ(PyPI から約 200 MB)が要ります。意味での
+検索には、さらに埋め込みモデル(Hugging Face から約 490 MB)が要ります。
+これを、プラグインのフォルダの外の利用者ごとの置き場
+(`%LOCALAPPDATA%\context-foundation`。環境変数 `CF_HOME` で変えられる)に、
+1 回だけ置きます。setup が入れるのは Python のパッケージだけです(下の
+「埋め込みモデルは自動では入れない」)。
 
 - Copilot CLI で打つ: `/context-setup`(下の「`/context-setup`」)。拡張を
   読み込んでいれば、これがいちばん簡単です
@@ -161,8 +164,9 @@ python -I "<プラグインのフォルダ>\ctxf.py" setup
 
 - 終わったら、Copilot の新しいセッションを始めます。動いているセッション
   には、検索の道具は出ません(そのセッションでは、控えの skill が動きます)
-- `setup --no-model` でモデルを取らずに済ませると、keyword(BM25)だけの
-  検索になります
+- setup は、埋め込みモデルを取得しません。終わりに、インストールされて
+  いるかを出し、無ければ入手先・ライセンス・取得のコマンドを出します。
+  `setup --no-model` は、その知らせも出しません
 - `setup --help` は、何も取得せずに説明だけを出します
 - setup に使う Python は 3.11 から 3.14 です。範囲の外の Python で動かすと、
   何もせずに止まり、使う版の起動のしかたを示します(上の「入れ方は 2 つ」)
@@ -182,6 +186,29 @@ python -I "<プラグインのフォルダ>\ctxf.py" setup
   Windows の長いパスを有効にしてから、やり直します
 - 使われる python と置き場は `python -I "<…>\ctxf.py" where` で見られます
 
+### 埋め込みモデルは自動では入れない
+
+埋め込みモデル(既定は `intfloat/multilingual-e5-small`、MIT)は、PyPI の外
+(Hugging Face)から取得する OSS です。pip のパッケージと違い、使ってよいか
+は利用する環境(ライセンス、利用の条件、ネットワーク)で確かめる必要が
+あるので、利用者の PC では勝手に入れません。
+
+- `ctxf.py setup`・`/context-setup`・`setup.bat`・`index.bat` は、モデルを
+  取得しません(尋ねもしません)。無ければ「embedding model: not installed」
+  (`.bat` では「埋め込みモデルがインストールされていません」)と、入手先と
+  取得のコマンドを出します
+- 検索と索引づくりも取得しません。無ければ keyword(BM25)だけで動き、
+  結果の note や索引づくりのログに、インストールされていないことが出ます
+- エージェントは、モデルを取得するコマンドを自分では動かしません(skill に
+  そう書いてあります)
+- 取得するのは、利用者が入手先とライセンスを確かめたうえで、自分で次を
+  実行したときだけです(`ctxf.py index --download` も同じく、利用者が
+  明示的に頼むもの)
+
+```text
+python -I "<プラグインのフォルダ>\ctxf.py" model download
+```
+
 ### `/context-setup`(用意をするスラッシュコマンド)
 
 `/context-index` と同じ拡張が足すコマンドです。Copilot CLI のセッションで
@@ -197,14 +224,17 @@ python -I "<プラグインのフォルダ>\ctxf.py" setup
 
 - 1 行目がふつうの形です。済んでいれば、確かめるだけで終わります(手元で
   1 秒)。依存の一覧が変わった版に更新したときも、同じく打ちます
+- 埋め込みモデルは入れません。終わりの知らせで、インストールされていない
+  ことと、利用者がターミナルで実行する取得のコマンドを出します(上の
+  「埋め込みモデルは自動では入れない」)
 - `no-model`・`gpu`・`cpu` は、`setup` の `--no-model`・`--gpu`・`--cpu`
   と同じです(`--` を付けても構いません)。`help` は、何もせずに説明だけを
   出します。`gpu` と `cpu` を一緒に指定すると、断ります
 - 利用者が自分で打つので、打ったことを同意とみなします。エージェントから
   は呼べません(大きな取得を、利用者の知らないうちに始めないため)
-- 裏で動かすので、作業を続けられます。段階(仮想環境・パッケージ・モデルの
-  取得)が変わったときと、同じ段階が 1 分続くたびに、経過の秒数を出します。
-  モデルの取得の % は出ません。出力は、利用者ごとの置き場の
+- 裏で動かすので、作業を続けられます。段階(仮想環境・パッケージ)が
+  変わったときと、同じ段階が 1 分続くたびに、経過の秒数を出します。
+  出力は、利用者ごとの置き場の
   `context-setup.log` に書きます(毎回書き直します)
 - 終わると、かかった時間と、次にすること(作業フォルダに索引が無ければ
   `/context-index`、あれば新しいセッション)を出します。失敗したときは、
@@ -224,11 +254,12 @@ python -I "<プラグインのフォルダ>\ctxf.py" setup
 
 ### インターネットに出られない PC・PyPI のミラー
 
-setup は、Python のパッケージを pip で取得し、モデルを Hugging Face から
-取得します。pip は環境変数の設定を読むので、setup を動かす前に設定して
-おけば、そのまま効きます。
+setup は、Python のパッケージを pip で取得します(モデルは、利用者が
+`model download` を実行したときに Hugging Face から取得します)。pip は
+環境変数の設定を読むので、setup を動かす前に設定しておけば、そのまま
+効きます。
 
-- プロキシ: `HTTPS_PROXY`(pip とモデルの取得の両方に効きます)
+- プロキシ: `HTTPS_PROXY`(pip と `model download` の両方に効きます)
 - ミラー(PyPI の写し): `PIP_INDEX_URL`
 - インターネットに出られない PC: 出られる PC で、同じ OS と同じ Python の
   版(3.13 なら 3.13)を使って、依存を 1 つのフォルダに取得しておき、
@@ -248,15 +279,15 @@ python -m pip download -d <wheels> "tree-sitter>=0.25" "tree-sitter-c>=0.23" ^
 ```text
 set PIP_NO_INDEX=1
 set PIP_FIND_LINKS=<wheels>
-python -I "<プラグインのフォルダ>\ctxf.py" setup --no-model
+python -I "<プラグインのフォルダ>\ctxf.py" setup
 ```
 
 (コマンド プロンプトの書き方です。PowerShell なら `$env:PIP_NO_INDEX = "1"`
 のように書きます。)
 
 モデルは、ほかの PC の置き場の `models` フォルダを、同じ場所に写せば使え
-ます(setup は、ファイルの sha256 を確かめて、取得を飛ばします)。写した
-なら `--no-model` を外して setup を動かします。置き場の仮想環境
+ます(setup の終わりに「embedding model: installed」と出ます)。写す前に、
+この PC で使ってよいかを確かめてください。置き場の仮想環境
 (`runtime\venv`)は、写しても使えません。中に、もとの Python の場所が
 書かれているためです。
 
@@ -464,8 +495,8 @@ schtasks /Create /TN "context-foundation index" /SC DAILY /ST 07:00 ^
 
 ## リポジトリを取得して使う
 
-1. `setup.bat`: 取得したフォルダに `.venv` を作り、依存を入れる。モデルを
-   取得するかを尋ねる
+1. `setup.bat`: 取得したフォルダに `.venv` を作り、依存を入れる。埋め込み
+   モデルは入れず、インストールされているかと入手先を出す
 2. `index.bat`: 作業フォルダと検索したいフォルダを尋ねて、索引を作る
 3. `register-copilot.bat`: このフォルダを手元の Marketplace として足し、
    プラグインを入れる(中身は `copilot register`。コマンドの呼び方は
@@ -633,7 +664,7 @@ python -I "<プラグインのフォルダ>\ctxf.py" where
 | 道具が出ず、検索のコマンドが「set up in a virtual environment whose packages can no longer be loaded」(終了コード 4) | `where` の `model:` の行。この理由は、`where` の `python:` の行(仮想環境の python のパスが出る)にも始めの 1 文にも出ない。`model:` が `unknown (ImportError: …)` などになる。MCP のログにも出る | `setup:` の行のコマンドを動かし、新しいセッションを始める。setup は、読めないパッケージに気づくと、仮想環境を 1 回作り直して入れ直す。それでも直らなければ、文面のとおり仮想環境のフォルダ(リポジトリを取得した人は `.venv`)を消してから、もう一度 setup |
 | setup の後も道具が出ない | 同じセッションのままか | 新しいセッションを始める。動いているセッションには出ない(控えの skill は動く) |
 | 検索が「No context-foundation index」 | `where` の `index:` と `index (COPILOT_SESSION_CWD):` | 作業フォルダで `init` と `index`。アプリで、索引はあるのにこう出るなら、作業フォルダが渡っていない見込み(上の「アプリ」) |
-| 結果の note が「Fell back to keyword」 | note の理由。`where` の `model:` | 「embedding model is not available」なら setup(モデルを取る)。「embedded with different settings」なら `index` で作り直す |
+| 結果の note が「Fell back to keyword」 | note の理由。`where` の `model:` | 「embedding model is not available」なら、モデルがインストールされていない。入手先とライセンスを確かめ、使ってよければ利用者が `model download` を実行する(setup では入らない)。「embedded with different settings」なら `index` で作り直す |
 | 結果に `[changed since index]` が多い・新しいファイルが出ない | `status --check` | `index` を流す(上の「索引を更新する」) |
 | setup が pip で失敗する | 最後の 1 行の原因 | 長いパスなら `CF_HOME` を短く。届かないなら `HTTPS_PROXY` か `PIP_INDEX_URL`(上の「インターネットに出られない PC・PyPI のミラー」) |
 | `index` が終了コード 1 で止まる | 文面の `index.db.new` | 索引を開いているセッションを閉じてから、もう一度 `index` |
@@ -690,7 +721,7 @@ Linux と macOS で 2 か所に分かれるのは、0.1 のモデルの置き場
 
 ## 確かめたこと
 
-### 0.4.8(関連の処理を見てから答える)
+### 0.4.9(関連の処理を見てから答える)
 
 確かめた日は 2026-11-19 です。Windows 11、Copilot CLI 1.0.114 を
 `copilot -p` で動かし(空の設定フォルダ、BYOK の Claude Haiku 5.5、
@@ -701,7 +732,7 @@ Linux と macOS で 2 か所に分かれるのは、0.1 のモデルの置き場
   同じファイルの名前(`same file also has: ...`)が結果に出た【実測】
 - 道具の説明と始めの 1 文は 0.4.7 より長くなった(始めの 1 文は
   840 文字)。それを含めても、入力トークンの中央値は既存の手順より
-  5% 少なかった【実測】(数字と品質は docs/benchmarks.md の「0.4.8 の
+  5% 少なかった【実測】(数字と品質は docs/benchmarks.md の「0.4.9 の
   直し」)
 - アプリでは、まだ試していない【未確認】
 
@@ -996,7 +1027,7 @@ Haiku 5.5、合成のコーパス、毎回空の設定フォルダ)。
   "name": "context-foundation",
   "source": { "source": "github", "repo": "noxitro/context-foundation" },
   "description": "Find code and design docs by meaning and keywords, locally.",
-  "version": "0.4.8"
+  "version": "0.4.9"
 }
 ```
 

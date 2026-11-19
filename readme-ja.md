@@ -38,16 +38,16 @@ C++ のゲームエンジン 2 つで、既存の手順(grep とファイルを�
 | エンジン | 回答の合格率(この道具 / 既存の手順) | 時間の中央値 | 費用の中央値 | 判定 |
 | --- | --- | --- | --- | --- |
 | Godot(29 問、0.3) | 93.1% / 88.5%(点検後の要点) | 35% 減 | 32% 減 | 目安を満たす |
-| O3DE(27 問、0.4.8) | 95.1% / 90.1% | 4% 減 | 3% 減 | 品質は満たす。時間と費用の得は小さい |
+| O3DE(27 問、0.4.9) | 95.1% / 90.1% | 4% 減 | 3% 減 | 品質は満たす。時間と費用の得は小さい |
 
 - O3DE では、0.4.7 の形だと時間と費用は 3 割ほど減ったものの、検索の
   passage だけで答えてファイルを開かず、近くにある関連の要点を落として
-  合格率が 77.8% に下がりました。0.4.8 では、上位の passage に同じファイルの
+  合格率が 77.8% に下がりました。0.4.9 では、上位の passage に同じファイルの
   ほかの関数の名前を添え、答える前に関連の処理を見るように促しました。
   合格率は既存の手順を下回らなくなり、時間と費用の得は小さくなりました
   (合計の費用は 7% 減、出力のトークンは 13% 減)。品質を落とさないことを
   先に守る、という判断です([docs/production.md](docs/production.md))
-- Godot は 0.3 の形での数字で、0.4.8 ではまだ測り直していません【未確認】
+- Godot は 0.3 の形での数字で、0.4.9 ではまだ測り直していません【未確認】
 - Godot の合格率は、結果を見たあとに答えの要点を点検し直した数字です。
   事前の要点では、どちらも目安に届きません(75.9% と 74.7%)。判定には
   点検後の数字を採りました。0.2 までの形(skill)は、どちらのエンジンでも
@@ -79,7 +79,7 @@ CLI 1.0.113 で読み込まれなかったのを直しました。Windows の Co
 フォルダを並べずに打つと、索引に入れるフォルダを一覧から選べるように
 しました(どちらも Copilot CLI 1.0.114 で確かめました【実測】)。0.4.7 では、
 索引の無い作業フォルダで、MCP サーバーが道具を出さないようにしました。
-アプリでは、まだ試していません【未確認】。0.4.8 では、上で書いた、関連の
+アプリでは、まだ試していません【未確認】。0.4.9 では、上で書いた、関連の
 処理を見てから答えるための直しを入れました。
 
 本番で使うときの手順・設定・運用・限界は
@@ -127,9 +127,10 @@ copilot plugin marketplace add noxitro/context-foundation
 copilot plugin install context-foundation@context-foundation
 ```
 
-その後、最初に 1 回だけ用意(`ctxf.py setup`。依存のパッケージとモデルを、
-利用者ごとの置き場に取得する)をし、作業フォルダで索引を作ります。どちらも、
-エージェントに頼めば、利用者に尋ねてから動かします。
+その後、最初に 1 回だけ用意(`ctxf.py setup`。依存のパッケージを、利用者
+ごとの置き場に取得する)をし、作業フォルダで索引を作ります。どちらも、
+エージェントに頼めば、利用者に尋ねてから動かします。埋め込みモデルは、
+用意では入れません(下の「埋め込みモデルは自動では入れません」)。
 
 Copilot CLI なら、すべてセッションで打つコマンドで済みます(ターミナルは
 要りません。詳しくは [docs/copilot.md](docs/copilot.md) の「Copilot CLI の
@@ -151,7 +152,7 @@ Copilot CLI なら、すべてセッションで打つコマンドで済みま�
 
 | 順 | ファイル | すること |
 | --- | --- | --- |
-| 1 | `setup.bat` | 初回の用意。仮想環境(`.venv`)を作り、依存するパッケージを入れる。埋め込みモデルを取得するかを尋ねる |
+| 1 | `setup.bat` | 初回の用意。仮想環境(`.venv`)を作り、依存するパッケージを入れる。埋め込みモデルは入れず、インストールされているかと入手先を出す |
 | 2 | `index.bat` | 索引を作る。作業フォルダと、検索したいフォルダを尋ねる |
 | 3 | `search.bat` | 検索を試す。質問を入れると、結果が出る |
 | 4 | `register-copilot.bat` | このフォルダを手元の Marketplace として足し、プラグインを入れる(Copilot CLI とアプリの両方に効く) |
@@ -174,12 +175,12 @@ Copilot CLI なら、すべてセッションで打つコマンドで済みま�
   を置きます)。Perforce では、`.cf` を `.p4ignore` に足してください(索引
   には、ソースの本文の写しが入ります)
 
-`setup.bat` が取得するもの:
+取得するもの:
 
-| もの | 入手先 | 大きさ | ライセンス |
-| --- | --- | --- | --- |
-| Python のパッケージ(tree-sitter と C・C++・C# の文法、numpy、onnxruntime、tokenizers、huggingface_hub、jsonschema、pytest と、その依存) | PyPI | 仮想環境で約 190 MB | MIT・BSD・Apache-2.0 など |
-| 埋め込みモデル `intfloat/multilingual-e5-small`(ONNX と tokenizer) | Hugging Face | 約 490 MB | MIT |
+| もの | 入手先 | 大きさ | ライセンス | 入れるもの |
+| --- | --- | --- | --- | --- |
+| Python のパッケージ(tree-sitter と C・C++・C# の文法、numpy、onnxruntime、tokenizers、huggingface_hub、jsonschema、pytest と、その依存) | PyPI | 仮想環境で約 190 MB | MIT・BSD・Apache-2.0 など | `setup.bat`・`ctxf.py setup`・`/context-setup` |
+| 埋め込みモデル `intfloat/multilingual-e5-small`(ONNX と tokenizer) | Hugging Face | 約 490 MB | MIT | 利用者が自分で `model download` を実行したときだけ |
 
 時間の目安(16 コアの CPU で測ったもの。GPU は使いません):
 
@@ -191,7 +192,33 @@ Copilot CLI なら、すべてセッションで打つコマンドで済みま�
 - 索引の大きさは、ソースの 2〜3 倍です(143 万行で 135 MB)
 - 検索は、1 回 2 秒ほどです(コマンドの起動と、モデルの読み込みを含む)
 
-埋め込みモデルは、取得しなくても使えます。そのときは、keyword(BM25)だけの
+### 埋め込みモデルは自動では入れません
+
+埋め込みモデルは、PyPI の外から取得する OSS です。使ってよいかは、利用
+する環境(ライセンス、利用の条件、ネットワーク)で確かめる必要があるので、
+`setup.bat`・`ctxf.py setup`・`/context-setup`・`index.bat` は、モデルを
+取得しません(尋ねもしません)。インストールされていなければ、次のように
+知らせ、入手先と取得のコマンドを出すだけです。
+
+```text
+  embedding model: not installed (intfloat/multilingual-e5-small,
+  license MIT, about 487 MB, from https://huggingface.co/...)
+    Setup does not install it: ...
+    To use it, check the model's source and licence, then run:
+    python -I "<…>\ctxf.py" model download
+```
+
+(実際は、括弧の中と最後のコマンドが 1 行に続きます。)
+
+入手先とライセンスを確かめ、使ってよければ、自分で次を実行します
+(リポジトリを取得したなら `.venv\Scripts\python.exe -I ctxf.py --run model
+download`)。
+
+```text
+python -I "<…>\ctxf.py" model download
+```
+
+モデルが無くても使えます。そのときは、keyword(BM25)だけの
 検索になります。モデルの置き場は `%LOCALAPPDATA%\context-foundation\models`
 です(環境変数 `CF_HOME` で、置き場の親を変えられます。Linux の場所は
 [docs/copilot.md](docs/copilot.md) の「保存されるものと消し方」)。
@@ -251,7 +278,7 @@ PC・PyPI のミラー」)。
 
 | 入口のコマンド | すること |
 | --- | --- |
-| `setup` | 依存とモデルを、利用者ごとの置き場に用意する。`--no-model`・`--gpu`・`--cpu`・`--help` |
+| `setup` | 依存を、利用者ごとの置き場に用意する。埋め込みモデルは入れず、有無と入手先を出す(`--no-model` で、それも出さない)。`--gpu`・`--cpu`・`--help` |
 | `where` | 使う python・PATH の `python`・置き場・モデル・索引を出す(うまく動かないときに最初に見る) |
 | `session-hint` | Copilot のセッションの始めの hook が使う |
 
@@ -264,7 +291,7 @@ PC・PyPI のミラー」)。
 | `eval --cases <cases.jsonl> --out <フォルダ>` | 評価を回して、要約を書く |
 | `validate --cases <cases.jsonl>` | 評価データの形式を検査する |
 | `serve` | 読み取り専用の MCP サーバー(stdio) |
-| `model download` / `model info` | 埋め込みモデルの取得と確認 |
+| `model download` / `model info` | 埋め込みモデルの取得と確認(取得は、利用者が自分で実行するもの。setup などからは動かさない) |
 | `copilot register` / `unregister` / `status` | このフォルダを手元の Marketplace としてプラグインを入れる・外す・状態を見る(取得したリポジトリのフォルダからだけ) |
 
 `index` の終了コードは、0 が成功、1 が索引を置き換えられなかった(ほかの
@@ -490,7 +517,7 @@ GitHub Actions では、次の 4 つを回します(`.github/workflows`)。
 | ワークフロー | いつ | すること |
 | --- | --- | --- |
 | CI | プルリクエスト、main への push、毎週月曜、手で起動したとき | テスト(Windows・Linux、Python 3.11・3.12・3.13・3.14)、依存を宣言した下限の版でのテスト(Python 3.11。実物のモデルを使うテストも)、wheel と sdist を作って使う確認(sdist の中身が `git ls-files` と同じか)、Markdown の検査、リンクの確認 |
-| Plugin smoke test | 道具の中身に関わる変更、main への push、毎週月曜、手で起動したとき | まっさらな機械で、`ctxf.py setup` から、実物の埋め込みモデルでの索引づくり・検索・評価・MCP サーバーまでを通し、実物のモデルを使うテスト(`pytest -m model`)も流す(Windows・Linux) |
+| Plugin smoke test | 道具の中身に関わる変更、main への push、毎週月曜、手で起動したとき | まっさらな機械で、`ctxf.py setup`(モデルが無いと知らせること)と `model download` から、実物の埋め込みモデルでの索引づくり・検索・評価・MCP サーバーまでを通し、実物のモデルを使うテスト(`pytest -m model`)も流す(Windows・Linux) |
 | Secret scan | すべての push、プルリクエスト、手で起動したとき | 秘密情報と、所属・著作権の表示の検査(共通の workflow) |
 | Benchmark (O3DE example) | 手で起動したとき | 公開の評価例([examples/o3de](examples/o3de/README.md))を、GitHub の機械で最初から測り直す |
 

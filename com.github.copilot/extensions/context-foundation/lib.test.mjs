@@ -6,9 +6,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  chooseFallback, dataHome, escapeMarkdown, failureMessage, findWorkspace, folderChoices, folderSchema, hasLocalVenv, MAX_FOLDER_CHOICES, pickedFolders, WHOLE_WORKSPACE, initSources, joinOptions, keywordOnly, lastCwd, loadSdk, logTail,
-  makeNotifier, parseIndexArgs, parseProgress, parseSetupArgs, parseSetupProgress, planIndex, pluginRoot, progressNote, repairCommand,
-  SDK_NAMES, SETUP_HELP, setupFailureMessage, setupProgressNote, setupRuntimeFolder, splitArgs, wantDialog,
+  chooseFallback, dataHome, escapeMarkdown, failureMessage, findConfig, folderChoices, folderSchema, hasLocalVenv, indexFile, MAX_FOLDER_CHOICES, pickedFolders, WHOLE_WORKSPACE, initSources, joinOptions, keywordOnly, lastCwd, loadSdk, logTail,
+  makeNotifier, modelMissing, parseIndexArgs, parseProgress, parseSetupArgs, parseSetupProgress, planIndex, pluginRoot, progressNote, repairCommand,
+  SDK_NAMES, SETUP_HELP, setupFailureMessage, setupProgressNote, setupRuntimeFolder, splitArgs, wantDialog, workspaceOf,
 } from "./lib.mjs";
 
 const here = fileURLToPath(new URL(".", import.meta.url));
@@ -47,22 +47,58 @@ test("splitArgs と parseIndexArgs: 引用符・full・./full", () => {
   assert.deepEqual(parseIndexArgs("./full"), { full: false, folders: ["./full"] });
 });
 
-test("findWorkspace は親へさかのぼって .cf\\config.toml を探す", () => {
+test("findConfig は親へさかのぼって .cf\\config.toml を探す(作業フォルダの直下の config.toml は見ない)", () => {
   const root = tree();
-  assert.equal(findWorkspace(join(root, "indexed", "deep", "er")), join(root, "indexed"));
-  assert.equal(findWorkspace(join(root, "ws", "sub")), "");
+  const cfg = join(root, "indexed", ".cf", "config.toml");
+  assert.equal(findConfig(join(root, "indexed", "deep", "er")), cfg);
+  assert.equal(findConfig(join(root, "ws", "sub")), "");
+  writeFileSync(join(root, "indexed", "config.toml"), "[app]\n");    // ほかの道具の設定
+  assert.equal(findConfig(join(root, "indexed")), cfg);
+  assert.equal(workspaceOf(cfg), join(root, "indexed"));
+});
+
+test("findConfig は CF_CONFIG を先に見る(ctxf.py の find_config と同じ)", () => {
+  const root = tree();
+  const cfg = join(root, "indexed", ".cf", "config.toml");
+  assert.equal(findConfig(join(root, "ws"), { CF_CONFIG: cfg }), cfg);
+  assert.equal(findConfig(join(root, "ws"), { CF_CONFIG: join(root, "indexed") }), cfg);
+  assert.equal(findConfig(join(root, "ws"), { CF_CONFIG: join(root, "indexed", ".cf") }), cfg);
+  assert.throws(() => findConfig(join(root, "indexed"), { CF_CONFIG: join(root, "nowhere") }), /CF_CONFIG/);
+  const flat = join(root, "shared");                                      // .cf の中に無い設定
+  mkdirSync(flat);
+  writeFileSync(join(flat, "config.toml"), "");
+  assert.equal(findConfig(join(root, "ws"), { CF_CONFIG: flat }), join(flat, "config.toml"));
+  assert.equal(workspaceOf(join(flat, "config.toml")), flat);
+});
+
+test("indexFile は [index] path を読む(無ければ index.db)", () => {
+  const cfg = join("W", ".cf", "config.toml");
+  const at = (name) => join("W", ".cf", name);
+  assert.equal(indexFile(cfg, ""), at("index.db"));
+  assert.equal(indexFile(cfg, '[[source]]\nid = "e"\nroot = "E"\npath = "x.db"\n'), at("index.db"));  // [index] の外
+  assert.equal(indexFile(cfg, '[index]\nmax_line_chars = 9000\npath = "engine.db"  # 名前を変えた\n[search]\n'), at("engine.db"));
+  assert.equal(indexFile(cfg, "[ index ]\r\npath='sub/a.db'\r\n"), at(join("sub", "a.db")));
+  assert.equal(indexFile(cfg, '[index]\npath = "a\\\\b.db"\n'), at("a\\b.db"));
+  const root = tree();
+  assert.equal(indexFile(join(root, "nowhere", "config.toml")), join(root, "nowhere", "index.db"));   // 読めない
+  writeFileSync(join(root, "indexed", ".cf", "config.toml"), '[index]\npath = "engine.db"\n');
+  assert.equal(indexFile(join(root, "indexed", ".cf", "config.toml")), join(root, "indexed", ".cf", "engine.db"));
 });
 
 test("planIndex: 設定があれば作り直し、無ければフォルダを並べて init、並べていなければ選ばせる", () => {
   const root = tree();
-  assert.deepEqual(planIndex("", join(root, "indexed", "deep")), { action: "index", workspace: join(root, "indexed"), full: false });
-  assert.deepEqual(planIndex("full", join(root, "indexed")), { action: "index", workspace: join(root, "indexed"), full: true });
+  const config = join(root, "indexed", ".cf", "config.toml");
+  assert.deepEqual(planIndex("", join(root, "indexed", "deep")), { action: "index", workspace: join(root, "indexed"), config, full: false });
+  assert.deepEqual(planIndex("full", join(root, "indexed")), { action: "index", workspace: join(root, "indexed"), config, full: true });
   assert.match(planIndex("Engine", join(root, "indexed")).error, /設定がすでにあります/);  // 設定を黙って書き換えない
   const ws = join(root, "ws");
   assert.deepEqual(planIndex("", ws), { action: "choose", workspace: ws, full: false });
   assert.deepEqual(planIndex("full", ws), { action: "choose", workspace: ws, full: true });
   assert.deepEqual(planIndex('Engine "My Docs"', ws), { action: "init", workspace: ws, folders: ["Engine", "My Docs"], full: false });
   assert.match(planIndex("Engine Nowhere", ws).error, /フォルダがありません: .*Nowhere/);
+  // CF_CONFIG があれば、作業フォルダに設定が無くても、その索引を作り直す(MCP サーバーと検索も、その設定を使う)
+  assert.deepEqual(planIndex("", ws, { CF_CONFIG: config }), { action: "index", workspace: join(root, "indexed"), config, full: false });
+  assert.match(planIndex("", ws, { CF_CONFIG: join(root, "nowhere") }).error, /CF_CONFIG/);
 });
 
 test("folderChoices は直下のフォルダから、隠しフォルダと索引に入らない名前を除く", () => {
@@ -164,6 +200,7 @@ test("failureMessage は終了コードごとに、わけと次にすること�
   assert.doesNotMatch(m, /context-setup/);
   assert.match(failureMessage(2, "a\nb\nsource のルートがありません:\n  engine: E:\\x\n", log, "S"), /前の索引はそのまま使えます.*engine: E:\\x$/s);
   assert.match(failureMessage(1, "", log, "S"), /index\.db\.new/);
+  assert.match(failureMessage(1, "", log, "S", join("W", ".cf", "engine.db")), /engine\.db\.new に/);
   assert.match(failureMessage(130, "", log, "S"), /続きから/);
   assert.match(failureMessage(7, "", log, "S"), /終了コード 7/);
   assert.equal(logTail("1\n\n2\n3\n4\n5\n"), "2\n3\n4\n5");
@@ -194,16 +231,16 @@ test("hasLocalVenv は、プラグインの隣の .venv を見る", () => {
   assert.equal(hasLocalVenv(root), true);
 });
 
-// ctxf.py setup のログの形(_setup の _say と、model download の行。Copilot CLI 1.0.114 の /context-setup で書かれたもの)
+// ctxf.py setup のログの形(_setup の _say と model_report の行)。setup は埋め込みモデルを取得しない
 const SETUP_LINES = [
   "== context-foundation setup",
   "  runtime folder: C:\\cf\\runtime",
   "  creating the virtual environment ...",
   "  installing the Python packages from PyPI (about 200 MB the first time) ...",
   "  Python packages: installed",
-  "  embedding model: checking (downloads about 490 MB the first time) ...",
-  "取得します: intfloat/multilingual-e5-small onnx/model.onnx (約 470 MB)",
-  "取得します: intfloat/multilingual-e5-small tokenizer.json (約 17 MB)",
+  "  embedding model: not installed (intfloat/multilingual-e5-small, license MIT, about 487 MB, from https://huggingface.co/intfloat/multilingual-e5-small)",
+  "    Setup does not install it: it is open-source software from outside PyPI, and whether it may be used depends on this PC's environment (licence, terms of use, network). Search is keyword-only (BM25) until it is installed.",
+  '    To use it, check the model\'s source and licence, then run: python -I "C:\\p\\ctxf.py" model download',
 ];
 
 test("parseSetupProgress は setup のログの最後の段階を返す", () => {
@@ -212,16 +249,23 @@ test("parseSetupProgress は setup のログの最後の段階を返す", () => 
   assert.deepEqual(upto(3), { phase: "venv" });
   assert.deepEqual(upto(4), { phase: "packages" });
   assert.deepEqual(upto(5), { phase: "packaged" });
-  assert.deepEqual(upto(6), { phase: "model" });
-  assert.deepEqual(upto(7), { phase: "download", file: "onnx/model.onnx" });
-  assert.deepEqual(upto(8), { phase: "download", file: "tokenizer.json" });
-  assert.deepEqual(parseSetupProgress([...SETUP_LINES, "モデルを置きました: C:\\m", "Setup is done. Next, ..."].join("\n")),
-    { phase: "done" });
+  assert.deepEqual(upto(8), { phase: "packaged" });  // モデルの有無を出すだけで、取得の段階は無い
+  assert.deepEqual(parseSetupProgress([...SETUP_LINES, "Setup is done. Next, ..."].join("\n")), { phase: "done" });
   assert.equal(setupRuntimeFolder(SETUP_LINES.join("\n")), "C:\\cf\\runtime");
   assert.equal(setupRuntimeFolder("nothing"), "");
 });
 
-test("setupProgressNote は段階か取得するファイルが変わったとき・同じ段階が 1 分続くたびに出す", () => {
+test("modelMissing は、setup のログから埋め込みモデルが無いことと、利用者が自分で取得するコマンドを読む", () => {
+  assert.deepEqual(modelMissing(SETUP_LINES.join("\r\n")), { command: 'python -I "C:\\p\\ctxf.py" model download' });
+  const ownFolder = "  embedding model: not installed (m, license unknown, in the folder set by [embedding] model_dir: D:\\m)\n" +
+    "    Setup does not install it: ...\n    To use it, put the model files in that folder.\n";
+  assert.deepEqual(modelMissing(ownFolder), { command: "" });
+  assert.equal(modelMissing("  embedding model: installed (m, C:\\m)\n"), null);
+  assert.equal(modelMissing("  embedding model: not used (embedding is off in C:\\w\\.cf\\config.toml)\n"), null);
+  assert.equal(modelMissing(""), null);
+});
+
+test("setupProgressNote は段階が変わったとき・同じ段階が 1 分続くたびに出す", () => {
   let r = setupProgressNote({}, { phase: "start" }, 0, 0);
   assert.equal(r.note, "");  // 始めてすぐは出さない
   assert.equal(setupProgressNote(r.state, { phase: "start" }, 61000, 61).note, "context-foundation: 準備しています(61 秒)");
@@ -229,11 +273,8 @@ test("setupProgressNote は段階か取得するファイルが変わったと�
   assert.equal(r.note, "context-foundation: Python のパッケージを PyPI から入れています(初めては約 200 MB、5 秒)");
   assert.equal(setupProgressNote(r.state, { phase: "packages" }, 30000, 30).note, "");
   assert.match(setupProgressNote(r.state, { phase: "packages" }, 66000, 66).note, /約 200 MB、66 秒\)$/);
-  r = setupProgressNote(r.state, { phase: "download", file: "onnx/model.onnx" }, 70000, 70);
-  assert.equal(r.note, "context-foundation: 埋め込みモデルを Hugging Face から取得しています(onnx/model.onnx、70 秒)");
-  assert.equal(setupProgressNote(r.state, { phase: "download", file: "onnx/model.onnx" }, 120000, 120).note, "");
-  assert.match(setupProgressNote(r.state, { phase: "download", file: "onnx/model.onnx" }, 131000, 131).note, /131 秒/);
-  assert.match(setupProgressNote(r.state, { phase: "download", file: "tokenizer.json" }, 82000, 82).note, /tokenizer\.json、82 秒/);
+  r = setupProgressNote(r.state, { phase: "packaged" }, 70000, 70);
+  assert.equal(r.note, "context-foundation: Python のパッケージが入りました(70 秒)");
   assert.equal(setupProgressNote(r.state, { phase: "done" }, 83000, 83).note, "");
 });
 

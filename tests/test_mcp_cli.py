@@ -259,7 +259,7 @@ def test_session_hint_only_where_an_index_exists(indexed_workspace, tmp_path, ou
                        input=json.dumps({"cwd": str(sub)}), text=True, encoding="utf-8", cwd=tmp_path, env=ready,
                        timeout=60)
     ctx = json.loads(r.stdout)["additionalContext"]
-    # 長さの上限: 0.4.8 で、関連する処理を見てから答える文を足した(O3DE の評価で、品質を保ったまま費用が下がった文面)
+    # 長さの上限: 0.4.9 で、関連する処理を見てから答える文を足した(O3DE の評価で、品質を保ったまま費用が下がった文面)
     assert "context-foundation-search tool first" in ctx and "context-search skill" in ctx and len(ctx) < 900
     r = subprocess.run([sys.executable, "-I", str(REPO / "ctxf.py"), "session-hint", "--mcp"], capture_output=True,
                        input=json.dumps({"cwd": str(tmp_path)}), text=True, encoding="utf-8", cwd=tmp_path, env=ready,

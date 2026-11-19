@@ -1,8 +1,8 @@
 // /context-index と /context-setup の、Copilot の SDK に依らない部分(テストできるように分けた。lib.test.mjs を
 // tests/test_plugin.py が node --test で流す)。出し方(makeNotifier など)は cxxref の拡張と同じ作り。
-import { existsSync, readdirSync, realpathSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, resolve, win32 } from "node:path";
+import { basename, dirname, join, resolve, win32 } from "node:path";
 
 export const USAGE = "使い方: /context-index [full] [<フォルダ> ...]";
 export const SETUP_USAGE = "使い方: /context-setup [no-model] [gpu | cpu]";
@@ -27,11 +27,65 @@ export function lastCwd(events) {
   return cwd;
 }
 
-// 作業フォルダから親へさかのぼって、設定(.cf\config.toml)のあるフォルダ。無ければ ""(ctxf.py の find_config と同じ探し方)
-export function findWorkspace(start) {
+// 設定ファイル(config.toml)のパス。無ければ ""。ctxf.py の find_config と同じ探し方で、MCP サーバーや検索と
+// 同じ設定を選ぶ: 環境変数 CF_CONFIG があればそれ(ファイルか、config.toml か .cf\config.toml を持つフォルダ。
+// 指す先に無ければ例外)、無ければ作業フォルダから親へさかのぼって、最初の .cf\config.toml
+export function findConfig(start, env = {}) {
+  const explicit = env.CF_CONFIG;
+  if (explicit) {
+    const p = resolve(explicit.replace(/^~(?=$|[\\/])/, () => homedir()));
+    if (isFile(p)) return p;
+    if (isDir(p)) {
+      for (const cand of [join(p, "config.toml"), join(p, ".cf", "config.toml")]) {
+        if (isFile(cand)) return cand;
+      }
+    }
+    throw new Error(`環境変数 CF_CONFIG の指す設定ファイルが見つかりません: ${explicit}`);
+  }
   for (let d = resolve(start); ; d = dirname(d)) {
-    if (existsSync(join(d, ".cf", "config.toml"))) return d;
+    const cand = join(d, ".cf", "config.toml");
+    if (isFile(cand)) return cand;
     if (dirname(d) === d) return "";
+  }
+}
+
+// 設定ファイルから見た作業フォルダ(.cf の親。.cf の中に無い設定なら、設定のあるフォルダ。config.py と同じ)
+export function workspaceOf(config) {
+  const dir = dirname(config);
+  return basename(dir) === ".cf" ? dirname(dir) : dir;
+}
+
+// 設定の [index] path から、索引のファイルのパス(設定のあるフォルダからの相対。既定は index.db)。
+// text は設定ファイルの中身(省けば読む)。TOML を全部は読まず、[index] の表の path = "…" か '…' の行だけを見る。
+// 読めなければ既定の名前(誤りは ctxf.py が設定を読むときに出す)
+export function indexFile(config, text) {
+  if (text === undefined) {
+    try {
+      text = readFileSync(config, "utf8");
+    } catch {
+      text = "";
+    }
+  }
+  let table = "";
+  let name = "";
+  for (const line of text.split(/\r?\n/)) {
+    const head = /^\s*\[\s*([^\[\]]+?)\s*\]\s*(#.*)?$/.exec(line);
+    if (head) {
+      table = head[1];
+      continue;
+    }
+    if (table !== "index") continue;
+    const m = /^\s*path\s*=\s*(?:"((?:[^"\\]|\\.)*)"|'([^']*)')\s*(#.*)?$/.exec(line);
+    if (m) name = m[1] !== undefined ? m[1].replace(/\\(["\\])/g, "$1") : m[2];
+  }
+  return join(dirname(config), name || "index.db");
+}
+
+function isFile(p) {
+  try {
+    return statSync(p).isFile();
+  } catch {
+    return false;
   }
 }
 
@@ -50,21 +104,26 @@ export function parseIndexArgs(arg) {
   return { full, folders: full ? words.slice(1) : words };
 }
 
-// 何をするか。{ action: "index", workspace, full } か { action: "init", workspace, folders, full } か
-// { action: "choose", workspace, full } か { error }。
-// - 作業フォルダか親に設定があれば、その索引を作り直す(フォルダを並べたら断る。設定を黙って書き換えない)
+// 何をするか。{ action: "index", workspace, config, full } か { action: "init", workspace, folders, full } か
+// { action: "choose", workspace, full } か { error }。config は設定ファイルのパス(findConfig。env は環境変数)。
+// - 設定があれば(CF_CONFIG か、作業フォルダか親)、その索引を作り直す(フォルダを並べたら断る。設定を黙って書き換えない)
 // - 無ければ、並べたフォルダで作業フォルダに設定を作ってから索引を作る。並べていなければ、フォルダを選ばせる(choose)
-export function planIndex(arg, cwd) {
+export function planIndex(arg, cwd, env = {}) {
   const { full, folders } = parseIndexArgs(arg);
-  const ws = findWorkspace(cwd);
-  if (ws) {
+  let config;
+  try {
+    config = findConfig(cwd, env);
+  } catch (err) {
+    return { error: `${err.message}(CF_CONFIG を外すか、指す先を直してください)` };
+  }
+  if (config) {
     if (folders.length) {
       return {
-        error: `設定がすでにあります(${join(ws, ".cf", "config.toml")})。フォルダを並べずに /context-index と打つと、` +
+        error: `設定がすでにあります(${config})。フォルダを並べずに /context-index と打つと、` +
           "その設定で索引を作り直します。検索するフォルダを変えるなら、設定ファイルの [[source]] を直してください",
       };
     }
-    return { action: "index", workspace: ws, full };
+    return { action: "index", workspace: workspaceOf(config), config, full };
   }
   if (!folders.length) return { action: "choose", workspace: resolve(cwd), full };
   const missing = folders.map((f) => resolve(cwd, f)).filter((p) => !isDir(p));
@@ -181,6 +240,16 @@ export function initSources(out) {
 }
 
 // できた索引が keyword だけか(埋め込みモデルが無かった)。ctxf.py index のログから見る
+// ctxf.py setup のログ(model_report の行)から、埋め込みモデルがインストールされていないか。されていなければ
+// { command }(利用者が自分で取得するコマンド。[embedding] model_dir のときは "")。されている・使わない・分からない
+// ときは null
+export function modelMissing(out) {
+  const text = out ?? "";
+  if (!/^ {2}embedding model: not installed/m.test(text)) return null;
+  const m = text.match(/^ {4}To use it, check the model's source and licence, then run: (.+)$/m);
+  return { command: m ? m[1].trim() : "" };
+}
+
 export const keywordOnly = (out) => /keyword\(BM25\)だけの索引を作ります|今回は keyword だけの索引になります/.test(out ?? "");
 
 // ctxf.py index の進み具合(標準エラーに出す行)から、今の段階を返す。読めなければ { phase: "start" }
@@ -238,13 +307,13 @@ export function progressNote(prev, snap, now, elapsedSec, minGap = 10000) {
 }
 
 // index が 0 以外で終わったときの文(終了コードは readme-ja.md の「コマンド」・docs/copilot.md の「索引を更新する」)。
-// out はログの中身、log はログのパス、setup は用意のやり直し方(既定のコマンド)
-export function failureMessage(code, out, log, setup) {
+// out はログの中身、log はログのパス、setup は用意のやり直し方(既定のコマンド)、index は索引のファイル(indexFile)
+export function failureMessage(code, out, log, setup, index = ".cf\\index.db") {
   const tail = logTail(out);
   const more = tail ? `\n${tail}` : "";
   switch (code) {
     case 1:
-      return "索引を置き換えられませんでした(この索引で検索しているプログラムが開いている)。できあがった索引は .cf\\index.db.new に" +
+      return `索引を置き換えられませんでした(この索引で検索しているプログラムが開いている)。できあがった索引は ${index}.new に` +
         `残したので、少し待ってからもう一度 /context-index を打つと、そこから使い回します。ログ: ${log}${more}`;
     case 2:
       return `索引を作れませんでした(設定の誤り・フォルダが無い・入るファイルが無い・モデルを読めないなど)。前の索引はそのまま使えます。ログ: ${log}${more}`;
@@ -255,7 +324,7 @@ export function failureMessage(code, out, log, setup) {
         ? "ターミナルで次を実行してから、もう一度 /context-index を打ってください"
         : "/context-setup を打つか、ターミナルで次を実行して用意をしてから、もう一度 /context-index を打ってください";
       return "この PC の用意(setup)が済んでいないか、古くなっているので、索引を作りませんでした。" + how +
-        `(PyPI から約 200 MB のパッケージ、Hugging Face から 490 MB のモデルを取得し、数分かかります):\n${cmd}`;
+        `(PyPI から約 200 MB のパッケージを取得し、数分かかります):\n${cmd}`;
     }
     case 130:
       return `索引づくりが止められました。次の /context-index は、計算済みの埋め込みを使い回して続きから計算します。ログ: ${log}`;
@@ -270,9 +339,11 @@ const usesLocalVenv = (cmd) => /setup\.bat|-m venv --clear \.venv/.test(cmd ?? "
 // ---- /context-setup(この PC の用意。ctxf.py setup を裏で動かす)
 
 export const SETUP_HELP = `${SETUP_USAGE}
-検索に要る Python のパッケージ(PyPI から約 200 MB)と、埋め込みモデル(Hugging Face から約 490 MB)を、利用者ごとの置き場に入れます。` +
+検索に要る Python のパッケージ(PyPI から約 200 MB)を、利用者ごとの置き場に入れます。` +
   `1 回だけで済みます(済んでいれば、確かめるだけで終わります)。裏で動かし、モデルは呼びません。
-- no-model: モデルを取らない(検索は keyword だけになる)
+埋め込みモデル(Hugging Face の OSS)は入れません。インストールされているかと入手先を知らせるだけです。` +
+  `使ってよいかを確かめたうえで、ターミナルで ctxf.py model download を実行すると入ります(無ければ検索は keyword だけ)。
+- no-model: 埋め込みモデルの有無も知らせない
 - gpu: (Windows)索引づくりの埋め込みを GPU で計算する onnxruntime-directml を入れる。cpu で戻す。選び方は次の用意に引き継ぐ`;
 
 const SETUP_WORDS = { "no-model": "--no-model", gpu: "--gpu", cpu: "--cpu" };
@@ -304,18 +375,13 @@ export const hasLocalVenv = (plugin) => existsSync(join(plugin, ".venv"));
 //   "venv"      仮想環境を作っている
 //   "packages"  Python のパッケージを入れている
 //   "packaged"  パッケージが入った(すでに入っていた)
-//   "model"     埋め込みモデルを確かめている
-//   "download"  モデルのファイルを取得している({ file } 付き。ログがファイルなので、取得の % は書かれない)
 //   "done"      用意ができた
 export function parseSetupProgress(text) {
   let snap = { phase: "start" };
   for (const line of (text ?? "").split(/\r?\n/)) {
-    let m;
     if (/creating the virtual environment/.test(line)) snap = { phase: "venv" };
     else if (/installing the Python packages/.test(line)) snap = { phase: "packages" };
     else if (/^\s*Python packages: /.test(line)) snap = { phase: "packaged" };
-    else if (/embedding model: checking/.test(line)) snap = { phase: "model" };
-    else if ((m = line.match(/^取得します: \S+ (\S+)/))) snap = { phase: "download", file: m[1] };
     else if (/^Setup is done/.test(line)) snap = { phase: "done" };
   }
   return snap;
@@ -324,14 +390,14 @@ export function parseSetupProgress(text) {
 // ctxf.py setup のログの、利用者ごとの置き場("runtime folder: …" の行)。無ければ ""
 export const setupRuntimeFolder = (out) => ((out ?? "").match(/^\s*runtime folder: (.+)$/m)?.[1] ?? "").trim();
 
-// 用意の進み具合を画面に出すか決める(progressNote と同じ考え方)。出すのは、段階か取得するファイルが変わったときと、
+// 用意の進み具合を画面に出すか決める(progressNote と同じ考え方)。出すのは、段階が変わったときと、
 // 同じ段階が 1 分以上続いているとき(1 分ごと)。{ note(出さなければ ""), state(次の prev) }
 export function setupProgressNote(prev, snap, now, elapsedSec) {
   const quiet = { note: "", state: prev };
   if (snap.phase === "done") return quiet;  // できたことは、終わりの知らせで出す
-  const changed = prev.phase !== snap.phase || prev.file !== snap.file;
+  const changed = prev.phase !== snap.phase;
   if (!changed && now - prev.at < 60000) return quiet;
-  const state = { phase: snap.phase, file: snap.file, at: now };
+  const state = { phase: snap.phase, at: now };
   if (snap.phase === "start" && changed) return { note: "", state };  // 始めてすぐは出さない
   // [何をしているか, 括弧に添えること]
   const what = {
@@ -339,8 +405,6 @@ export function setupProgressNote(prev, snap, now, elapsedSec) {
     venv: ["仮想環境を作っています", ""],
     packages: ["Python のパッケージを PyPI から入れています", "初めては約 200 MB"],
     packaged: ["Python のパッケージが入りました", ""],
-    model: ["埋め込みモデルを確かめています", ""],
-    download: ["埋め込みモデルを Hugging Face から取得しています", snap.file ?? ""],
   }[snap.phase];
   if (what === undefined) return quiet;
   const [label, detail] = what;

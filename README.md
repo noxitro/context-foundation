@@ -54,12 +54,18 @@ grepping, only in workspaces that have an index. A **skill**
 as a fallback for when the MCP tools are not available. A Copilot CLI
 **extension** adds two slash commands that the user types and that run in
 the background without calling the model: `/context-setup` installs the
-Python dependencies and the embedding model, and `/context-index` builds or
+Python dependencies, and `/context-index` builds or
 updates the index (extensions are experimental in Copilot CLI and load after
 `/settings experimental on`). Python dependencies
 (about 200 MB) and the embedding model (about 490 MB) live outside the
-plugin, in a per-user folder that `/context-setup` (or
-`python -I ctxf.py setup`) fills once. With these, everything from installing
+plugin, in a per-user folder. `/context-setup` (or `python -I ctxf.py setup`)
+installs the Python dependencies once. It does not install the embedding
+model: the model is open-source software from outside PyPI (Hugging Face),
+and whether it may be used depends on the user's environment (licence,
+terms of use, network). Setup only reports that the model is not installed,
+with its source and licence; after checking, the user runs
+`python -I ctxf.py model download` themselves. Without the model, search is
+keyword-only. With these, everything from installing
 the plugin (`/plugin install`) to building the index can be done inside a
 Copilot CLI session.
 Until version 0.2 the skill was the default; why the MCP server replaced it
@@ -163,17 +169,17 @@ beforehand; 80% acceptable answers is the threshold):
 | Engine | Acceptable answers (this tool / grep only) | Median time | Median cost | Verdict |
 | --- | --- | --- | --- | --- |
 | Godot (29 questions, version 0.3) | 93.1% / 88.5% (reviewed key) | 35% lower | 32% lower | Meets the thresholds |
-| O3DE (27 questions, version 0.4.8) | 95.1% / 90.1% | 4% lower | 3% lower | Quality holds; small time and cost gain |
+| O3DE (27 questions, version 0.4.9) | 95.1% / 90.1% | 4% lower | 3% lower | Quality holds; small time and cost gain |
 
 - On O3DE, version 0.4.7 cut time and cost by about a third, but it more
   often answered from the returned passages without opening the file, and
-  missed a related point nearby (77.8% acceptable answers). Version 0.4.8
+  missed a related point nearby (77.8% acceptable answers). Version 0.4.9
   lists the other functions of the same file next to the top passages and
   asks the agent to check related code before answering. Answer quality is
   no longer below grep, and most of the time and cost gain is given back
   (total cost 7% lower, output tokens 13% lower): answer quality comes first
   (see [examples/o3de](examples/o3de/README.md)).
-- Godot has not been measured again with version 0.4.8.
+- Godot has not been measured again with version 0.4.9.
 - On Godot, the answer key as written beforehand puts both methods below 80%
   (75.9% and 74.7%); a review of the key made after the results, by reviewers
   who had not seen them, gives the figures above, and is the one taken for
@@ -206,7 +212,7 @@ setup and the first index worked from inside one session with no model
 calls. Version 0.4.4 lets the first `/context-index` without folders show a
 checklist of the workspace's folders to pick from. Version 0.4.7 stops the
 MCP server from offering its tools in workspaces without an index. Neither
-command has been tried in the app yet. Version 0.4.8 adds the related-code
+command has been tried in the app yet. Version 0.4.9 adds the related-code
 change described above.
 
 How to run it in production (setup, configuration, operation, limits) is in

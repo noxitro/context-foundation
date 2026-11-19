@@ -575,7 +575,7 @@ def test_output_that_fit_in_0_3_1_is_the_031_output():
     if os.environ.get("CF_UPDATE_GOLDEN") == "1":       # 文言を意図して変えたとき(test_mcp_cli の assert_golden と同じ)
         golden.write_bytes(out.encode("utf-8"))
     assert out.encode("utf-8") == golden.read_bytes()
-    # 0.4.8 で footer を長くした分(関連する処理を見てから答える文)、本文の見える行が 2 行減った
+    # 0.4.9 で footer を長くした分(関連する処理を見てから答える文)、本文の見える行が 2 行減った
     assert "(+23 more lines, not shown)" in out and "More matches (text not shown):" in out
 
 

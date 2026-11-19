@@ -42,8 +42,7 @@ def test_index_wizard_writes_config_and_builds_the_index(answers, tmp_path, caps
         str(ws),                 # 作業フォルダ
         str(ws / "engine"), "",  # 検索したいフォルダ 1 と、その呼び名(既定のまま)
         str(outside), "docs",    # 作業フォルダの外のフォルダと、その呼び名
-        "",                      # 終わり
-        "n",                     # 埋め込みモデルは取得しない → keyword だけ
+        "",                      # 終わり(埋め込みモデルは尋ねずに取得しない → keyword だけ)
     ]
     assert wizard_main(Namespace(action="index")) == 0
     cfg = load_config(ws / ".cf" / "config.toml")
@@ -70,13 +69,26 @@ def test_search_wizard_loops_until_an_empty_line(answers, indexed_workspace, cap
     assert "方法を keyword にしました" in out and "engine:Core/JobScheduler.cpp:" in out
 
 
+def test_setup_wizard_reports_a_missing_model_without_asking_or_downloading(answers, monkeypatch, capsys):
+    import context_foundation.embed as embed
+
+    called = []
+    monkeypatch.setattr(embed, "download_model", lambda *a, **k: called.append(a))
+    answers.append("y")                  # 尋ねられても「はい」と答える入力を置いておく。読まれないこと
+    assert wizard_main(Namespace(action="setup")) == 0
+    out = capsys.readouterr().out
+    assert not called and answers == ["y"]
+    assert "インストールされていません" in out and "model download" in out and "keyword(BM25)だけ" in out
+
+
 def test_wizard_stops_when_input_is_closed(answers):
     with pytest.raises(SystemExit):
         wizard_main(Namespace(action="index"))
 
 
-def test_closed_input_never_downloads_the_model(answers, tmp_path, monkeypatch, capsys):
-    """入力が閉じられていたら、モデルを取得しない(尋ねずに数百 MB を取得しない)。keyword だけで索引を作る。"""
+def test_the_wizard_never_downloads_the_model(answers, tmp_path, monkeypatch, capsys):
+    """モデル(PyPI の外の OSS)は取得しない。尋ねもせず、インストールされていないことと、取得のコマンドを出して、
+    keyword だけで索引を作る。"""
     import context_foundation.embed as embed
     from context_foundation.wizard import _save_state
 
@@ -90,5 +102,6 @@ def test_closed_input_never_downloads_the_model(answers, tmp_path, monkeypatch, 
     monkeypatch.setattr(embed, "download_model", lambda *a, **k: called.append(a))
     assert wizard_main(Namespace(action="index")) == 0
     out = capsys.readouterr().out
-    assert not called and "取得しませんでした" in out
+    assert not called and "埋め込みモデルがインストールされていません" in out and "model download" in out
+    assert "huggingface.co/intfloat/multilingual-e5-small" in out and "取得しますか" not in out
     assert Searcher.from_config(load_config(ws / ".cf" / "config.toml")).status()["modes"] == ["keyword"]

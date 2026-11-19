@@ -1,9 +1,13 @@
 """context-foundation の入口(標準ライブラリだけで動く)。
 
-  python -I ctxf.py setup [--no-model]   初回の用意: 依存の入った仮想環境と、埋め込みモデル
+  python -I ctxf.py setup                初回の用意: 依存の入った仮想環境(埋め込みモデルは入れない。有無だけを出す)
   python -I ctxf.py search "<質問>"      検索(init / index / status などのコマンドも同じ形で渡す)
   python -I ctxf.py session-hint         Copilot の sessionStart の hook 用(標準入力に JSON)
   python -I ctxf.py where                使う python と置き場、モデル、索引を出す(うまく動かないときの確認)
+
+埋め込みモデル(Hugging Face の OSS)は、setup では取得しない。使ってよいかは利用者の環境(ライセンス・利用の条件・
+ネットワーク)で確かめる必要があるので、setup は「インストールされていません」と入手先を出すだけに
+する。取得は、利用者が確かめたうえで `model download` を自分で実行する。pip の依存は setup が入れる。
 
 Python の依存(約 200 MB)は、次のどちらかに置く。プラグインの中には置かない(プラグインを更新しても、
 依存が変わらなければ作り直さないため。プラグインのフォルダは、更新のたびに置き換わる)。
@@ -31,7 +35,7 @@ MIN_PYTHON = (3, 11)
 # 確かめた最も新しい版。3.15 には onnxruntime の配布物(wheel)がまだ無く、pip が入れられない。
 # onnxruntime が出したら、CI の版の並び(.github/workflows/ci.yml)と pyproject の requires-python と一緒に上げる
 MAX_PYTHON = (3, 14)
-SETUP_SIZE_NOTE = "about 200 MB of Python packages from PyPI and a 490 MB embedding model from Hugging Face"
+SETUP_SIZE_NOTE = "about 200 MB of Python packages from PyPI"
 
 
 def data_home():
@@ -283,8 +287,12 @@ def _say(text):
 SETUP_USAGE = """usage: python -I ctxf.py setup [--no-model] [--gpu | --cpu]
 
 Creates a virtual environment with the Python packages (about 200 MB from PyPI) under
-the runtime folder, and downloads the embedding model (about 490 MB from Hugging Face).
---no-model skips the model (keyword-only search). Ask the user before running it.
+the runtime folder. Ask the user before running it.
+Setup does not install the embedding model (open-source weights from Hugging Face): whether
+it may be used depends on the user's environment (licence, terms of use, network), so setup
+only reports whether it is installed, and where to get it. After checking, the user runs
+`model download` themselves. Without the model, search is keyword-only.
+--no-model also skips that report.
 --gpu (Windows) installs onnxruntime-directml instead of onnxruntime, so that building an
 index computes the embeddings on the GPU (any DirectX 12 GPU). The choice is remembered
 for later setups; --cpu switches back.
@@ -564,7 +572,7 @@ def _install(py, deps, stamp, gpu):
 
 
 def _setup(argv):
-    want_model = "--no-model" not in argv
+    report_model = "--no-model" not in argv
     if sys.version_info < MIN_PYTHON or sys.version_info[:2] > MAX_PYTHON:
         _say(python_range_message())
         return 2
@@ -621,13 +629,9 @@ def _setup(argv):
     if gpu and not _healthy(py, GPU_CHECK):
         _say("  note: onnxruntime-directml is installed, but it reports no DirectML provider on this PC. "
              "Building an index will use the CPU.")
-    if want_model:
-        _say("  embedding model: checking (downloads about 490 MB the first time) ...")
-        r = subprocess.call([py, "-I", os.path.abspath(__file__), "--run", "model", "download"])
-        if r != 0:
-            _say("  the model download failed (the message above says why); search still works keyword-only. "
-                 "Run setup again once that is fixed.")
-            return 1
+    # 埋め込みモデルは取得しない(OSS を利用者の PC に勝手に入れない)。有無と入手先だけを出す
+    if report_model:
+        _say(model_report(_setup_model_info(py)))
     _say("Setup is done. Next, build an index in the workspace: "
          + entry_command() + " init <folder> [<folder> ...], then the same with index\n" + NEW_SESSION_NOTE)
     return 0
@@ -729,12 +733,82 @@ try:
         print("present: " + spec.name + "  " + str(model_folder(spec)))
     except ModelUnavailable:
         print("missing: " + spec.name + "  " + str(model_folder(spec)) +
-              "  (setup downloads it; without it, search is keyword-only)")
+              "  (not installed. Setup does not install it; to use it, check its source and licence, then run "
+              "`model download`. Without it, search is keyword-only)")
 except SystemExit:
     raise
 except Exception as e:
     print("unknown (" + type(e).__name__ + ": " + (str(e).splitlines() or [""])[0] + ")")
 """
+
+
+# setup から、仮想環境の python で動かす: 既定のモデル(今のフォルダの設定があればそのモデル)が手元にあるか。
+# 取得はしない。1 行の JSON を書く
+MODEL_SETUP_CHECK = r"""
+import json, sys
+sys.path.insert(0, sys.argv[1])
+out = {}
+try:
+    from context_foundation.config import EmbeddingConfig, find_config, load_config
+    from context_foundation.embed import MODEL_PRESETS, ModelUnavailable, model_files, model_folder, resolve_model
+    path = find_config(None)
+    emb = load_config(path).embedding if path else EmbeddingConfig()
+    if not emb.enabled:
+        out = {"state": "off", "config": str(path)}
+    else:
+        spec = resolve_model(emb)
+        p = MODEL_PRESETS.get(spec.name)
+        size = sum(p.files[n][0] for n in (spec.onnx_file, spec.tokenizer_file) if n in p.files) if p else 0
+        out = {"name": spec.name, "license": spec.license, "size_mb": round(size / 1e6),
+               "url": "" if spec.model_dir else "https://huggingface.co/" + spec.repo,
+               "folder": str(model_folder(spec)), "own_folder": bool(spec.model_dir)}
+        try:
+            model_files(spec)
+            out["state"] = "installed"
+        except ModelUnavailable:
+            out["state"] = "missing"
+except Exception as e:
+    out = {"state": "unknown", "error": type(e).__name__ + ": " + (str(e).splitlines() or [""])[0]}
+print(json.dumps(out, ensure_ascii=False))
+"""
+
+
+def _setup_model_info(py):
+    """setup の終わりに出す、埋め込みモデルの有無(取得はしない)。読めなければ state が unknown。"""
+    try:
+        p = subprocess.run([py, "-I", "-X", "utf8", "-c", MODEL_SETUP_CHECK, SRC], capture_output=True, timeout=120)
+        lines = (p.stdout or b"").decode("utf-8", "replace").strip().splitlines()
+        info = json.loads(lines[-1]) if lines else {}
+    except (OSError, subprocess.SubprocessError, ValueError) as e:
+        return {"state": "unknown", "error": str(e)}
+    return info if isinstance(info, dict) and info.get("state") else {"state": "unknown",
+                                                                      "error": "exit code %s" % p.returncode}
+
+
+def model_report(info):
+    """setup が出す、埋め込みモデルの行。入っていなければ、入手先と、利用者が自分で取得するコマンドを書く。"""
+    state = info.get("state")
+    if state == "installed":
+        return "  embedding model: installed (" + info.get("name", "") + ", " + info.get("folder", "") + ")"
+    if state == "off":
+        return "  embedding model: not used (embedding is off in " + info.get("config", "") + ")"
+    if state == "unknown":
+        return ("  embedding model: unknown (" + info.get("error", "") + "). `" + entry_command() + " model info` "
+                "shows it.")
+    where_from = (" in the folder set by [embedding] model_dir: " + info.get("folder", "") if info.get("own_folder")
+                  else ", from " + info.get("url", ""))
+    size = " about %s MB" % info["size_mb"] if info.get("size_mb") else ""
+    lines = ["  embedding model: not installed (" + info.get("name", "") + ", license " +
+             (info.get("license") or "unknown") + "," + size + where_from + ")",
+             "    Setup does not install it: it is open-source software from outside PyPI, and whether it may be "
+             "used depends on this PC's environment (licence, terms of use, network). Search is keyword-only "
+             "(BM25) until it is installed."]
+    if info.get("own_folder"):
+        lines.append("    To use it, put the model files in that folder.")
+    else:
+        lines.append("    To use it, check the model's source and licence, then run: " + entry_command() +
+                     " model download")
+    return "\n".join(lines)
 
 
 def _model_state(py):
@@ -785,7 +859,7 @@ def where():
 
 
 LAUNCHER_HELP = """context-foundation launcher. Its own commands:
-  setup [--no-model] [--gpu | --cpu]   install the Python packages and the model (setup --help says more)
+  setup [--no-model] [--gpu | --cpu]   install the Python packages; reports the model (setup --help says more)
   where                                show the Python, runtime folder, model and index in use (troubleshooting)
   session-hint [--mcp]                 used by the Copilot sessionStart hook
 Every other command goes to the tool:"""

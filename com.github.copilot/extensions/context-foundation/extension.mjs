@@ -11,7 +11,7 @@
 //     裏で動かし、走っている間は進み具合をときどき出し、終わったらそう出す。ログは .cf\context-index.log。
 //
 // /context-setup [no-model] [gpu | cpu]
-//     この PC の用意(ctxf.py setup。Python のパッケージ約 200 MB と、埋め込みモデル約 490 MB を、利用者ごとの置き場に
+//     この PC の用意(ctxf.py setup。Python のパッケージ約 200 MB を、利用者ごとの置き場に
 //     入れる)をする。利用者が打つコマンドなので、打ったことを同意とみなす(エージェントからは呼べない)。
 //     済んでいれば、確かめるだけで終わる。リポジトリを取得して隣に .venv がある人は、setup.bat を案内して何もしない。
 //     裏で動かし、進み具合をときどき出す。ログは利用者ごとの置き場の context-setup.log。
@@ -25,9 +25,9 @@ import { closeSync, existsSync, mkdirSync, openSync, readFileSync } from "node:f
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  chooseFallback, dataHome, failureMessage, findWorkspace, folderChoices, folderSchema, hasLocalVenv, initSources, joinOptions,
-  keywordOnly, lastCwd, loadSdk, makeNotifier, parseProgress, parseSetupArgs, parseSetupProgress, pickedFolders, planIndex,
-  pluginRoot, progressNote, SETUP_HELP, setupFailureMessage, setupProgressNote, setupRuntimeFolder,
+  chooseFallback, dataHome, failureMessage, findConfig, folderChoices, folderSchema, hasLocalVenv, indexFile, initSources, joinOptions,
+  keywordOnly, lastCwd, loadSdk, makeNotifier, modelMissing, parseProgress, parseSetupArgs, parseSetupProgress, pickedFolders, planIndex,
+  pluginRoot, progressNote, SETUP_HELP, setupFailureMessage, setupProgressNote, setupRuntimeFolder, workspaceOf,
 } from "./lib.mjs";
 
 const { joinSession } = await loadSdk((name) => import(name));
@@ -135,7 +135,7 @@ async function indexCommand(ctx) {
     const ctxf = join(plugin(), "ctxf.py");
     const setup = `python -I "${ctxf}" setup`;
     const cwd = lastCwd(await session.getEvents()) || process.cwd();
-    let plan = planIndex(ctx.args, cwd);
+    let plan = planIndex(ctx.args, cwd, process.env);
     if (plan.error) {
       await tell(`context-foundation: ${plan.error}`, "error");
       return;
@@ -163,14 +163,18 @@ async function indexCommand(ctx) {
       made = `設定を作りました(${join(ws, ".cf", "config.toml")}。source: ${initSources(r.out).join("、")})。` +
         "Perforce を使うなら、.cf を .p4ignore に足してください(索引には、ソースの本文の写しが入ります)。\n";
     }
-    const dir = join(ws, ".cf");
+    // 設定ファイルを渡す(作業フォルダを渡すと、ctxf.py は .cf\config.toml より先に、作業フォルダの直下の
+    // config.toml を探す。そこにあるのは、ほかの道具の設定のことがある)
+    const config = plan.config ?? join(ws, ".cf", "config.toml");
+    const dir = dirname(config);
     const log = join(dir, "context-index.log");
-    const first = plan.action === "init" || !existsSync(join(dir, "index.db"));
+    const index = indexFile(config);
+    const first = plan.action === "init" || !existsSync(index);
     const what = first ? "初めての索引" : plan.full ? "作り直し。すべて埋め込み直す" : "作り直し。変わっていない passage の埋め込みは使い回す";
     await tell(`context-foundation: ${made}索引づくりを始めました(${what}、${ws})。` +
       (first ? "大きなコードでは数十分かかります(約 8,000 ファイルで 30 分ほど)。" : "") +
       `裏で動かすので、作業を続けてかまいません。ログ: ${log}`);
-    const args = [ctxf, "index", "--config", ws, ...(plan.full ? ["--full"] : [])];
+    const args = [ctxf, "index", "--config", config, ...(plan.full ? ["--full"] : [])];
     const stop = watchProgress(log, t0);
     const r = await run(args, log).finally(stop);
     const sec = Math.round((Date.now() - t0) / 1000);
@@ -178,13 +182,15 @@ async function indexCommand(ctx) {
       await tell(`context-foundation: ${cannotStart(r)}`, "error");
     } else if (r.code === 0) {
       const out = readText(log);
-      await tell(`context-foundation: 索引ができました(${sec} 秒、${join(dir, "index.db")})。` +
+      await tell(`context-foundation: 索引ができました(${sec} 秒、${index})。` +
         (keywordOnly(out) ? `埋め込みモデルが無いので、keyword だけの索引です(意味での検索はできません。わけはログ: ${log})。` : "") +
         (first
-          ? "新しいセッションから、エージェントが grep より先にこの索引で探します(今のセッションでは、始めに「索引が無い」と伝わっているので、使うなら頼んでください)"
+          ? "今のセッションでも、次の依頼から検索の道具が出ます(エージェントには始めに「索引が無い」と伝わっているので、" +
+            "使うなら頼んでください。このセッションを始めた後に用意(setup)をした場合は、新しいセッションから出ます)。" +
+            "新しいセッションからは、エージェントが grep より先にこの索引で探します"
           : "検索は、次の検索からこの索引を使います"));
     } else {
-      await tell(`context-foundation: ${failureMessage(r.code, readText(log), log, setup)}`, "error");
+      await tell(`context-foundation: ${failureMessage(r.code, readText(log), log, setup, index)}`, "error");
     }
   } finally {
     running = null;
@@ -210,9 +216,8 @@ async function setupCommand(ctx) {
     mkdirSync(home, { recursive: true });
     const log = join(home, "context-setup.log");
     const t0 = Date.now();
-    const model = !opts.args.includes("--no-model");
     await tell("context-foundation: 用意(setup)を始めました。" +
-      `Python のパッケージ(PyPI から約 200 MB)${model ? "と、埋め込みモデル(Hugging Face から約 490 MB)" : ""}を、${home} に入れます。` +
+      `Python のパッケージ(PyPI から約 200 MB)を、${home} に入れます(埋め込みモデルは入れません)。` +
       "初めては数分かかります(済んでいれば、確かめるだけで終わります)。裏で動かすので、作業を続けてかまいません。" +
       `ログ: ${log}`);
     const stop = watchProgress(log, t0, parseSetupProgress, setupProgressNote);
@@ -227,15 +232,28 @@ async function setupCommand(ctx) {
       return;
     }
     const out = readText(log);
-    const ws = findWorkspace(lastCwd(await session.getEvents()) || process.cwd());
-    const next = ws && existsSync(join(ws, ".cf", "index.db"))
+    let config = "";
+    try {
+      config = findConfig(lastCwd(await session.getEvents()) || process.cwd(), process.env);
+    } catch {
+      // CF_CONFIG の指す先が無い(/context-index が、そのわけを出す)
+    }
+    const ws = config && workspaceOf(config);
+    const next = config && existsSync(indexFile(config))
       ? `この作業フォルダには索引があります(${ws})。検索の道具は、新しいセッションから出ます(動いているセッションには出ません)`
       : ws
         ? "次に /context-index を打って、索引を作ってください。できたら、新しいセッションを始めます"
         : "次に /context-index を打ち、索引に入れるフォルダを選んでください(並べて打っても構いません。例: /context-index Engine Docs)。" +
           "できたら、新しいセッションを始めます";
+    // 埋め込みモデル(PyPI の外の OSS)は、利用者の環境で確かめてから入れるものなので、入れずに、無いことを知らせる
+    const missing = modelMissing(out);
+    const modelNote = !missing ? ""
+      : "埋め込みモデルはインストールされていません(Hugging Face の OSS なので、setup では入れません)。" +
+        "意味での検索には要ります。入手先とライセンスを確かめ、この PC で使ってよければ、" +
+        (missing.command ? `ターミナルで次を実行してください: ${missing.command}\n` : "設定の model_dir のフォルダにモデルを置いてください。\n") +
+        "入れるまでは、検索は keyword だけです。\n";
     await tell(`context-foundation: 用意ができました(${sec} 秒、置き場: ${setupRuntimeFolder(out) || home})。` +
-      (model ? "" : "モデルは取っていないので、検索は keyword だけです。") + next);
+      modelNote + next);
   } finally {
     running = null;
   }
@@ -244,7 +262,7 @@ async function setupCommand(ctx) {
 const commands = [
   {
     name: "context-setup",
-    description: "[no-model] [gpu | cpu] — この PC の検索の用意(context-foundation)。Python のパッケージ約 200 MB と埋め込みモデル約 490 MB を入れる。初めに 1 回。裏で動かす(モデルは呼ばない)",
+    description: "[no-model] [gpu | cpu] — この PC の検索の用意(context-foundation)。Python のパッケージ約 200 MB を入れる(埋め込みモデルは入れず、有無を知らせる)。初めに 1 回。裏で動かす(モデルは呼ばない)",
     handler: (ctx) => {
       setupCommand(ctx).catch((err) => tell(`context-foundation: ${err?.message ?? err}`, "error"));
     },
