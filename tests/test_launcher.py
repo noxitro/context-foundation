@@ -144,6 +144,20 @@ def test_setup_with_an_unsupported_python_runs_itself_again_with_a_supported_one
     assert not (tmp_path / "home" / "runtime").exists()
 
 
+def test_a_found_python_that_cannot_be_started_is_named_not_reported_missing(monkeypatch, tmp_path, capsys):
+    """見つけた版を起動できなかったときは、その版で自分で動かすコマンドを出す(「見つからない」とは言わない)。"""
+    exe = str(tmp_path / "py314" / "python.exe")
+    ctxf, children = _unsupported_setup(monkeypatch, tmp_path, (exe, "3.14.2"))
+
+    def cannot_start(cmd, env=None):
+        raise PermissionError("blocked")
+    monkeypatch.setattr(ctxf, "_run_child", cannot_start)
+    assert ctxf.setup([]) == 2
+    out = capsys.readouterr().out
+    assert "could not start it (blocked)" in out and f'"{exe}" -I ' in out and "none was found" not in out
+    assert not (tmp_path / "home" / "runtime").exists()
+
+
 def test_setup_with_an_unsupported_python_and_no_other_says_what_to_install(monkeypatch, tmp_path, capsys):
     ctxf, children = _unsupported_setup(monkeypatch, tmp_path, None)
     assert ctxf.setup([]) == 2 and children == []

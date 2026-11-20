@@ -72,19 +72,28 @@ def keyword_coverage(db, tokens: list[str]) -> float:
 # 同じファイルのほかの名前を添えるとき、名前を取る passage の種類(名前が中身を表すもの)
 RELATED_KINDS = ("function", "class", "struct", "enum", "macro", "typedef", "union", "declaration")
 RELATED_FIRST = 3          # 名前を添えるのは、上位のこの件数の passage だけ(出力が膨らまないように)
+# 同じファイルの passage を、id の範囲(主キー)で読む(_add_related)
+RELATED_SQL = "SELECT kind, symbols FROM chunks WHERE id BETWEEN ? AND ? AND file_id = ? ORDER BY start_line"
 
 
 def _add_related(db, passages: list[dict], limit: int) -> None:
     """上位の passage に、同じファイルにあるほかの関数・クラスの名前を、行の順に limit 個まで添える(p["related"])。
     検索が返した passage の近くにある関連の処理(別の版、呼び出し元、次の手順)を、grep の往復なしで見せるため。
-    名前は索引の symbols から取る(ファイルは読まない)。上位に出ている passage の名前は除く。"""
+    名前は索引の symbols から取る(ファイルは読まない)。上位に出ている passage の名前は除く。
+    limit を超えた数は p["related_more"] に入れる(名前の並びに "+N more" を混ぜない。JSON の出力で名前に見えるため)。
+
+    chunks には file_id の索引が無い(足すと、今ある索引で効かない)。passage はファイルごとに続いた id で書いて
+    あるので(indexer の _ChunkReuse と同じ前提)、その passage の id からファイルの passage の数(files.chunks)の
+    範囲だけを、主キーで読む(file_id だけで探すと、検索のたびに chunks を全部読む)。"""
     shown = {s for p in passages for s in (p.get("symbols") or [])}
     for p in passages[:RELATED_FIRST]:
-        fid = p.get("file_id")
-        if fid is None:
+        fid, cid = p.get("file_id"), p.get("chunk_id")
+        if fid is None or cid is None:
             continue
+        row = db.execute("SELECT chunks FROM files WHERE id = ?", (fid,)).fetchone()
+        span = max(int(row[0]) if row else 0, 1) - 1
         names: list[str] = []
-        rows = db.execute("SELECT kind, symbols FROM chunks WHERE file_id = ? ORDER BY start_line", (fid,))
+        rows = db.execute(RELATED_SQL, (cid - span, cid + span, fid))
         for kind, symbols in rows:
             if kind not in RELATED_KINDS:
                 continue
@@ -92,7 +101,9 @@ def _add_related(db, passages: list[dict], limit: int) -> None:
                 if s and s not in shown and s not in names:
                     names.append(s)
         if names:
-            p["related"] = names[:limit] + ([f"+{len(names) - limit} more"] if len(names) > limit else [])
+            p["related"] = names[:limit]
+            if len(names) > limit:
+                p["related_more"] = len(names) - limit
 
 
 class Searcher:

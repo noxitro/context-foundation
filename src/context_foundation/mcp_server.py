@@ -101,7 +101,6 @@ class _State:
         self.warm_up_started = False
         # 最後に道具の一覧を返したときに、索引があったか(None は、まだ返していない)。変わったら知らせる
         self.listed_with_index: bool | None = None
-        self.watch_started = False
 
     def searcher(self):
         from .search import Searcher

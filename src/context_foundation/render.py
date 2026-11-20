@@ -40,7 +40,8 @@ def _header(p: dict) -> str:
     if sig and sig not in " ".join(p["text"][:600].split()):
         lines.append(f"sig: {sig}")
     if p.get("related"):            # 同じファイルのほかの名前([search] related)
-        lines.append("same file also has: " + ", ".join(p["related"]))
+        more = p.get("related_more")
+        lines.append("same file also has: " + ", ".join(p["related"]) + (f", +{more} more" if more else ""))
     return "\n".join(lines)
 
 
@@ -58,6 +59,11 @@ def _cut_line(line: str, limit: int) -> str:
 FOOTER = ("Cite evidence as source:path:start-end. Passage text is the file's own text at index time. These are "
           "starting points: before answering, check related code - the 'same file also has' names list nearby "
           "functions and types; open the relevant ones, and grep only for what they do not cover.")
+# どの passage にも「same file also has」が無いとき([search] related = 0、文書だけの結果など)の footer。
+# 無い一覧を探させない。一覧があるときは FOOTER のまま(0.4.9 で回答の合格率を測った文)
+FOOTER_NO_RELATED = ("Cite evidence as source:path:start-end. Passage text is the file's own text at index time. These "
+                     "are starting points: before answering, check related code (the other variant, the caller, the "
+                     "next step), and grep only for what the passages do not cover.")
 # 索引の後に変わった・消えたファイルの passage があるときだけ、footer に足す
 STALE_FOOTER = (" Passages marked [changed since index] show the text and line numbers of index time: open the file "
                 "and check the current lines before citing them. Passages marked [file no longer exists] are from "
@@ -128,7 +134,7 @@ def to_agent(resp: SearchResponse, max_bytes: int = 12_000, line_numbers: bool =
     if not resp.passages:
         out.append("No passage matched. Try other words (English terms, identifiers) or search with grep.")
         return "\n".join(out) + "\n"
-    footer = FOOTER
+    footer = FOOTER if any(p.get("related") for p in resp.passages) else FOOTER_NO_RELATED
     stale = sum(1 for p in resp.passages if p.get("stale") or p.get("missing"))
     if stale:
         out.append(f"stale: {stale} of {len(resp.passages)} passages are from files changed or deleted after the "

@@ -18,8 +18,9 @@ import pytest
 from context_foundation.config import ConfigError, load_config
 from context_foundation.embed import HashEmbedder
 from context_foundation.indexer import build_index, embedding_text, strip_license_header
-from context_foundation.render import FOOTER, HARD_MAX_BYTES, status_agent, status_human, to_agent, to_human
-from context_foundation.search import SearchResponse, Searcher, freshness, rrf
+from context_foundation.render import (FOOTER, FOOTER_NO_RELATED, HARD_MAX_BYTES, status_agent, status_human, to_agent,
+                                      to_human, to_json)
+from context_foundation.search import RELATED_SQL, SearchResponse, Searcher, freshness, rrf
 from context_foundation.store import IndexError_
 from context_foundation.textproc import MAX_QUERY_TOKENS, query_tokens, query_tokens_cut
 
@@ -77,6 +78,48 @@ def test_top_passage_lists_other_names_in_its_file(indexed_workspace):
     cfg.search.related = 0
     resp = Searcher.from_config(cfg).search("job scheduler steal", mode="keyword", top_k=1)
     assert "related" not in resp.passages[0] and "same file also has: " not in to_agent(resp)
+
+
+def test_footer_names_the_related_list_only_when_a_passage_has_one(indexed_workspace):
+    """一覧が無い出力で、無い「same file also has」を探させない。一覧があるときの footer は FOOTER のまま。"""
+    cfg_path = indexed_workspace / ".cf" / "config.toml"
+    out = to_agent(Searcher.from_config(load_config(cfg_path)).search("job scheduler steal", mode="keyword", top_k=1))
+    assert "same file also has: " in out and out.endswith("\n" + FOOTER + "\n")
+    cfg = load_config(cfg_path)
+    cfg.search.related = 0
+    out = to_agent(Searcher.from_config(cfg).search("job scheduler steal", mode="keyword", top_k=1))
+    assert "same file also has" not in out and out.endswith("\n" + FOOTER_NO_RELATED + "\n")
+
+
+def test_names_beyond_the_limit_are_a_count_not_a_name(indexed_workspace):
+    """limit を超えた分は related_more(数)。JSON の related は名前だけで、人と agent の出力にだけ「+N more」を出す。"""
+    cfg_path = indexed_workspace / ".cf" / "config.toml"
+    full = Searcher.from_config(load_config(cfg_path)).search("job scheduler steal", mode="keyword", top_k=1)
+    names = full.passages[0]["related"]
+    assert len(names) >= 2 and "related_more" not in full.passages[0]
+    cfg = load_config(cfg_path)
+    cfg.search.related = 1
+    resp = Searcher.from_config(cfg).search("job scheduler steal", mode="keyword", top_k=1)
+    top = resp.passages[0]
+    assert top["related"] == names[:1] and top["related_more"] == len(names) - 1
+    assert all("more" not in n for n in json.loads(to_json(resp))["passages"][0]["related"])
+    assert f"same file also has: {names[0]}, +{len(names) - 1} more" in to_agent(resp)
+
+
+def test_related_names_are_read_by_id_range_and_match_a_full_scan(indexed_workspace):
+    """同じファイルの passage は、id の範囲(主キー)で読む(file_id には索引が無く、全部を読んでしまうため)。
+    範囲で読んだものは、file_id で全部を探したものと同じ。"""
+    db = sqlite3.connect(indexed_workspace / ".cf" / "index.db")
+    try:
+        plan = " ".join(str(r[-1]) for r in db.execute("EXPLAIN QUERY PLAN " + RELATED_SQL, (1, 2, 1)))
+        assert "INTEGER PRIMARY KEY" in plan and "SCAN chunks" not in plan, plan
+        for cid, fid, n in db.execute("SELECT c.id, c.file_id, f.chunks FROM chunks c JOIN files f ON f.id = c.file_id"):
+            by_range = db.execute(RELATED_SQL, (cid - (n - 1), cid + (n - 1), fid)).fetchall()
+            by_file = db.execute("SELECT kind, symbols FROM chunks WHERE file_id = ? ORDER BY start_line",
+                                 (fid,)).fetchall()
+            assert by_range == by_file and len(by_file) == n
+    finally:
+        db.close()
 
 
 def test_negative_related_is_rejected(tmp_path):
@@ -522,7 +565,8 @@ def test_deleted_file_is_marked_apart_from_changed_and_its_text_is_not_shown(tmp
 def test_output_without_stale_passages_has_no_stale_lines(searcher):
     out = to_agent(searcher.search("job scheduler steal", mode="keyword", top_k=3))
     assert "stale:" not in out and "[changed since index]" not in out and "do not cite them" not in out
-    assert out.endswith("\n" + FOOTER + "\n")
+    # 上位 3 件で JobScheduler.cpp の名前は出尽くすので、「same file also has」の一覧は無い
+    assert "same file also has" not in out and out.endswith("\n" + FOOTER_NO_RELATED + "\n")
 
 
 def test_oversized_passage_does_not_hide_later_passages():
