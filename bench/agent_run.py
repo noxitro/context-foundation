@@ -322,6 +322,8 @@ def command_for(args, exe: str, prompt: str, usage_file: Path, share: Path, root
                                          "args": ["-I", "-m", "context_foundation", "serve"], "tools": ["*"]}}}
         cmd += ["--additional-mcp-config", json.dumps(mcp), "--allow-tool", MCP_NAME]
         tools.append(MCP_NAME)
+    if args.lsp_config:                 # 言語サーバー(clangd など)の道具 lsp も渡す(設定は、この回の設定フォルダに置く)
+        tools.append("lsp")
     cmd += ["--available-tools", ",".join(tools)]
     for _, d in added_dirs(args, roots):
         cmd += ["--add-dir", str(d)]
@@ -374,6 +376,8 @@ def run_one(args, exe: str, case: dict, trial: int, mapper: Mapper, roots: list[
         env.pop(v, None)
     if args.provider == "copilot":
         env.pop("COPILOT_PROVIDERS_CONFIG", None)
+    if args.lsp_config:
+        shutil.copyfile(args.lsp_config, home / "lsp-config.json")
     hooks = hooks_for(args)
     if hooks:
         (home / "hooks").mkdir()
@@ -441,6 +445,7 @@ def main() -> int:
     ap.add_argument("--price", action="append", default=[], metavar="KIND=USD",
                     help="100 万トークンあたりの単価(input / output / cache_read / cache_write)。BYOK の費用の見積もり用")
     ap.add_argument("--cxxref", help="agent_grep_cxxref で使う、cxxref を置いたフォルダ")
+    ap.add_argument("--lsp-config", help="Copilot CLI の lsp-config.json。渡すと、どの手法でも道具 lsp を足す")
     ap.add_argument("--trust-folder", action="store_true", help="作業フォルダの設定(hooks・MCP)を読ませる")
     ap.add_argument("--no-hint", action="store_true",
                     help="agent_cf で、セッションの始めの 1 文(hook)を置かない(skill の説明文だけにする)")
