@@ -214,7 +214,13 @@ def python_on_path_problem() -> str | None:
         ok = subprocess.run([exe, "-I", "-c", "pass"], capture_output=True, timeout=20).returncode == 0
     except (OSError, subprocess.SubprocessError):
         ok = False
-    return None if ok else f"`python`({exe})で Python が起動しません"
+    if ok:
+        return None
+    if os.name == "nt" and Path(exe).parent.name.lower() == "windowsapps":
+        return (f"`python`({exe})は、Microsoft Store へ案内する Windows のショートカットで、Python ではありません"
+                "(設定 > アプリ > アプリの詳細設定 > アプリ実行エイリアス で python.exe を切ると、PATH の Python が"
+                "見つかるようになります)")
+    return f"`python`({exe})で Python が起動しません"
 
 
 def _register(exe: str, mp: str, args) -> int:

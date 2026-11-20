@@ -31,14 +31,17 @@ MCP サーバー・hook・skill は、どれも `python` で入口の `ctxf.py` 
 ません(下の「うまく動かないとき」)。
 
 - 用意(setup)に使う Python は 3.11 から 3.14 です。3.15 以降には、検索に
-  要る onnxruntime の配布物がまだありません。`python` が 3.15 以降なら、
-  setup だけを対応する版で動かします(Windows なら
-  `py -3.14 -I "<プラグインのフォルダ>\ctxf.py" setup`)。`python` は
-  そのままで構いません(入口は、setup が作った仮想環境の Python で道具を
-  動かします)
+  要る onnxruntime の配布物がまだありません。`python` が 3.15 以降でも、
+  この PC に 3.11 から 3.14 があれば、setup はその版(新しいもの)で
+  自分を動かし直します(PATH の `python3.14` などと、Windows の
+  `py -3.14` などを探します)。無ければ、3.14 を入れるよう知らせます。
+  `python` はそのままで構いません(入口は、setup が作った仮想環境の
+  Python で道具を動かします)
 - python.org のインストーラーは、既定では `python` を PATH に足しません
   (`py` だけが入ります)。入れるときに「Add python.exe to PATH」を選ぶか、
-  あとから PATH に足します
+  あとから PATH に足します。足さないと、`python` は Microsoft Store へ
+  案内する Windows のショートカット(`WindowsApps\python.exe`)になり、
+  Python は起動しません。`where`・`setup.bat`・登録は、そうと名指しして知らせます
 - Linux と macOS では、`python3` しか無いことが多いです。プラグインは
   `python` を起動するので、`python` という名前でも起動できるようにして
   ください(Debian・Ubuntu なら python-is-python3 のパッケージ、ほかは
@@ -247,8 +250,8 @@ python -I "<プラグインのフォルダ>\ctxf.py" model download
   隣に `.venv` がある)は、`.venv` が先に使われるので、このコマンドは何も
   せずに `setup.bat` を案内します
 - Python は、MCP サーバーと hook と同じく、PATH の `python` で動かします。
-  `python` が 3.15 以降なら、断って、3.14 以前で動かすコマンドを出します
-  (上の「入れ方は 2 つ」)
+  `python` が 3.15 以降なら、この PC の 3.14 以前の版で動かし直します。
+  無ければ断って、入れる版を知らせます(上の「入れ方は 2 つ」)
 - 用意が済んでも、動いているセッションには検索の道具は出ません。
   `/context-index` は、同じセッションのまま打てます
 
