@@ -53,11 +53,19 @@ call :importable || (
 )
 ".venv\Scripts\python.exe" -I "%~dp0ctxf.py" --run wizard setup || goto :failed
 rem The Copilot plugin starts its MCP server and hook with the command `python`, not with py.
+rem The python.org installer does not add `python` to PATH by default; then `python` is the Microsoft Store
+rem shortcut (WindowsApps\python.exe), which does not start Python. Say so plainly: the plugin does not work then.
 python -c "pass" >nul 2>&1 || (
   echo.
-  echo Note: the command `python` does not start Python here. The Copilot plugin ^(register-copilot.bat^)
-  echo starts its search tool and session hook with `python`, so add Python to PATH before registering
-  echo ^(the python.org installer has the option "Add python.exe to PATH"^).
+  echo ======================================================================================
+  echo WARNING: the command `python` does not start Python here, so the Copilot plugin will not work.
+  echo The plugin ^(register-copilot.bat^) starts its search tool and session hook with `python`.
+  echo The .bat files in this folder work as they are. To fix the plugin, do one of these, then open a new
+  echo command prompt and check that `python --version` prints a version:
+  echo   - Run the python.org installer again, choose Modify, and turn on "Add Python to environment variables".
+  echo   - If `where python` shows ...\WindowsApps\python.exe first, that is the Microsoft Store shortcut, not
+  echo     Python: turn off python.exe under Settings ^> Apps ^> Advanced app settings ^> App execution aliases.
+  echo ======================================================================================
 )
 if "%~1"=="" pause
 exit /b 0

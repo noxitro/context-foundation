@@ -425,6 +425,18 @@ def setup(argv):
         sys.stdout.write("--gpu installs onnxruntime-directml, which exists for Windows only. On other systems, "
                          "install an onnxruntime build with a GPU provider into the virtual environment yourself.\n")
         return 2
+    if not python_supported(sys.version_info) and not os.environ.get(SETUP_REDIRECTED):
+        found = find_supported_python()
+        if found is not None:
+            exe, ver = found
+            _say("Python %s (%s) is not supported; setup uses Python %s instead: %s"
+                 % ("%d.%d.%d" % tuple(sys.version_info[:3]), sys.executable, ver, exe))
+            # 子(対応する版)が排他と仮想環境づくりをする。子が見つけ直さないよう印を付ける
+            env = dict(os.environ, **{SETUP_REDIRECTED: "1"})
+            try:
+                return _run_child([exe, "-I", os.path.abspath(__file__), "setup"] + list(argv), env=env)
+            except OSError as e:
+                _say("  could not start it (%s)" % e)
     os.makedirs(runtime_dir(), exist_ok=True)
     lock = os.path.join(runtime_dir(), "setup.lock")
     try:
@@ -446,6 +458,56 @@ def setup(argv):
             pass
 
 
+# setup を、対応する版の python で起こし直したことの印(子が、さらに探し直さないため)
+SETUP_REDIRECTED = "CF_SETUP_REDIRECTED"
+# 探す python が、仮想環境を作れるか(Debian 系は python3-venv を入れないと ensurepip が無い)も一緒に確かめる
+PYTHON_PROBE = "import sys, venv, ensurepip; print(sys.executable); print('%d.%d.%d' % sys.version_info[:3])"
+
+
+def python_supported(version_info):
+    return MIN_PYTHON <= tuple(version_info[:2]) <= MAX_PYTHON
+
+
+def python_candidates():
+    """setup に使えそうな python の起動のしかたを、新しい版から順に返す。PATH の python3.14 など(Windows の
+    Python install manager も、この名前を PATH に置く)と、Windows では py ランチャーの py -3.14 など。"""
+    py = which_on_path("py") if os.name == "nt" else None
+    out = []
+    for minor in range(MAX_PYTHON[1], MIN_PYTHON[1] - 1, -1):
+        exe = which_on_path("python%d.%d" % (MAX_PYTHON[0], minor))
+        if exe:
+            out.append([exe])
+        if py:
+            out.append([py, "-%d.%d" % (MAX_PYTHON[0], minor)])
+    return out
+
+
+def _probe_python(cmd):
+    """cmd が、対応する版の、仮想環境を作れる python なら (実行ファイルのパス, 版)。でなければ None。
+    標準入力は渡さない(入っていない版を py が「入れますか」と聞いて止まらないように)。"""
+    try:
+        p = subprocess.run(cmd + ["-I", "-c", PYTHON_PROBE], stdin=subprocess.DEVNULL, capture_output=True,
+                           text=True, timeout=20)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    lines = (p.stdout or "").strip().splitlines()
+    if p.returncode != 0 or len(lines) != 2 or not re.fullmatch(r"\d+\.\d+\.\d+", lines[1]):
+        return None
+    exe, ver = lines[0].strip(), lines[1]
+    if not exe or not python_supported(tuple(int(x) for x in ver.split(".")[:2])):
+        return None
+    return exe, ver
+
+
+def find_supported_python():
+    """この PC にある、setup に使える python のうち、いちばん新しい版の (実行ファイルのパス, 版)。無ければ None。"""
+    for cmd in python_candidates():
+        found = _probe_python(cmd)
+        if found is not None:
+            return found
+    return None
+
+
 def python_range_message():
     """この python では setup ができないときの文面。使える版と、その版で setup を流すコマンドを書く。"""
     want = "%d.%d" % MAX_PYTHON
@@ -453,10 +515,11 @@ def python_range_message():
     cmd = ("py -" + want if os.name == "nt" else "python" + want) + ' -I "' + os.path.join(HERE, "ctxf.py") + '" setup'
     why = (" (onnxruntime, which the search needs, has no build for it yet)" if sys.version_info[:2] > MAX_PYTHON
            else "")
-    return ("Python %s is not supported%s. Setup needs Python %d.%d to %s. Install Python %s from "
-            "https://www.python.org/downloads/ and run setup with it: %s\n"
+    manager = (" (or, with the Python install manager, `py install %s`)" % want) if os.name == "nt" else ""
+    return ("Python %s is not supported%s. Setup needs Python %d.%d to %s, and none was found on this PC. "
+            "Install Python %s from https://www.python.org/downloads/%s and run setup again (or with it: %s)\n"
             "(`python` itself may stay as it is: the plugin starts this launcher with it, and the launcher then uses "
-            "the virtual environment that setup made.)" % ((this, why) + MIN_PYTHON + (want, want, cmd)))
+            "the virtual environment that setup made.)" % ((this, why) + MIN_PYTHON + (want, want, manager, cmd)))
 
 
 # 仮想環境の中で、いちばん深いファイルまでの文字数(onnxruntime の中のもの。実測 143 に余裕を足す)。
@@ -573,7 +636,7 @@ def _install(py, deps, stamp, gpu):
 
 def _setup(argv):
     report_model = "--no-model" not in argv
-    if sys.version_info < MIN_PYTHON or sys.version_info[:2] > MAX_PYTHON:
+    if not python_supported(sys.version_info):
         _say(python_range_message())
         return 2
     deps = dependencies()
@@ -702,6 +765,20 @@ def which_on_path(name):
             if os.path.exists(p) and not os.path.isdir(p) and os.access(p, os.X_OK):
                 return p
     return None
+
+
+# PATH の `python` で Python が起動しないときの直し方(where と setup.bat が出す)
+PATH_PYTHON_FIX = ("The Copilot MCP server and session hook start with `python`, so Copilot gets no search tool. "
+                   "Add Python to PATH (the python.org installer has the option \"Add python.exe to PATH\").")
+STORE_ALIAS_NOTE = ("This is the Windows shortcut that offers Python from the Microsoft Store, not Python. "
+                    + PATH_PYTHON_FIX + " Or turn off python.exe under Settings > Apps > Advanced app settings > "
+                    "App execution aliases, so that the Python on PATH is found.")
+
+
+def is_store_alias(exe):
+    """Windows の、Microsoft Store へ案内する python.exe(%LOCALAPPDATA%\\Microsoft\\WindowsApps の)か。
+    Store から入れた Python もここに置かれるので、起動しなかったときにだけ使う。"""
+    return os.name == "nt" and os.path.basename(os.path.dirname(exe)).lower() == "windowsapps"
 
 
 def _python_version(exe):
@@ -841,8 +918,10 @@ def where():
     if on_path:
         ver = _python_version(on_path)
         _say("PATH python: " + on_path + "  (" + ("Python " + ver if ver else "does not start") + ")")
+        if not ver:
+            _say("  " + PATH_PYTHON_FIX if not is_store_alias(on_path) else "  " + STORE_ALIAS_NOTE)
     else:
-        _say("PATH python: none. The Copilot MCP server and session hook start with `python`; add Python to PATH.")
+        _say("PATH python: none. " + PATH_PYTHON_FIX)
     _say("python:    " + (py + "  (" + kind + ")" if py else "none: " + reason))
     stamp = _read_stamp()
     rt = runtime_dir()
@@ -912,6 +991,22 @@ def _wait(child):
             pass
 
 
+def _run_child(cmd, env=None):
+    """子を起こして終わりを待ち、終了コードを返す。起こせなければ OSError。"""
+    child = subprocess.Popen(cmd, **({} if env is None else {"env": env}))
+    try:
+        return _wait(child)
+    except KeyboardInterrupt:
+        # Ctrl+C は子にも届いている。子を止めずに後始末(途中までの埋め込みを書き残すなど)を待ち、子の終了コード
+        # (130)を返す。2 回目の Ctrl+C では、子を残さないように止めてから上げる
+        try:
+            return _wait(child)
+        except KeyboardInterrupt:
+            child.kill()
+            child.wait()
+            raise
+
+
 def main():
     for stream in (sys.stdout, sys.stderr):
         try:
@@ -938,21 +1033,10 @@ def main():
         sys.stdout.write(not_ready_message(reason, kind))
         return 4
     try:
-        child = subprocess.Popen([py, "-I", os.path.abspath(__file__), "--run"] + argv)
+        rc = _run_child([py, "-I", os.path.abspath(__file__), "--run"] + argv)
     except OSError as e:
         sys.stdout.write("context-foundation could not start (" + str(e) + "). Search with grep meanwhile.\n")
         return 4
-    try:
-        rc = _wait(child)
-    except KeyboardInterrupt:
-        # Ctrl+C は子にも届いている。子を止めずに後始末(途中までの埋め込みを書き残すなど)を待ち、子の終了コード
-        # (130)を返す。2 回目の Ctrl+C では、子を残さないように止めてから上げる
-        try:
-            rc = _wait(child)
-        except KeyboardInterrupt:
-            child.kill()
-            child.wait()
-            raise
     lost = None
     if rc == VENV_LAUNCHER_LOST and os.name == "nt":
         lost = PYTHON_LOST       # 仮想環境を作った python が消えた(pyvenv.cfg から前もって気づけなかった)

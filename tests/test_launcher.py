@@ -112,9 +112,82 @@ def test_setup_refuses_a_python_newer_than_the_tested_range(monkeypatch, tmp_pat
     assert ctxf._setup([]) == 2
     out = capsys.readouterr().out
     assert "3.15.2 is not supported" in out and "onnxruntime" in out and "3.11 to 3.14" in out
+    assert "none was found on this PC" in out
     assert ("py -3.14 -I" if os.name == "nt" else "python3.14 -I") in out and 'ctxf.py" setup' in out
     assert "network" not in out
     assert started == [] and not (tmp_path / "home" / "runtime" / "venv").exists()   # 何も作らない
+
+
+def _unsupported_setup(monkeypatch, tmp_path, found):
+    """3.15 で setup を起こしたときの形。find_supported_python は found を返し、子の起動は覚えるだけにする。"""
+    ctxf = load_launcher(monkeypatch, tmp_path / "home")
+    monkeypatch.delenv(ctxf.SETUP_REDIRECTED, raising=False)
+    monkeypatch.setattr(sys, "version_info", (3, 15, 0, "final", 0))
+    monkeypatch.setattr(ctxf, "find_supported_python", lambda: found)
+    children = []
+    monkeypatch.setattr(ctxf, "_run_child", lambda cmd, env=None: children.append((cmd, env)) or 0)
+    monkeypatch.setattr(ctxf.subprocess, "call", lambda *a, **k: pytest.fail("must not create a venv itself"))
+    return ctxf, children
+
+
+def test_setup_with_an_unsupported_python_runs_itself_again_with_a_supported_one(monkeypatch, tmp_path, capsys):
+    """`python` が 3.15 でも、この PC に 3.14 などがあれば、それで setup をやり直す(利用者が py -3.14 を打たなくてよい)。
+    排他と仮想環境づくりは子がする(親は置き場に何も作らない)。"""
+    exe = str(tmp_path / "py314" / "python.exe")
+    ctxf, children = _unsupported_setup(monkeypatch, tmp_path, (exe, "3.14.2"))
+    assert ctxf.setup(["--no-model", "--cpu"]) == 0
+    (cmd, env), = children
+    assert cmd == [exe, "-I", os.path.abspath(ctxf.__file__), "setup", "--no-model", "--cpu"]
+    assert env[ctxf.SETUP_REDIRECTED] == "1"
+    out = capsys.readouterr().out
+    assert "3.15.0" in out and "not supported" in out and "uses Python 3.14.2 instead: " + exe in out
+    assert not (tmp_path / "home" / "runtime").exists()
+
+
+def test_setup_with_an_unsupported_python_and_no_other_says_what_to_install(monkeypatch, tmp_path, capsys):
+    ctxf, children = _unsupported_setup(monkeypatch, tmp_path, None)
+    assert ctxf.setup([]) == 2 and children == []
+    assert "none was found on this PC" in capsys.readouterr().out
+
+
+def test_a_redirected_setup_does_not_search_again(monkeypatch, tmp_path, capsys):
+    """子が(思いがけず)対応しない版だったときに、探し直して起こし合い続けない。"""
+    ctxf, children = _unsupported_setup(monkeypatch, tmp_path, ("x", "3.14.0"))
+    monkeypatch.setenv(ctxf.SETUP_REDIRECTED, "1")
+    assert ctxf.setup([]) == 2 and children == []
+
+
+def test_an_argument_error_is_reported_before_another_python_is_searched(monkeypatch, tmp_path, capsys):
+    ctxf, children = _unsupported_setup(monkeypatch, tmp_path, ("x", "3.14.0"))
+    assert ctxf.setup(["--bogus"]) == 2 and children == []
+    assert "unknown option" in capsys.readouterr().out
+
+
+def test_python_candidates_are_newest_first_and_use_the_py_launcher_on_windows(monkeypatch, tmp_path):
+    ctxf = load_launcher(monkeypatch, tmp_path / "home")
+    on_path = {"python3.12": "/bin/python3.12", "python3.14": "/bin/python3.14", "py": "C:/Windows/py.exe"}
+    monkeypatch.setattr(ctxf, "which_on_path", on_path.get)
+    want = [["/bin/python3.14"], ["/bin/python3.12"]]
+    assert ctxf.python_candidates() == (
+        [["/bin/python3.14"], ["C:/Windows/py.exe", "-3.14"], ["C:/Windows/py.exe", "-3.13"],
+         ["/bin/python3.12"], ["C:/Windows/py.exe", "-3.12"], ["C:/Windows/py.exe", "-3.11"]]
+        if os.name == "nt" else want)
+
+
+def test_probe_accepts_this_python_and_rejects_an_unsupported_or_broken_one(monkeypatch, tmp_path):
+    """実物の python で確かめる。版が範囲の外のもの・起動しないもの・出力が違うものは使わない。"""
+    ctxf = load_launcher(monkeypatch, tmp_path / "home")
+    found = ctxf._probe_python([sys.executable])
+    assert found is not None and found[1] == "%d.%d.%d" % sys.version_info[:3]
+    assert os.path.samefile(found[0], sys.executable)
+    fake = tmp_path / "fake.py"
+    fake.write_text("print('/opt/python3.15'); print('3.15.0')\n", encoding="utf-8")
+    assert ctxf._probe_python([sys.executable, str(fake)]) is None        # 範囲の外の版
+    fake.write_text("import sys; sys.exit(9009)\n", encoding="utf-8")
+    assert ctxf._probe_python([sys.executable, str(fake)]) is None        # 起動しない(Store のショートカットなど)
+    assert ctxf._probe_python([str(tmp_path / "no-such-python")]) is None
+    monkeypatch.setattr(ctxf, "python_candidates", lambda: [[str(tmp_path / "no-such-python")], [sys.executable]])
+    assert ctxf.find_supported_python() == found
 
 
 def test_supported_python_range_agrees_everywhere(monkeypatch, tmp_path):
@@ -622,7 +695,7 @@ def test_where_reports_python_on_path_model_and_index(indexed_workspace, tmp_pat
     r = run([sys.executable, "-I", plugin / "ctxf.py", "where"], env, cwd=tmp_path)
     assert r.returncode == 0, r.stdout + r.stderr
     lines = dict(line.split(":", 1) for line in r.stdout.splitlines() if ":" in line)
-    assert "none" in lines["PATH python"] and "add Python to PATH" in lines["PATH python"]
+    assert "none" in lines["PATH python"] and "Add Python to PATH" in lines["PATH python"]
     assert "(CF_PYTHON)" in lines["python"]
     assert lines["model"].strip().startswith("missing: intfloat/multilingual-e5-small")
     assert lines["index"].strip().startswith("none")
@@ -634,6 +707,35 @@ def test_where_reports_python_on_path_model_and_index(indexed_workspace, tmp_pat
     found = line.split(":", 1)[1].split("  (")[0].strip()
     assert os.path.normcase(os.path.dirname(found)) == os.path.normcase(os.path.dirname(sys.executable)), line
     assert "(Python 3." in line
+
+
+def test_where_names_the_microsoft_store_shortcut(monkeypatch, tmp_path, capsys):
+    """PATH の `python` が起動しない Store のショートカットなら、そうと名指しして直し方を出す。"""
+    ctxf = load_launcher(monkeypatch, tmp_path / "home")
+    stub = os.path.join(str(tmp_path), "WindowsApps", "python.exe")
+    monkeypatch.setattr(ctxf, "which_on_path", lambda name: stub)
+    monkeypatch.setattr(ctxf, "_python_version", lambda exe: None)
+    monkeypatch.setattr(ctxf, "is_store_alias", lambda exe: exe == stub)
+    ctxf.where()
+    out = capsys.readouterr().out
+    assert "does not start" in out and "Microsoft Store" in out and "App execution aliases" in out
+    monkeypatch.setattr(ctxf, "is_store_alias", lambda exe: False)
+    ctxf.where()
+    out = capsys.readouterr().out
+    assert "Add Python to PATH" in out and "Microsoft Store" not in out
+
+
+@pytest.mark.skipif(os.name != "nt", reason="the Store shortcut exists on Windows only")
+def test_is_store_alias_on_windows(monkeypatch, tmp_path):
+    ctxf = load_launcher(monkeypatch, tmp_path / "home")
+    assert ctxf.is_store_alias(str(tmp_path / "Microsoft" / "WindowsApps" / "python.exe"))
+    assert not ctxf.is_store_alias(str(tmp_path / "Python314" / "python.exe"))
+
+
+def test_is_store_alias_is_false_off_windows(monkeypatch, tmp_path):
+    ctxf = load_launcher(monkeypatch, tmp_path / "home")
+    if os.name != "nt":
+        assert not ctxf.is_store_alias("/home/u/WindowsApps/python")
 
 
 @pytest.mark.parametrize("case", ["config-not-utf-8", "non-ascii-model-folder"])

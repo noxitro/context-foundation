@@ -17,6 +17,28 @@
   固定します([docs/copilot.md](docs/copilot.md) の「チームの Marketplace
   に載せる」)
 
+## 次の版(まだ出していません)
+
+Python の版と PATH で用意に詰まるのを減らしました。
+
+- `ctxf.py setup`(`/context-setup`)は、起動した `python` が対応しない版
+  (3.15 など)でも、この PC に 3.11 から 3.14 があれば、そのうち新しい
+  版で自分を動かし直します。探すのは PATH の `python3.14` など(Windows の
+  Python install manager もこの名前を置きます)と、Windows の py ランチャー
+  の `py -3.14` などです。仮想環境を作れない版(Debian 系で python3-venv が
+  無いもの)は使いません。これまでは断って、`py -3.14 … setup` を手で打つ
+  よう案内していました
+- PATH の `python` が、Microsoft Store へ案内する Windows のショートカット
+  (起動しない `WindowsApps\python.exe`)のとき、`where` と登録
+  (`register-copilot.bat`)はそうと名指しし、切り方を知らせます
+- `setup.bat` は、終わりに `python` が起動しないとき、Copilot のプラグイン
+  が動かないことを、目立つ形で直し方と一緒に出します(`.bat` は、そのまま
+  使えるので、終了コードは 0 のままです)
+
+### 更新のあとにすること
+
+ありません(依存の一覧は変わっていません)。
+
 ## 0.4.9(2026-11-19)
 
 検索の結果だけで答えて、近くにある関連の要点を落とすのを直しました。
