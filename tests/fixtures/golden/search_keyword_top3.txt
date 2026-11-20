@@ -75,4 +75,4 @@ namespace kes::core
     }
 ```
 
-Cite evidence as source:path:start-end. Passage text is the file's own text at index time. These are starting points: before answering, check related code - the 'same file also has' names list nearby functions and types; open the relevant ones, and grep only for what they do not cover.
+Cite evidence as source:path:start-end. Passage text is the file's own text at index time. These are starting points: before answering, check related code (the other variant, the caller, the next step), and grep only for what the passages do not cover.

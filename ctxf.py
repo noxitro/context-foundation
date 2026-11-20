@@ -409,7 +409,8 @@ INSTALLED_BUT_BROKEN = 5
 
 
 def setup(argv):
-    """利用者ごとの置き場に、依存の入った仮想環境を作り(依存が変わっていれば入れ直す)、埋め込みモデルを取得する。
+    """利用者ごとの置き場に、依存の入った仮想環境を作る(依存が変わっていれば入れ直す)。埋め込みモデルは取得せず、
+    有無だけを知らせる。
     引数を検査してから始める(--help で、何も取得せずに説明だけ出す)。2 つの setup が同時に走らないよう排他する。"""
     if any(a in ("-h", "--help") for a in argv):
         sys.stdout.write(SETUP_USAGE)
@@ -436,7 +437,10 @@ def setup(argv):
             try:
                 return _run_child([exe, "-I", os.path.abspath(__file__), "setup"] + list(argv), env=env)
             except OSError as e:
-                _say("  could not start it (%s)" % e)
+                # 見つけた版はあるので「見つからない」とは言わない(python_range_message は言う)
+                _say("  could not start it (%s). Run setup with that Python yourself: \"%s\" -I \"%s\" setup"
+                     % (e, exe, os.path.abspath(__file__)))
+                return 2
     os.makedirs(runtime_dir(), exist_ok=True)
     lock = os.path.join(runtime_dir(), "setup.lock")
     try:

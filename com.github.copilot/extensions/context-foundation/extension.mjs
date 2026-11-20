@@ -35,13 +35,27 @@ const { joinSession } = await loadSdk((name) => import(name));
 // MCP サーバーと hook と同じく、PATH の python で入口(ctxf.py)を動かす。-I: 作業フォルダのファイルを読み込まない
 const PYTHON = "python";
 
-// 出力をログのファイルに書く版
-function run(args, log) {
+// 出力をログのファイルに書く版。env を渡せば、子の環境変数をそれにする
+function run(args, log, env) {
   return new Promise((done) => {
     const fd = openSync(log, "w");  // 毎回書き直す(進み具合は、今回の行だけを読む)
-    const p = spawn(PYTHON, ["-I", ...args], { stdio: ["ignore", fd, fd], windowsHide: true });
-    p.on("error", (err) => { closeSync(fd); done({ code: null, error: err }); });
-    p.on("exit", (code) => { closeSync(fd); done({ code }); });
+    // error のあとに exit が来ることもある(Node の文書)。ログを閉じて返すのは 1 回だけ
+    let finished = false;
+    const finish = (r) => {
+      if (finished) return;
+      finished = true;
+      closeSync(fd);
+      done(r);
+    };
+    let p;
+    try {
+      p = spawn(PYTHON, ["-I", ...args], { stdio: ["ignore", fd, fd], windowsHide: true, ...(env ? { env } : {}) });
+    } catch (err) {
+      finish({ code: null, error: err });
+      return;
+    }
+    p.on("error", (err) => finish({ code: null, error: err }));
+    p.on("exit", (code) => finish({ code }));
   });
 }
 
@@ -220,8 +234,18 @@ async function setupCommand(ctx) {
       `Python のパッケージ(PyPI から約 200 MB)を、${home} に入れます(埋め込みモデルは入れません)。` +
       "初めては数分かかります(済んでいれば、確かめるだけで終わります)。裏で動かすので、作業を続けてかまいません。" +
       `ログ: ${log}`);
+    // setup がモデルの有無を確かめるときに、このセッションの作業フォルダの設定を読むように、設定のファイルを渡す
+    // (Copilot は、拡張をプラグインのフォルダで動かすので、そのままでは子は作業フォルダの設定を見つけない。
+    // 作業フォルダを今のフォルダとして渡すと、ctxf.py は直下の config.toml を先に探し、ほかの道具の設定を拾いうる)
+    let config = "";
+    try {
+      config = findConfig(lastCwd(await session.getEvents()) || process.cwd(), process.env);
+    } catch {
+      // CF_CONFIG の指す先が無い(/context-index が、そのわけを出す)
+    }
+    const env = config && !process.env.CF_CONFIG ? { ...process.env, CF_CONFIG: config } : undefined;
     const stop = watchProgress(log, t0, parseSetupProgress, setupProgressNote);
-    const r = await run([join(root, "ctxf.py"), "setup", ...opts.args], log).finally(stop);
+    const r = await run([join(root, "ctxf.py"), "setup", ...opts.args], log, env).finally(stop);
     const sec = Math.round((Date.now() - t0) / 1000);
     if (r.error) {
       await tell(`context-foundation: ${cannotStart(r)}`, "error");
@@ -232,12 +256,6 @@ async function setupCommand(ctx) {
       return;
     }
     const out = readText(log);
-    let config = "";
-    try {
-      config = findConfig(lastCwd(await session.getEvents()) || process.cwd(), process.env);
-    } catch {
-      // CF_CONFIG の指す先が無い(/context-index が、そのわけを出す)
-    }
     const ws = config && workspaceOf(config);
     const next = config && existsSync(indexFile(config))
       ? `この作業フォルダには索引があります(${ws})。検索の道具は、新しいセッションから出ます(動いているセッションには出ません)`
