@@ -322,7 +322,7 @@ def command_for(args, exe: str, prompt: str, usage_file: Path, share: Path, root
                                          "args": ["-I", "-m", "context_foundation", "serve"], "tools": ["*"]}}}
         cmd += ["--additional-mcp-config", json.dumps(mcp), "--allow-tool", MCP_NAME]
         tools.append(MCP_NAME)
-    if args.lsp_config:                 # 言語サーバー(clangd など)の道具 lsp も渡す(設定は、この回の設定フォルダに置く)
+    if getattr(args, "lsp_config", None):                 # 言語サーバー(clangd など)の道具 lsp も渡す(設定は、この回の設定フォルダに置く)
         tools.append("lsp")
     cmd += ["--available-tools", ",".join(tools)]
     for _, d in added_dirs(args, roots):
@@ -376,7 +376,7 @@ def run_one(args, exe: str, case: dict, trial: int, mapper: Mapper, roots: list[
         env.pop(v, None)
     if args.provider == "copilot":
         env.pop("COPILOT_PROVIDERS_CONFIG", None)
-    if args.lsp_config:
+    if getattr(args, "lsp_config", None):
         shutil.copyfile(args.lsp_config, home / "lsp-config.json")
     hooks = hooks_for(args)
     if hooks:
