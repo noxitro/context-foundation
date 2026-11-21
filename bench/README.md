@@ -149,7 +149,7 @@ docs/benchmarks.md の数字は、次の道具で出しています。
 
 ```text
 python bench\interleave.py arms.json --cases cases.jsonl --split eval --trials 2
-python bench\grade_pack.py pack results.jsonl cases.jsonl grade --batches 6 --seed 1
+python bench\grade_pack.py pack results.jsonl cases.jsonl grade --seed 1
 (採点して grade\score-<n>.json を置く)
 python bench\grade_pack.py merge results.jsonl grade results.scored.jsonl
 python bench\compare.py summary results.scored.jsonl cases.jsonl
