@@ -182,6 +182,17 @@ beforehand; 80% acceptable answers is the threshold):
   a comparison with grep answers from another day gave 4% and 3% lower, so
   these figures move from day to day.
 - Godot has not been measured again with version 0.4.9.
+- On O3DE, a harder set of 40 questions was also written, where a full answer
+  must name the lower layer, the callee or the other variant (questions and
+  answer points written and checked by AI; not yet reviewed by a person).
+  Version 0.4.9 leans above grep there too: 82.5% against 72.5% with Claude
+  Sonnet 5.5 (time 10% and cost 11% lower), and 90.0% against 85.0% with
+  Haiku when Claude Code is the agent instead of Copilot CLI. The 95%
+  interval of the difference excludes zero for a count of the expected
+  identifiers in the answer, not for the AI grade. A better search hit rate
+  (the granite embedding model) and a language server (clangd) given as a
+  tool did not improve the answers ([docs/benchmarks.md](docs/benchmarks.md),
+  in Japanese).
 - On Godot, the answer key as written beforehand puts both methods below 80%
   (75.9% and 74.7%); a review of the key made after the results, by reviewers
   who had not seen them, gives the figures above, and is the one taken for
@@ -193,7 +204,8 @@ beforehand; 80% acceptable answers is the threshold):
   threshold, including on part of a larger engine codebase that is not
   public (245,457 passages).
 - The evaluation is limited to public C++ engines, which the model partly
-  remembers (an advantage for grep), to one model, and to AI grading.
+  remembers (an advantage for grep), mostly to one model (Claude Haiku 5.5;
+  the harder set also with Sonnet 5.5), and to AI grading.
   Private codebases are not evaluated by this project.
 
 What has been measured so far, and what has not, is listed in

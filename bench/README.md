@@ -136,6 +136,44 @@ BYOK のときは AI credits が記録されないので、`--price` で単価�
   (大きすぎてモデルに渡らなかった結果の数)
 - `answer_correctness` は空です。人が採点して埋めます
 
+## 手法を比べる道具
+
+docs/benchmarks.md の数字は、次の道具で出しています。
+
+| ファイル | 役目 |
+| --- | --- |
+| `interleave.py` | いくつかの手法を、質問ごとに順番を入れ替えて交互に流す。手法ごとの設定(流し手・python・作業フォルダ・手法・結果のフォルダ・引数)は JSON に書く |
+| `grade_pack.py` | 採点の束を作る(手法と回を伏せて混ぜる)。採点(`score-<n>.json`)を結果に戻す |
+| `compare.py` | 手法ごとの合格の数・点の平均・識別子の指標と、2 つの手法の差の、質問を単位にした 95% 区間 |
+| `claude_run.py` | Copilot CLI の代わりに、Claude Code(`claude -p`)をエージェントにして流す。費用は Claude Code の利用枠から出る |
+
+```text
+python bench\interleave.py arms.json --cases cases.jsonl --split eval --trials 2
+python bench\grade_pack.py pack results.jsonl cases.jsonl grade --seed 1
+(採点して grade\score-<n>.json を置く)
+python bench\grade_pack.py merge results.jsonl grade results.scored.jsonl
+python bench\compare.py summary results.scored.jsonl cases.jsonl
+python bench\compare.py paired results.scored.jsonl cases.jsonl agent_cf_mcp agent_grep
+```
+
+`interleave.py` は、手法ごとに結果のフォルダを分けて書きます。比べる前に、
+手法の名前(`method`)が重ならないように、1 つの `results.jsonl` に
+まとめてください(同じ `agent_cf_mcp` でもコードや索引が違うときは、
+まとめるときに名前を付け替えます)。
+
+守ること:
+
+- **手法どうしは、交互に流した回答でだけ比べる。** 同じ手法でも、流した
+  日によって識別子の指標が 0.03 ほど動いた。別の日の回答は、伏せて採点
+  し直しても比べられない
+- **物差しは 2 つ見る。** 採点役(AI)は束ごとに厳しさが違う。同じ回答を
+  `--seed` を変えて 2 回採点し、平均をとると、ぶれが減る。識別子の指標は
+  ぶれないが、名前を挙げずに正しく説明した回答を拾えない
+- **差は区間で見る。** 22 問 × 2 回くらいでは、数 % の差は見分けられ
+  ない。調整用の質問で見えた改善は、評価用の質問で確かめる
+- `agent_run.py` に `--lsp-config <lsp-config.json>` を渡すと、どの手法
+  にも Copilot CLI の道具 `lsp`(clangd などの言語サーバー)を足す
+
 ## 注意
 
 - 記録には、質問・回答・読んだ本文が入ります。公開の場所に置かないで
