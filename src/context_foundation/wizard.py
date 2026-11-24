@@ -149,7 +149,8 @@ def _ask_model_folder(embedding_cfg) -> bool:
         return False
     print()
     print(f"{spec.name} をすでにこの PC に置いていれば、そのフォルダを入れてください({spec.onnx_file} と "
-          f"{spec.tokenizer_file} が入ったフォルダ。Hugging Face のキャッシュのフォルダでも構いません)。")
+          f"{spec.tokenizer_file} が入ったフォルダ。Hugging Face のキャッシュのフォルダや、使う .onnx のファイルの"
+          "パスでも構いません)。")
     while True:
         try:
             given = input("モデルのフォルダ(空のまま Enter で飛ばす): ").strip().strip('"')
@@ -158,9 +159,11 @@ def _ask_model_folder(embedding_cfg) -> bool:
         if not given:
             return False
         try:
-            folder = locate_model_folder(given, spec)
-            print(f"  モデルを読み込んで確かめます: {folder}")
-            dim, notes = check_model(replace(spec, model_dir=str(folder), model_dir_source="user"))
+            located = locate_model_folder(given, spec)
+            onnx = f"(ONNX: {located.onnx_file})" if located.onnx_file else ""
+            print(f"  モデルを読み込んで確かめます: {located.folder}{onnx}")
+            dim, notes = check_model(replace(spec, model_dir=str(located.folder), model_dir_source="user",
+                                             onnx_file=located.onnx_file or spec.onnx_file))
         except ModelUnavailable as e:
             print(f"  {e}")
             continue
@@ -168,7 +171,11 @@ def _ask_model_folder(embedding_cfg) -> bool:
             print(f"  注意: {n}")
         if notes and not yes("  このフォルダを使いますか", default=False, when_closed=False):
             continue
-        written = save_user_model_dir(spec.name, str(folder))
+        try:
+            written = save_user_model_dir(spec.name, str(located.folder), located.onnx_file)
+        except ModelUnavailable as e:
+            print(f"  {e}")
+            return False
         print(f"  覚えました(埋め込みの次元 {dim}。設定: {written})。この PC のすべての作業フォルダで使います。")
         return True
 

@@ -230,52 +230,84 @@ def cmd_model(args) -> int:
     return 0
 
 
+EXIT_MODEL_NOT_SAVED = 4             # model use: 確かめると気になる点があったので、覚えなかった(--yes で覚える)
+
+
 def _model_folder_command(args, ecfg, config_path) -> int:
-    """`model use <フォルダ>`: 手元に置いたモデルのフォルダを確かめて、利用者ごとの設定に覚える(どの作業フォルダにも効く)。
-    `model forget`: 覚えたフォルダを外す。モデルのファイルは消さない。"""
+    """`model use <フォルダ>`: 手元に置いたモデルのフォルダを確かめて、利用者ごとの設定に覚え、使うモデルにする
+    (どの作業フォルダにも効く)。`model forget`: 覚えたフォルダを外す。モデルのファイルは消さない。
+
+    終わりに、英語の 1 行(result: ...)を出す。端末の文字コードで日本語が読めないエージェントのため。
+    終了コードは 0 が覚えた・外した、2 が覚えられない(パス・ファイル・読み込み)、4 が気になる点があって覚えて
+    いない(--yes で覚える)。"""
     from dataclasses import replace
 
-    from .embed import (ModelUnavailable, check_model, locate_model_folder, resolve_model, save_user_model_dir,
-                        size_notes)
+    from .embed import (DEFAULT_MODEL, ModelUnavailable, check_model, locate_model_folder, resolve_model,
+                        save_user_model_dir, size_notes)
 
-    try:
-        spec = resolve_model(replace(ecfg, model_dir=""))
-    except ModelUnavailable as e:
-        sys.stderr.write(f"{e}\n")
-        return EXIT_USAGE
     if args.action == "forget":
         if args.folder:
             sys.stderr.write("model forget はフォルダを受け取りません(--model でモデルを選びます)\n")
             return EXIT_USAGE
-        if spec.model_dir_source != "user":
+        try:
+            spec = resolve_model(ecfg)
+            written = save_user_model_dir(spec.name, None) if spec.model_dir_source == "user" else None
+        except ModelUnavailable as e:
+            sys.stderr.write(f"{e}\n")
+            return EXIT_USAGE
+        if written is None:
             print(f"{spec.name} には、`model use` で覚えたフォルダがありません")
-            return 0
-        written = save_user_model_dir(spec.name, None)
-        print(f"{spec.name} のフォルダ {spec.model_dir} を外しました(ファイルは消していません。設定: {written})")
+            print("result: nothing to forget")
+        else:
+            print(f"{spec.name} のフォルダ {spec.model_dir} を外しました(ファイルは消していません。設定: {written})")
+            print("result: forgotten")
         return 0
     if not args.folder:
         sys.stderr.write("モデルのフォルダを渡してください: " + command_hint('model use "<フォルダ>"') + "\n")
         return EXIT_USAGE
+    # 覚えるのは、名指ししたモデル(無ければ作業フォルダの設定のモデルか、既定のモデル)。前に `model use` で選んだ
+    # モデルを引き継がない(別のモデルのフォルダを、前のモデルの名前で覚えないため)
+    name = args.model or ecfg.model or DEFAULT_MODEL
     try:
-        folder = locate_model_folder(args.folder, spec)
-        found = replace(spec, model_dir=str(folder), model_dir_source="user")
+        spec = resolve_model(replace(ecfg, model=name, model_dir="", onnx_file=args.onnx_file or ""))
+        spec = replace(spec, model_dir_source="")
+        located = locate_model_folder(args.folder, spec)
+        onnx_file = located.onnx_file or (args.onnx_file or "")
+        found = replace(spec, model_dir=str(located.folder), model_dir_source="user",
+                        onnx_file=onnx_file or spec.onnx_file)
         if args.no_check:
             dim, notes = 0, size_notes(found)
         else:
-            print(f"モデルを読み込んで確かめます: {folder}", flush=True)
+            print(f"モデルを読み込んで確かめます: {located.folder}" + (f"(ONNX: {onnx_file})" if onnx_file else ""),
+                  flush=True)
             dim, notes = check_model(found)
     except ModelUnavailable as e:
         sys.stderr.write(f"{e}\n")
+        print("result: not saved (error)")
         return EXIT_USAGE
-    written = save_user_model_dir(spec.name, str(folder))
-    print(f"{spec.name} のフォルダを覚えました: {folder}" + (f"(埋め込みの次元 {dim})" if dim else ""))
-    print(f"  設定: {written}(この PC のすべての作業フォルダに効きます。外すときは "
-          f"`{command_hint('model forget')}`)")
     for n in notes:
         print(f"  注意: {n}")
+    if notes and not args.yes:
+        print("確かめると、上の気になる点がありました。覚えていません。このフォルダでよければ、--yes を付けて"
+              "もう一度実行します")
+        print("result: not saved (warnings; run again with --yes to save)")
+        return EXIT_MODEL_NOT_SAVED
+    try:
+        written = save_user_model_dir(spec.name, str(located.folder), onnx_file)
+    except ModelUnavailable as e:
+        sys.stderr.write(f"{e}\n")
+        print("result: not saved (error)")
+        return EXIT_USAGE
+    print(f"{spec.name} のフォルダを覚えました: {located.folder}" + (f"(ONNX: {onnx_file})" if onnx_file else "") +
+          (f"(埋め込みの次元 {dim})" if dim else ""))
+    print(f"  設定: {written}(この PC のすべての作業フォルダで、このモデルを使います。外すときは "
+          f"`{command_hint('model forget')}`)")
     if ecfg.model_dir and config_path:
         print(f"  注意: {config_path} の [embedding] model_dir({ecfg.model_dir})が先に使われます。"
               "この作業フォルダでこのフォルダを使うときは、その行を消してください")
+    if ecfg.model and ecfg.model != spec.name and config_path:
+        print(f"  注意: {config_path} の [embedding] model は {ecfg.model} です。この作業フォルダでは、そちらを使います")
+    print("result: saved" + (" (model " + spec.name + ")" if spec.name != DEFAULT_MODEL else ""))
     return 0
 
 
@@ -397,6 +429,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("folder", nargs="?", help="use: モデルのフォルダ(ONNX と tokenizer.json が入ったもの)")
     p.add_argument("--model", help="モデルの名前(省くと設定か既定のもの)")
     p.add_argument("--no-check", action="store_true", help="use: モデルを読み込んで確かめるのを省く")
+    p.add_argument("--onnx-file", help="use: 既定と違う名前の ONNX(フォルダからの相対パス。量子化したものなど)")
+    p.add_argument("--yes", action="store_true", help="use: 確かめて気になる点があっても覚える")
     p.set_defaults(func=cmd_model)
 
     p = sub.add_parser("copilot", help="Copilot CLI・アプリへの登録と解除", allow_abbrev=False)

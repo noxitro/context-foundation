@@ -68,8 +68,9 @@ with its source and licence; after checking, the user runs
 the PC, `python -I ctxf.py model use "<folder>"` checks that folder and
 remembers it for every workspace instead. A second skill,
 **`context-search-setup`**, walks the user through all of this in the
-session: it asks before installing the packages, then asks for the folder of
-the model already on disk and registers it (it never downloads the model).
+session: it asks before installing the packages, asks for the folder of the
+model already on disk and registers it (it never downloads the model), and
+offers to build the index.
 Without the model, search is
 keyword-only. With these, everything from installing
 the plugin (`/plugin install`) to building the index can be done inside a
@@ -131,7 +132,7 @@ This tool does not include:
 | --- | --- |
 | `src/context_foundation` | The tool: ingest, chunking, index, search, evaluation, MCP server |
 | `skills/context-search` | The skill that tells an agent when and how to search |
-| `skills/context-search-setup` | The skill that sets the tool up step by step, asking the user (packages, then the folder of a model already on disk) |
+| `skills/context-search-setup` | The skill that sets the tool up end to end, asking the user (packages, the folder of a model already on disk, the index) |
 | `plugin.json`, `.github/plugin`, `com.github.copilot` | The Copilot plugin, its marketplace entry, the session-start hook, and the `/context-index` extension |
 | `ctxf.py` | Launcher (standard library only): finds the Python environment and runs the tool; `setup` prepares it |
 | `bench` | Runs the agent methods with Copilot CLI and records the results |
