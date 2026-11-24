@@ -28,11 +28,13 @@ Godot のソースの本文は入っていません。入っているのは、�
 
 - Godot 4.7.2-stable(コミット `ed1daf0bf001b61586d9930840f2f1394092c079`)。
   ライセンスは MIT(<https://github.com/godotengine/godot>)
-- リポジトリ全体から、外部のコード(`thirdparty`)とテスト(`tests`)を
-  除いたもの。`source_id` は `godot`
+- コードは、リポジトリ全体から、外部のコード(`thirdparty`)とテスト
+  (`tests`)を除いたもの(`source_id` は `godot`)。クラスの説明文
+  (`doc/classes` の XML)は、別の source(`godot-docs`)にして入れる。
+  既定では XML は索引に入らないので、設定の見本で `include` を書いている
 - 正解の場所は、`scene`(シーンと GUI)、`servers` と `drivers`(描画・
   音・ドライバー)、`core` と `modules/gdscript`(基盤とスクリプト)、
-  クラスの説明文(`doc/classes` の XML)にある。`platform` には無い
+  クラスの説明文にある。`platform` には無い
 
 ## 質問
 

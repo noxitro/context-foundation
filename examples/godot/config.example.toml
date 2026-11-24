@@ -3,10 +3,17 @@
 # 使い方: <godot> を、取得した Godot のフォルダに置き換えて、作業フォルダの
 # .cf\config.toml に置く(README.md の「再現のしかた」)。
 # source の id は、cases.jsonl の source_id とそろえてある。変えないこと。
-# .serena(Serena のプロジェクト)と .cache(clangd の索引)は、比べる道具が
-# ソースのルートに書くので、索引に入れない。
 
+# コード。.serena(Serena のプロジェクト)と .cache(clangd の索引)は、比べる
+# 道具がソースのルートに書くので、索引に入れない。
 [[source]]
 id = "godot"
 root = '<godot>'
 exclude = ['**/thirdparty/**', '**/tests/**', '**/.serena/**', '**/.cache/**']
+
+# クラスの説明文(XML)。既定では XML は索引に入らないので、別の source にして
+# 入れる(文書から実装を探す質問・実装から文書を探す質問の正解がここにある)。
+[[source]]
+id = "godot-docs"
+root = '<godot>\doc\classes'
+include = ['**/*.xml']

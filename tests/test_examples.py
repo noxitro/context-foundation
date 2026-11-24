@@ -67,8 +67,9 @@ def test_godot_cases_follow_the_spec():
         assert len(c["expected_answer_points"]) == 3 and len(c["expected_evidence"]) <= 10
         assert (c["category"] == "unanswerable") == (not c["expected_evidence"])
         for ev in c["expected_evidence"]:
-            assert ev["source_id"] == "godot" and not Path(ev["path"]).is_absolute()
-            assert not ev["path"].startswith(("thirdparty/", "platform/")) and "/tests/" not in "/" + ev["path"]
+            assert ev["source_id"] in ("godot", "godot-docs") and not Path(ev["path"]).is_absolute()
+            assert not ev["path"].startswith(("thirdparty/", "platform/", "doc/")) and "/tests/" not in "/" + ev["path"]
+            assert (ev["source_id"] == "godot-docs") == ev["path"].endswith(".xml")     # 説明文は別の source
 
 
 def test_godot_cases_do_not_carry_local_paths_and_config_matches():
@@ -76,4 +77,5 @@ def test_godot_cases_do_not_carry_local_paths_and_config_matches():
     assert "\r" not in text and not text.startswith("\ufeff")
     assert not re.search(r"\b[a-z]:[\\/]|/users/|\\users\\|appdata|/home/|/tmp/", text, re.IGNORECASE)
     cfg = tomllib.loads((GODOT / "config.example.toml").read_text(encoding="utf-8"))
-    assert [s["id"] for s in cfg["source"]] == ["godot"] and cfg["source"][0]["root"] == "<godot>"
+    assert [s["id"] for s in cfg["source"]] == ["godot", "godot-docs"] and cfg["source"][0]["root"] == "<godot>"
+    assert cfg["source"][1]["root"].startswith("<godot>") and cfg["source"][1]["include"] == ["**/*.xml"]
