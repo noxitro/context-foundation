@@ -235,7 +235,8 @@ python -I "<プラグインのフォルダ>\ctxf.py" model use "<フォルダ>"
    (`setup.bat` など)を自分で動かすよう頼み、終わったら 1 からやり直す
 3. 手元に置いた埋め込みモデルのフォルダを尋ね、`model use` で確かめて
    覚える。見つからなければ、何が足りないかを伝えて、もう一度尋ねる。
-   大きさや次元が控えの値と違えば、使ってよいかを尋ねる。飛ばすことも
+   大きさが控えの値と違えば、使ってよいかを尋ねる(次元が違えば、別の
+   モデルなので覚えない)。飛ばすことも
    できる(keyword だけになる)
 4. `where` で確かめる
 5. 索引を作るかを尋ね、検索するフォルダを尋ねて `init` を動かす。索引
@@ -1069,7 +1070,7 @@ Haiku 5.5、合成のコーパス、毎回空の設定フォルダ)。
   "name": "context-foundation",
   "source": { "source": "github", "repo": "noxitro/context-foundation" },
   "description": "Find code and design docs by meaning and keywords, locally.",
-  "version": "0.4.10"
+  "version": "0.4.11"
 }
 ```
 

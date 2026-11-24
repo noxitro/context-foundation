@@ -165,11 +165,13 @@ def user_model_dirs() -> dict[str, str]:
     return _str_map(_read_user_settings(), "model_dirs")
 
 
-def user_model() -> str:
-    """`model use` で最後に選んだモデルの名前(作業フォルダの設定に model が無いときに使う)。無ければ ""。"""
-    st = _read_user_settings()
+def user_model(st: dict | None = None) -> str:
+    """`model use` で最後に選んだモデルの名前(作業フォルダの設定に model が無いときに使う)。既定の候補のモデル
+    だけ(ほかのモデルは、作業フォルダの設定の pooling などが要る)。無ければ ""。"""
+    st = _read_user_settings() if st is None else st
     name = st.get("model")
-    return name if isinstance(name, str) and name in _str_map(st, "model_dirs") else ""
+    ok = isinstance(name, str) and name in MODEL_PRESETS and name in _str_map(st, "model_dirs")
+    return name if ok else ""
 
 
 def save_user_model_dir(name: str, folder: str | None, onnx_file: str = "") -> Path:
@@ -202,16 +204,17 @@ def save_user_model_dir(name: str, folder: str | None, onnx_file: str = "") -> P
 def resolve_model(cfg: EmbeddingConfig, user_settings: bool = True) -> ModelSpec:
     """設定([embedding])と既定値から、使うモデルを決める。
 
-    - モデル: 設定の model、`model use` で選んだモデル、既定のモデルの順
+    - モデル: 設定の model、`model use` で選んだモデル(設定に model_dir も onnx_file も無いときだけ)、既定の
+      モデルの順
     - フォルダ: 設定の model_dir、`model use` で覚えたフォルダ、取得先のキャッシュの順
     - ONNX のファイル: 設定の onnx_file、`model use` で覚えたもの(フォルダの設定が無いときだけ)、既定の順
 
     user_settings が False なら、`model use` で覚えたものを読まない(`model use` が、覚え直すモデルを決めるとき)。"""
     st = _read_user_settings() if user_settings else {}
     dirs = _str_map(st, "model_dirs")
-    chosen = st.get("model") if isinstance(st.get("model"), str) and st.get("model") in dirs else ""
-    if chosen not in MODEL_PRESETS:
-        chosen = ""
+    # 設定がフォルダか ONNX を名指ししているときは、そのモデルは設定の model(無ければ既定のモデル)。`model use` で
+    # 選んだモデルの設定(pooling・接頭辞・ファイルの名前)を、別のモデルのフォルダに当てない
+    chosen = "" if cfg.model_dir or cfg.onnx_file else user_model(st)
     name = cfg.model or chosen or DEFAULT_MODEL
     p = MODEL_PRESETS.get(name)
     model_dir, source = cfg.model_dir, ("config" if cfg.model_dir else "")
@@ -292,6 +295,12 @@ def download_model(spec: ModelSpec, log=print) -> Path:
     送るのは、取得するファイルの名前だけ(利用者のソースや質問は送らない)。
     """
     if spec.model_dir_source == "user":
+        try:
+            model_files(spec)
+            log(f"`model use` で指定したフォルダにあります: {spec.model_dir}")
+            return Path(spec.model_dir)
+        except ModelUnavailable:
+            pass
         raise ModelUnavailable(f"`model use` で手元のフォルダ({spec.model_dir})を使うように覚えているので、取得しません。"
                                f"取得するときは、先に `{command_hint('model forget')}` で外してください")
     if spec.model_dir:
@@ -379,8 +388,10 @@ def locate_model_folder(given: str, spec: ModelSpec) -> LocatedModel:
             return False
 
     def own_onnx(folder: Path, onnx: Path) -> LocatedModel:
+        # 既定の場所(onnx/model.onnx)そのものでなければ、名前を覚える。直下の model.onnx を名指ししたのに、隣の
+        # onnx/model.onnx が使われないように
         rel = onnx.relative_to(folder).as_posix()
-        return LocatedModel(folder, "" if rel in (inner.as_posix(), inner.name) else rel)
+        return LocatedModel(folder, "" if rel == inner.as_posix() else rel)
 
     if p.is_file() and named.suffix.lower() == ".onnx":   # 使う ONNX のファイルを名指しした
         for c in (named.parent, named.parent.parent):
@@ -388,18 +399,21 @@ def locate_model_folder(given: str, spec: ModelSpec) -> LocatedModel:
                 found = own_onnx(c, named)
                 return LocatedModel(c.resolve(), found.onnx_file)
         raise ModelUnavailable(f"{named} の隣にも 1 つ上のフォルダにも、{spec.tokenizer_file} がありません")
-    cands = [p.parent, p.parent.parent] if p.is_file() else [p]
+    # ファイルを渡されたら、リンクをたどる前の場所から探す(Hugging Face のキャッシュの snapshot の中のファイルは、
+    # blobs/ へのリンク。たどると、利用者が選んだ snapshot が分からなくなる)
+    cands = [named.parent, named.parent.parent] if p.is_file() else [p]
     for c in list(cands):
         cands += _hf_snapshots(c, spec.revision)
     for c in cands:
         if holds_model(c):
-            return LocatedModel(c)
+            return LocatedModel(c.resolve())
     # tokenizer.json はあるが、既定の名前の ONNX が無い: 隣(onnx フォルダを含む)の .onnx が 1 つだけなら、それを使う
     for c in cands:
         if (c / spec.tokenizer_file).is_file():
             near = _find_onnx(c, max_depth=1)[0]
             if len(near) == 1:
-                return own_onnx(c, near[0])
+                found = own_onnx(c, near[0])
+                return LocatedModel(c.resolve(), found.onnx_file)
             if near:
                 raise ModelUnavailable(
                     f"{c} に、{inner.as_posix()} が無く、ほかの ONNX が {len(near)} つあります: " +
@@ -460,8 +474,9 @@ def check_model(spec: ModelSpec) -> tuple[int, list[str]]:
         first = (str(e).strip().splitlines() or [""])[0][:200]
         raise ModelUnavailable(f"モデルを読み込めませんでした({type(e).__name__}: {first})。ファイルが壊れているか、"
                                "ONNX の形ではないようです") from None
-    if spec.dim and dim != spec.dim:
-        notes.append(f"埋め込みの次元が {dim} で、{spec.name} の {spec.dim} と違います。別のモデルのようです")
+    if spec.dim and dim != spec.dim:     # 索引のベクトルの長さが合わなくなるので、--yes でも覚えない
+        raise ModelUnavailable(f"埋め込みの次元が {dim} で、{spec.name} の {spec.dim} と違います。別のモデルのよう"
+                               "です。モデルを選び直す(--model)か、別のフォルダを渡してください")
     return dim, notes
 
 

@@ -149,9 +149,9 @@ def test_model_use_remembers_the_folder_for_every_workspace_and_forget_drops_it(
     assert cli_main(["model", "info"]) == 0
     out = capsys.readouterr().out
     assert "`model use` で指定したフォルダ" in out and "手元にあります" in out
-    # 覚えている間は、取得しない
-    assert cli_main(["model", "download"]) == 2
-    assert "model forget" in capsys.readouterr().err
+    # 覚えている間は、取得しない。ファイルがあれば、取得は済んだものとして終わる(index --download も止まらない)
+    assert cli_main(["model", "download"]) == 0
+    assert "`model use` で指定したフォルダにあります" in capsys.readouterr().out
     assert not (tmp_path / "no-models").exists()
     # 外すと、取得先のキャッシュに戻る。ファイルは消さない
     assert cli_main(["model", "forget"]) == 0
@@ -173,9 +173,15 @@ def test_model_use_with_another_model_makes_it_the_model_for_every_workspace(hom
     assert (s.name, s.model_dir, s.model_dir_source) == (GRANITE, str(granite), "user")
     # 作業フォルダの設定の model が先
     assert resolve_model(EmbeddingConfig(model=DEFAULT_MODEL)).model_dir == str(e5)
-    # --model を付けずに use すると、既定のモデルとして覚える(前に選んだモデルの名前を引き継がない)
-    assert cli_main(["model", "use", str(e5)]) == 0
-    assert spec().name == DEFAULT_MODEL and user_model_dirs() == {DEFAULT_MODEL: str(e5), GRANITE: str(granite)}
+    # --model を付けずに渡し直すと、今のモデル(granite)のフォルダを置き換える
+    granite2 = put_model(tmp_path / "granite2", model=GRANITE).resolve()
+    assert cli_main(["model", "use", str(granite2)]) == 0
+    assert spec().model_dir == str(granite2) and user_model_dirs() == {DEFAULT_MODEL: str(e5), GRANITE: str(granite2)}
+    # e5 のフォルダを --model 無しで渡すと、granite の控えの大きさと違うので、覚えない
+    assert cli_main(["model", "use", str(e5)]) == 4
+    # 既定のモデルに戻すときは、名指しする
+    assert cli_main(["model", "use", "--model", DEFAULT_MODEL, str(e5)]) == 0
+    assert spec().name == DEFAULT_MODEL
     # 選んでいるモデルを forget すると、既定のモデルに戻る
     assert cli_main(["model", "use", "--model", GRANITE, str(granite)]) == 0
     assert cli_main(["model", "forget"]) == 0
@@ -221,6 +227,23 @@ def test_a_named_onnx_in_a_symlinked_hugging_face_cache_keeps_its_name(home, loa
     assert where(found) == (snap.resolve(), "onnx/model_qint8_avx512_vnni.onnx")
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="シンボリックリンクを作れないことがある")
+def test_a_file_in_a_snapshot_picks_that_snapshot(home, tmp_path):
+    # 5. Hugging Face のキャッシュの形: snapshots/<commit>/ のファイルは blobs/<hash> へのリンク。古い snapshot の
+    # tokenizer.json を渡したら、その snapshot を選ぶ(spec の版の snapshot ではない)
+    cache = tmp_path / "hub" / "models--intfloat--multilingual-e5-small"
+    (cache / "blobs").mkdir(parents=True)
+    for h in ("aaa1", "aaa2"):
+        (cache / "blobs" / h).write_bytes(b"x")
+    old = cache / "snapshots" / "0000000000000000000000000000000000000000"
+    (old / "onnx").mkdir(parents=True)
+    (old / "onnx" / "model.onnx").symlink_to(cache / "blobs" / "aaa1")
+    (old / "tokenizer.json").symlink_to(cache / "blobs" / "aaa2")
+    put_model(cache / "snapshots" / E5.revision)                              # spec の版の snapshot もある
+    assert where(locate_model_folder(str(old / "tokenizer.json"), spec())) == (old.resolve(), "")
+    assert where(locate_model_folder(str(old / "onnx" / "model.onnx"), spec())) == (old.resolve(), "")
+
+
 def test_forget_and_switching_models(home, loads, tmp_path, capsys):
     e5 = put_model(tmp_path / "e5").resolve()
     granite = put_model(tmp_path / "granite", model=GRANITE).resolve()
@@ -253,15 +276,58 @@ def test_model_use_does_not_save_when_the_check_finds_something(home, loads, tmp
     folder = put_model(tmp_path / "e5").resolve()
     with open(folder / "tokenizer.json", "wb") as f:                              # 控えの大きさと違う
         f.truncate(10)
-    loads.dim = 768                                                               # 別のモデルの次元
     assert cli_main(["model", "use", str(folder)]) == 4
     out = capsys.readouterr().out
-    assert "大きさ" in out and "次元が 768" in out and out.count("注意:") == 2
+    assert "大きさ" in out and out.count("注意:") == 1
     assert "result: not saved (warnings" in out and "--yes" in out and not home.exists()
     assert cli_main(["model", "use", str(folder), "--yes"]) == 0
     assert "result: saved" in capsys.readouterr().out and user_model_dirs() == {DEFAULT_MODEL: str(folder)}
     # --no-check でも、大きさは比べる
     assert cli_main(["model", "use", str(folder), "--no-check"]) == 4
+    # 次元が既定の候補のモデルと違えば、索引のベクトルが合わないので、--yes でも覚えない
+    loads.dim = 768
+    capsys.readouterr()
+    assert cli_main(["model", "use", str(folder), "--yes"]) == 2
+    assert "次元が 768" in capsys.readouterr().err
+
+
+def test_review_findings_on_the_released_version(home, loads, tmp_path, capsys):
+    """0.4.10 の後のレビューの指摘(それぞれ、直す前は違う結果になった)。"""
+    e5 = put_model(tmp_path / "e5").resolve()
+    granite = put_model(tmp_path / "granite", model=GRANITE).resolve()
+    assert cli_main(["model", "use", "--model", GRANITE, str(granite)]) == 0
+    # 1. 設定が model_dir か onnx_file を名指しし、model が無い作業フォルダは、既定のモデル(granite の設定を当てない)
+    assert resolve_model(EmbeddingConfig(model_dir=str(e5))).name == DEFAULT_MODEL
+    assert resolve_model(EmbeddingConfig(onnx_file="onnx/x.onnx")).name == DEFAULT_MODEL
+    assert resolve_model(EmbeddingConfig()).name == GRANITE
+    # 7. 前の索引に onnx_bytes が無いとき、使い回さないのは、`model use` のフォルダを使う作業フォルダだけ
+    from context_foundation.indexer import _missing_ok
+    assert _missing_ok("onnx_bytes", EmbeddingConfig(model=DEFAULT_MODEL))
+    assert not _missing_ok("onnx_bytes", EmbeddingConfig())
+    # 8. use にだけ使えるオプション
+    assert cli_main(["model", "info", "--onnx-file", "onnx/q.onnx"]) == 2
+    assert cli_main(["model", "forget", "--yes"]) == 2
+    assert "model use にだけ使えます" in capsys.readouterr().err
+    # 6. 直下の model.onnx を名指しすると、隣に onnx/model.onnx があっても、名指しした方を使う
+    both = put_model(tmp_path / "both")
+    put_model(both, "model.onnx")
+    assert where(locate_model_folder(str(both / "model.onnx"), spec())) == (both.resolve(), "model.onnx")
+    assert where(locate_model_folder(str(both / "onnx" / "model.onnx"), spec())) == (both.resolve(), "")
+
+
+def test_a_custom_model_can_be_registered_by_its_folder(home, loads, tmp_path, capsys):
+    # 3. 既定の候補でないモデル(作業フォルダの設定に pooling がある)も、フォルダだけで覚えられる
+    ws = tmp_path / "work"
+    (ws / ".cf").mkdir()
+    (ws / ".cf" / "config.toml").write_text(
+        '[[source]]\nid = "a"\nroot = "."\n\n[embedding]\nmodel = "org/custom"\npooling = "mean"\n', encoding="utf-8")
+    custom = tmp_path / "custom"
+    (custom / "onnx").mkdir(parents=True)
+    (custom / "onnx" / "model.onnx").write_bytes(b"x")
+    (custom / "tokenizer.json").write_text("{}", encoding="utf-8")
+    assert cli_main(["model", "use", str(custom)]) == 0
+    assert user_model_dirs() == {"org/custom": str(custom.resolve())}
+    assert resolve_model(EmbeddingConfig(model="org/custom", pooling="mean")).model_dir == str(custom.resolve())
 
 
 def test_model_use_refuses_a_folder_it_cannot_load_and_remembers_nothing(home, tmp_path, capsys):
