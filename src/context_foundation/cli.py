@@ -193,6 +193,11 @@ def cmd_model(args) -> int:
 
     path = find_config(getattr(args, "config", None))
     ecfg = load_config(path).embedding if path else EmbeddingConfig()
+    only_use = [o for o, given in (("--onnx-file", args.onnx_file), ("--yes", args.yes), ("--no-check", args.no_check))
+                if given]
+    if only_use and args.action != "use":
+        sys.stderr.write(f"{', '.join(only_use)} は model use にだけ使えます\n")
+        return EXIT_USAGE
     if args.action in ("use", "forget"):
         return _model_folder_command(args, ecfg, path)
     if args.model:
@@ -244,7 +249,7 @@ def _model_folder_command(args, ecfg, config_path) -> int:
 
     from .config import EmbeddingConfig
     from .embed import (DEFAULT_MODEL, ModelUnavailable, check_model, locate_model_folder, resolve_model,
-                        save_user_model_dir, size_notes)
+                        save_user_model_dir, size_notes, user_model)
 
     if args.action == "forget":
         if args.folder:
@@ -266,12 +271,14 @@ def _model_folder_command(args, ecfg, config_path) -> int:
     if not args.folder:
         sys.stderr.write("モデルのフォルダを渡してください: " + command_hint('model use "<フォルダ>"') + "\n")
         return EXIT_USAGE
-    # 覚えるのは、名指ししたモデル(無ければ作業フォルダの設定のモデルか、既定のモデル)。前に `model use` で選んだ
-    # モデルを引き継がない(別のモデルのフォルダを、前のモデルの名前で覚えないため)
-    name = args.model or ecfg.model or DEFAULT_MODEL
+    # 覚えるのは、名指ししたモデル(無ければ作業フォルダの設定のモデル、前に `model use` で選んだモデル、既定の
+    # モデルの順)。--model を付けずに渡し直すと、今のモデルのフォルダを置き換える
+    name = args.model or ecfg.model or user_model() or DEFAULT_MODEL
     try:
-        spec = resolve_model(replace(ecfg, model=name, model_dir="", onnx_file=args.onnx_file or ""),
+        # フォルダは、渡されたものを仮に入れて決める(既定の候補でないモデルは、フォルダか ONNX が無いと決まらない)
+        spec = resolve_model(replace(ecfg, model=name, model_dir=args.folder, onnx_file=args.onnx_file or ""),
                              user_settings=False)
+        spec = replace(spec, model_dir="", model_dir_source="")
         located = locate_model_folder(args.folder, spec)
         onnx_file = located.onnx_file or (args.onnx_file or "")
         found = replace(spec, model_dir=str(located.folder), model_dir_source="user",

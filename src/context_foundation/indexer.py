@@ -188,8 +188,15 @@ def _missing_ok(key: str, ecfg) -> bool:
     if key == "passage_prefix":
         return ecfg is None or ecfg.passage_prefix is None
     if key == "onnx_bytes":
-        from .embed import user_model_dirs              # `model use` で覚えたフォルダも、既定のファイルとは限らない
-        return ecfg is None or (not ecfg.model_dir and not ecfg.onnx_file and not user_model_dirs())
+        if ecfg is None:
+            return True
+        if ecfg.model_dir or ecfg.onnx_file:
+            return False
+        from .embed import ModelUnavailable, resolve_model   # `model use` で覚えたフォルダも、既定のファイルとは限らない
+        try:
+            return resolve_model(ecfg).model_dir_source != "user"
+        except ModelUnavailable:
+            return False
     return False
 
 

@@ -123,15 +123,17 @@ line says what happened:
 
 - `result: saved`, exit code 0: tell the user it is registered
 - `result: not saved (warnings…)`, exit code 4: the check found something
-  odd (the `注意:` lines: a file size or an embedding dimension that differs
-  from the expected model, which means another version or another model).
-  Nothing is saved. Tell the user, and ask whether to use this folder
-  anyway. If yes, run the same command with `--yes` added; if not, ask for
-  another folder
+  odd (the `注意:` lines: a file size that differs from the expected model,
+  which means another version or another model). Nothing is saved. Tell the
+  user, and ask whether to use this folder anyway. If yes, run the same
+  command with `--yes` added; if not, ask for another folder. If the folder
+  holds the other built-in model, run it again with `--model` instead
 - `result: not saved (error)`, exit code 2: the message says what is
-  missing, which ONNX files it saw, or that several model folders are below
-  the given one (it lists them: ask which one). Tell the user, and ask for
-  the folder again, or whether to skip
+  missing, which ONNX files it saw, that several model folders are below
+  the given one (it lists them: ask which one), or that the embedding
+  dimension does not match the model (another model: ask which model it is,
+  and use `--model`). Tell the user, and ask for the folder again, or
+  whether to skip
 
 ## 4. Check
 
@@ -178,7 +180,9 @@ skill.
 
 ## Changing it later
 
-- Another folder: run `model use "<folder>"` again; it replaces the old one
+- Another folder for the same model: run `model use "<folder>"` again; it
+  replaces the old one. To switch back to the default model from the other
+  one, name it: `model use --model intfloat/multilingual-e5-small "<folder>"`
 - Stop using the folder: `ctxf.py model forget` (the files stay on disk)
 - A workspace whose `.cf/config.toml` sets `model` or `model_dir` under
   `[embedding]` uses those instead of the registered ones
