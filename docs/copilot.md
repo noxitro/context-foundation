@@ -212,6 +212,33 @@ python -I "<プラグインのフォルダ>\ctxf.py" setup
 python -I "<プラグインのフォルダ>\ctxf.py" model download
 ```
 
+モデルをすでにこの PC に置いているときは、取得せずに、そのフォルダを
+指定します。モデルを 1 回読み込んで確かめてから、利用者ごとの設定
+(利用者ごとの置き場の `settings.json`)に覚え、すべての作業フォルダで
+使います。外すときは `model forget` です。
+
+```text
+python -I "<プラグインのフォルダ>\ctxf.py" model use "<フォルダ>"
+```
+
+### skill `context-search-setup`(用意を対話で進める)
+
+セッションで「context-foundation をセットアップして」「手元のモデルを
+使いたい」などと頼むと、モデルがこの skill を読み、利用者に 1 つずつ
+尋ねながら進めます。
+
+1. `where` で今の状態を見て、知らせる(何も入れない)
+2. パッケージ(PyPI から約 200 MB)を入れてよいかを尋ね(Windows では CPU
+   か GPU かも)、よければ `setup --no-model` を動かす。リポジトリを取得
+   した人(隣の `.venv`)には、`setup.bat` を自分で動かすよう頼む
+3. 手元に置いた埋め込みモデルのフォルダを尋ね、`model use` で確かめて
+   覚える。見つからなければ、何が足りないかを伝えて、もう一度尋ねる。
+   飛ばすこともできる(keyword だけになる)
+4. `where` で確かめ、次にすること(索引づくり、新しいセッション)を伝える
+
+モデルは取得しません(`model download` を動かさないと skill に書いて
+あります)。`/context-setup` と違い、モデルを呼ぶのでトークンを使います。
+
 ### `/context-setup`(用意をするスラッシュコマンド)
 
 `/context-index` と同じ拡張が足すコマンドです。Copilot CLI のセッションで
@@ -549,6 +576,7 @@ copilot plugin install context-foundation@context-foundation
 | --- | --- | --- |
 | MCP サーバーと hook(既定) | ツールは `search` と `status` だけ。読み取り専用。hook は、索引のある作業フォルダでだけ、検索を grep より先に使うように 1 文で知らせる | プラグイン(`mcp.json` と `hooks.json`) |
 | skill(控え) | `skills/context-search`。MCP の道具が使えない場面で、検索の CLI を 1 回呼ぶ。最初の用意(setup)のしかたも、ここに書いてある | プラグイン |
+| skill(用意) | `skills/context-search-setup`。用意を、利用者に尋ねながら進める(パッケージ、手元に置いたモデルのフォルダ) | プラグイン |
 | 拡張(`/context-setup`・`/context-index`) | 利用者が打つ、用意をするコマンドと、索引を作る・作り直すコマンド。モデルを呼ばない。Copilot CLI の実験的機能を有効にすると読み込まれる(上の「`/context-index`」) | プラグイン(`com.github.copilot\extensions`) |
 
 0.2 までは、skill と hook が既定で、MCP サーバーは追加でした。0.3 で入れ

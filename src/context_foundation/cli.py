@@ -7,6 +7,7 @@
   ctxf serve                    読み取り専用の MCP サーバー(stdio)
   ctxf validate --cases ...     cases.jsonl / results.jsonl の検査
   ctxf model download           埋め込みモデルを取得する
+  ctxf model use <フォルダ>     手元に置いた埋め込みモデルを使う(利用者ごとの設定に覚える)
   ctxf copilot register         Copilot CLI・アプリへの登録(unregister で解除)
   ctxf wizard index|search|eval .bat から呼ぶ、対話の形
 """
@@ -187,7 +188,8 @@ def cmd_status(args) -> int:
 
 def cmd_model(args) -> int:
     from .config import EmbeddingConfig
-    from .embed import MODEL_PRESETS, ModelUnavailable, download_model, model_files, model_folder, resolve_model
+    from .embed import (MODEL_PRESETS, USE_HINT, ModelUnavailable, download_model, model_files, model_folder,
+                        resolve_model)
 
     path = find_config(getattr(args, "config", None))
     ecfg = load_config(path).embedding if path else EmbeddingConfig()
@@ -198,6 +200,11 @@ def cmd_model(args) -> int:
     except ModelUnavailable as e:
         sys.stderr.write(f"{e}\n")
         return EXIT_USAGE
+    if args.folder and args.action in ("download", "info"):
+        sys.stderr.write(f"model {args.action} はフォルダを受け取りません(手元のモデルを使うときは model use)\n")
+        return EXIT_USAGE
+    if args.action in ("use", "forget"):
+        return _model_folder_command(args, ecfg, path)
     if args.action == "download":
         try:
             # すぐ書き出す(/context-setup は、ファイルに書かれたこの行で、取得の段階を知る)
@@ -212,12 +219,63 @@ def cmd_model(args) -> int:
     if preset:
         size = sum(preset.files[n][0] for n in (spec.onnx_file, spec.tokenizer_file) if n in preset.files)
         print(f"  大きさ: 約 {size / 1e6:.0f} MB  次元: {preset.dim}  {preset.note}")
-    print(f"  置き場: {model_folder(spec)}")
+    origin = {"config": "(設定の [embedding] model_dir)", "user": "(`model use` で指定したフォルダ)"}
+    print(f"  置き場: {model_folder(spec)}{origin.get(spec.model_dir_source, '')}")
     try:
         model_files(spec)
         print("  状態: 手元にあります")
     except ModelUnavailable:
-        print(f"  状態: まだありません(`{command_hint('model download')}` で取得)")
+        print(f"  状態: まだありません(`{command_hint('model download')}` で取得。手元にあれば "
+              f"`{command_hint(USE_HINT)}`)")
+    return 0
+
+
+def _model_folder_command(args, ecfg, config_path) -> int:
+    """`model use <フォルダ>`: 手元に置いたモデルのフォルダを確かめて、利用者ごとの設定に覚える(どの作業フォルダにも効く)。
+    `model forget`: 覚えたフォルダを外す。モデルのファイルは消さない。"""
+    from dataclasses import replace
+
+    from .embed import (ModelUnavailable, check_model, locate_model_folder, resolve_model, save_user_model_dir,
+                        size_notes)
+
+    try:
+        spec = resolve_model(replace(ecfg, model_dir=""))
+    except ModelUnavailable as e:
+        sys.stderr.write(f"{e}\n")
+        return EXIT_USAGE
+    if args.action == "forget":
+        if args.folder:
+            sys.stderr.write("model forget はフォルダを受け取りません(--model でモデルを選びます)\n")
+            return EXIT_USAGE
+        if spec.model_dir_source != "user":
+            print(f"{spec.name} には、`model use` で覚えたフォルダがありません")
+            return 0
+        written = save_user_model_dir(spec.name, None)
+        print(f"{spec.name} のフォルダ {spec.model_dir} を外しました(ファイルは消していません。設定: {written})")
+        return 0
+    if not args.folder:
+        sys.stderr.write("モデルのフォルダを渡してください: " + command_hint('model use "<フォルダ>"') + "\n")
+        return EXIT_USAGE
+    try:
+        folder = locate_model_folder(args.folder, spec)
+        found = replace(spec, model_dir=str(folder), model_dir_source="user")
+        if args.no_check:
+            dim, notes = 0, size_notes(found)
+        else:
+            print(f"モデルを読み込んで確かめます: {folder}", flush=True)
+            dim, notes = check_model(found)
+    except ModelUnavailable as e:
+        sys.stderr.write(f"{e}\n")
+        return EXIT_USAGE
+    written = save_user_model_dir(spec.name, str(folder))
+    print(f"{spec.name} のフォルダを覚えました: {folder}" + (f"(埋め込みの次元 {dim})" if dim else ""))
+    print(f"  設定: {written}(この PC のすべての作業フォルダに効きます。外すときは "
+          f"`{command_hint('model forget')}`)")
+    for n in notes:
+        print(f"  注意: {n}")
+    if ecfg.model_dir and config_path:
+        print(f"  注意: {config_path} の [embedding] model_dir({ecfg.model_dir})が先に使われます。"
+              "この作業フォルダでこのフォルダを使うときは、その行を消してください")
     return 0
 
 
@@ -334,8 +392,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("model", help="埋め込みモデルの取得と確認", allow_abbrev=False)
     common(p)
-    p.add_argument("action", choices=("download", "info"))
+    p.add_argument("action", choices=("download", "info", "use", "forget"),
+                   help="download: 取得する / info: 確かめる / use <フォルダ>: 手元に置いたモデルを使う / forget: use を外す")
+    p.add_argument("folder", nargs="?", help="use: モデルのフォルダ(ONNX と tokenizer.json が入ったもの)")
     p.add_argument("--model", help="モデルの名前(省くと設定か既定のもの)")
+    p.add_argument("--no-check", action="store_true", help="use: モデルを読み込んで確かめるのを省く")
     p.set_defaults(func=cmd_model)
 
     p = sub.add_parser("copilot", help="Copilot CLI・アプリへの登録と解除", allow_abbrev=False)

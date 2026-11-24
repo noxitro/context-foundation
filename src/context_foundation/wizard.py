@@ -1,6 +1,6 @@
 """.bat から呼ぶ、対話の形(日本語)。ダブルクリックで使う人のためのもの。
 
-  wizard setup   初回の用意の続き(埋め込みモデルが入っているかを知らせる。取得はしない)
+  wizard setup   初回の用意の続き(埋め込みモデルが入っているかを知らせ、手元に置いたモデルのフォルダを尋ねる。取得はしない)
   wizard index   作業フォルダと検索したいフォルダを尋ねて、設定を作り、索引を作る
   wizard search  質問を尋ねて、結果を人が読む形で出す(繰り返す)
   wizard eval    cases.jsonl を尋ねて、検索だけの手法の評価を回す
@@ -102,7 +102,7 @@ def _offer_model(embedding_cfg) -> bool:
 
     モデルは PyPI の外の OSS なので、ここでは取得しない(尋ねもしない)。この PC で使ってよいかは、利用者が
     入手先とライセンスを確かめて決め、自分で `model download` を実行する。"""
-    from .embed import MODEL_PRESETS, ModelUnavailable, model_files, model_folder, resolve_model
+    from .embed import MODEL_PRESETS, USE_HINT, ModelUnavailable, model_files, model_folder, resolve_model
     try:
         spec = resolve_model(embedding_cfg)
     except ModelUnavailable as e:      # 設定の誤り(既定の候補に無いモデルなど)
@@ -119,7 +119,11 @@ def _offer_model(embedding_cfg) -> bool:
     print()
     print("埋め込みモデルがインストールされていません。意味検索(日本語の質問で英語のコードを探す、など)に要ります。")
     print(f"  モデル: {spec.name}(ライセンス {spec.license or '不明'}" + (f"、約 {size / 1e6:.0f} MB" if size else "") + ")")
-    if spec.model_dir:
+    if spec.model_dir_source == "user":
+        print(f"  置き場(`model use` で指定したフォルダ): {model_folder(spec)}")
+        print("  このフォルダに、モデルのファイルがもうありません。フォルダを確かめるか、"
+              f"`{command_hint(USE_HINT)}` で指定し直します。")
+    elif spec.model_dir:
         print(f"  置き場([embedding] model_dir): {model_folder(spec)}")
         print("  このフォルダにモデルのファイルを置くと使えます。")
     else:
@@ -127,14 +131,53 @@ def _offer_model(embedding_cfg) -> bool:
         print("  このモデルは PyPI の外の OSS なので、自動では入れません。入手先とライセンスを確かめ、この PC で")
         print("  使ってよければ、次のコマンドで取得します(取得のときに送るのは、ファイルの名前だけです):")
         print(f"    {command_hint('model download')}")
+        print("  すでにこの PC に置いていれば、取得せずに、そのフォルダを指定して使えます:")
+        print(f"    {command_hint(USE_HINT)}")
     print("  入れるまでは、keyword(BM25)だけの検索になります。")
     return False
+
+
+def _ask_model_folder(embedding_cfg) -> bool:
+    """手元に置いた埋め込みモデルのフォルダを尋ねて、確かめてから覚える(`model use` と同じ)。覚えたら True。
+    空のまま Enter・入力が閉じられたときは、何もしない。"""
+    from dataclasses import replace
+
+    from .embed import ModelUnavailable, check_model, locate_model_folder, resolve_model, save_user_model_dir
+    try:
+        spec = resolve_model(replace(embedding_cfg, model_dir=""))
+    except ModelUnavailable:
+        return False
+    print()
+    print(f"{spec.name} をすでにこの PC に置いていれば、そのフォルダを入れてください({spec.onnx_file} と "
+          f"{spec.tokenizer_file} が入ったフォルダ。Hugging Face のキャッシュのフォルダでも構いません)。")
+    while True:
+        try:
+            given = input("モデルのフォルダ(空のまま Enter で飛ばす): ").strip().strip('"')
+        except EOFError:
+            return False
+        if not given:
+            return False
+        try:
+            folder = locate_model_folder(given, spec)
+            print(f"  モデルを読み込んで確かめます: {folder}")
+            dim, notes = check_model(replace(spec, model_dir=str(folder), model_dir_source="user"))
+        except ModelUnavailable as e:
+            print(f"  {e}")
+            continue
+        for n in notes:
+            print(f"  注意: {n}")
+        if notes and not yes("  このフォルダを使いますか", default=False, when_closed=False):
+            continue
+        written = save_user_model_dir(spec.name, str(folder))
+        print(f"  覚えました(埋め込みの次元 {dim}。設定: {written})。この PC のすべての作業フォルダで使います。")
+        return True
 
 
 def wizard_setup() -> int:
     from .config import EmbeddingConfig
     print("== context-foundation: 初回の用意")
-    _offer_model(EmbeddingConfig())
+    if not _offer_model(EmbeddingConfig()) and _ask_model_folder(EmbeddingConfig()):
+        print("埋め込みモデルを使えるようになりました。")
     print()
     print("用意ができました。次は index.bat で索引を作ります。")
     return 0
