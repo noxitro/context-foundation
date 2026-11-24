@@ -251,7 +251,8 @@ python -I "<…>\ctxf.py" model use "D:\models\multilingual-e5-small"
 - もう 1 つの既定の候補のモデルなら、`--model
   ibm-granite/granite-embedding-97m-multilingual-r2` をフォルダの前に付け
   ます。最後に `model use` したモデルを、設定に `model` の無い作業フォルダ
-  で使います
+  で使います。モデルが変わると、それまでの索引は、作り直すまで keyword
+  だけで検索されます(`model use` がそう知らせます)
 - モデルを 1 回読み込んで確かめてから、利用者ごとの設定
   (`%LOCALAPPDATA%\context-foundation\settings.json`)に覚えます。この
   PC のすべての作業フォルダに効きます。ファイルは写しも取得もしません

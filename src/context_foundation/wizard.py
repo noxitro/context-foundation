@@ -144,7 +144,8 @@ def _ask_model_folder(embedding_cfg) -> bool:
 
     from .embed import ModelUnavailable, check_model, locate_model_folder, resolve_model, save_user_model_dir
     try:
-        spec = resolve_model(replace(embedding_cfg, model_dir=""))
+        name = resolve_model(embedding_cfg).name
+        spec = resolve_model(replace(embedding_cfg, model=name, model_dir="", onnx_file=""), user_settings=False)
     except ModelUnavailable:
         return False
     print()

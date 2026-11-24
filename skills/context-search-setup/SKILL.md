@@ -39,6 +39,7 @@ failure. Tell the user in two or three lines what it found (the `python:`,
 | `python:` line | `model:` line | Next |
 | --- | --- | --- |
 | a path, no `none` | starts with `present:` | step 4 |
+| a path, no `none` | starts with `not used` | see below |
 | a path, no `none` | anything else | step 3 (the packages are already there) |
 | `none: …` and `setup:` ends with `ctxf.py" setup` | | step 2 |
 | `none: …` and `setup:` is any other command | | see below |
@@ -49,6 +50,11 @@ repository and its `.venv` next to `ctxf.py` is missing pieces or broken.
 That one is repaired only by that command, which you do not run: show the
 user the `setup:` line, ask them to run it themselves (`setup.bat` asks for
 the model folder too), and when they say it finished, start again at step 1.
+
+If `model:` starts with `not used`, the workspace's `.cf/config.toml` says
+`enabled = false` under `[embedding]`, so no model is used there. Show the
+user that line and ask whether to turn it on (change it to `true`) before
+step 3; if they keep it off, skip step 3.
 
 ## 2. Install the Python packages
 
@@ -146,14 +152,21 @@ The search needs an index of the workspace, built once per workspace.
 - No index: ask which folders to search (the engine source, reference apps,
   design docs; the workspace itself if they are all in it). Then run
   `ctxf.py init "<folder>" "<folder>"`. It only writes `.cf/config.toml`
-  (exit code 0)
+  (exit code 0). Exit code 2 with `設定がすでにあります` means the workspace
+  has a config already: keep it and go on to building. Do not add
+  `--force` (it replaces the config) unless the user asks for it
 - Building: the first index of a large codebase takes tens of minutes
   (about 30 minutes for 8,000 files); later updates take a minute or two.
   Ask how to run it. In Copilot CLI with extensions on, the user can type
   `/context-index` in the session: it runs in the background without the
   model. Or they run `ctxf.py index` in their own terminal (show them the
   whole command line). Run `ctxf.py index` here only if they ask you to,
-  with a timeout of at least an hour, or in the background
+  with a timeout of at least an hour, or in the background. It ends with
+  exit code 0; then run `ctxf.py where` and check that the `index:` line
+  names the new index
+- If `model use` said the model changed (`--model`), indexes built before
+  with the other model are searched keyword-only until they are built
+  again: say so, and offer to update this workspace's index
 
 ## 6. Finish
 

@@ -8,6 +8,7 @@ from __future__ import annotations
 import builtins
 import json
 import re
+import sys
 from argparse import Namespace
 from pathlib import Path
 
@@ -197,6 +198,57 @@ def test_model_use_remembers_another_onnx_file(home, loads, tmp_path, capsys):
     assert spec().onnx_file == "onnx/model_qint8_avx512_vnni.onnx"
 
 
+def test_registering_the_folder_again_checks_and_saves_the_same_onnx(home, loads, tmp_path, capsys):
+    q = put_model(tmp_path / "q", "onnx/model_qint8_avx512_vnni.onnx").resolve()
+    put_model(q)                                                                  # 既定の名前の ONNX も置く
+    assert cli_main(["model", "use", str(q / "onnx" / "model_qint8_avx512_vnni.onnx")]) == 0
+    assert spec().onnx_file == "onnx/model_qint8_avx512_vnni.onnx"
+    # フォルダを渡し直すと、既定の ONNX に戻る。確かめるのも、覚えるのも、既定の ONNX
+    loads.clear()
+    assert cli_main(["model", "use", str(q)]) == 0
+    assert loads == [(q, E5.onnx_file)] and spec().onnx_file == E5.onnx_file
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="シンボリックリンクを作れないことがある")
+def test_a_named_onnx_in_a_symlinked_hugging_face_cache_keeps_its_name(home, loads, tmp_path):
+    cache = tmp_path / "hub" / "models--intfloat--multilingual-e5-small"
+    blobs = put_model(cache / "blobs-src", "onnx/model_qint8_avx512_vnni.onnx")
+    snap = cache / "snapshots" / E5.revision
+    (snap / "onnx").mkdir(parents=True)
+    (snap / "onnx" / "model_qint8_avx512_vnni.onnx").symlink_to(blobs / "onnx" / "model_qint8_avx512_vnni.onnx")
+    (snap / "tokenizer.json").symlink_to(blobs / "tokenizer.json")
+    found = locate_model_folder(str(snap / "onnx" / "model_qint8_avx512_vnni.onnx"), spec())
+    assert where(found) == (snap.resolve(), "onnx/model_qint8_avx512_vnni.onnx")
+
+
+def test_forget_and_switching_models(home, loads, tmp_path, capsys):
+    e5 = put_model(tmp_path / "e5").resolve()
+    granite = put_model(tmp_path / "granite", model=GRANITE).resolve()
+    assert cli_main(["model", "use", str(e5)]) == 0
+    assert "変わりました" not in capsys.readouterr().out                          # 既定のモデルのまま
+    assert cli_main(["model", "use", "--model", GRANITE, str(granite)]) == 0
+    out = capsys.readouterr().out
+    assert f"{DEFAULT_MODEL} から {GRANITE} に変わりました" in out and "index" in out
+    # 作業フォルダの設定に model_dir があっても、覚えたフォルダを外せる
+    (tmp_path / "work" / ".cf").mkdir()
+    (tmp_path / "work" / ".cf" / "config.toml").write_text(
+        '[[source]]\nid = "a"\nroot = "."\n\n[embedding]\nmodel_dir = "/elsewhere"\n', encoding="utf-8")
+    assert cli_main(["model", "forget"]) == 0
+    assert "result: forgotten" in capsys.readouterr().out and GRANITE not in user_model_dirs()
+
+
+def test_a_custom_model_does_not_become_the_model_of_every_workspace(home, tmp_path):
+    embed.save_user_model_dir("my/custom-model", str(tmp_path))
+    assert user_model_dirs() == {"my/custom-model": str(tmp_path)}
+    assert spec().name == DEFAULT_MODEL                                           # pooling の無い作業フォルダでも動く
+    st = json.loads(home.read_text(encoding="utf-8"))
+    st["model"] = "my/custom-model"                                               # 前の版などが書いたとしても
+    home.write_text(json.dumps(st), encoding="utf-8")
+    assert spec().name == DEFAULT_MODEL
+    s = resolve_model(EmbeddingConfig(model="my/custom-model", pooling="mean"))
+    assert s.model_dir == str(tmp_path)
+
+
 def test_model_use_does_not_save_when_the_check_finds_something(home, loads, tmp_path, capsys):
     folder = put_model(tmp_path / "e5").resolve()
     with open(folder / "tokenizer.json", "wb") as f:                              # 控えの大きさと違う
@@ -345,6 +397,7 @@ def test_setup_skill_asks_before_each_step_and_never_downloads_the_model():
     for word in ("注意:", "モデル:", "大きさ:", "result: saved", "result: not saved (warnings", "result: not saved (error)"):
         assert word in cli and word in text, word
     assert "EXIT_MODEL_NOT_SAVED = 4" in cli and "exit code 4" in text
+    assert "設定がすでにあります" in cli and "設定がすでにあります" in text and "変わりました" in cli
     launcher = (REPO / "ctxf.py").read_text(encoding="utf-8")
     for word in ("present:", "missing:", "set with `model use`", "setup:", "runtime:", "index:", "Setup is done",
                  "Another setup is running", "python3 -m venv --clear .venv"):

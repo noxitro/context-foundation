@@ -193,6 +193,8 @@ def cmd_model(args) -> int:
 
     path = find_config(getattr(args, "config", None))
     ecfg = load_config(path).embedding if path else EmbeddingConfig()
+    if args.action in ("use", "forget"):
+        return _model_folder_command(args, ecfg, path)
     if args.model:
         ecfg.model = args.model
     try:
@@ -203,8 +205,6 @@ def cmd_model(args) -> int:
     if args.folder and args.action in ("download", "info"):
         sys.stderr.write(f"model {args.action} はフォルダを受け取りません(手元のモデルを使うときは model use)\n")
         return EXIT_USAGE
-    if args.action in ("use", "forget"):
-        return _model_folder_command(args, ecfg, path)
     if args.action == "download":
         try:
             # すぐ書き出す(/context-setup は、ファイルに書かれたこの行で、取得の段階を知る)
@@ -242,6 +242,7 @@ def _model_folder_command(args, ecfg, config_path) -> int:
     いない(--yes で覚える)。"""
     from dataclasses import replace
 
+    from .config import EmbeddingConfig
     from .embed import (DEFAULT_MODEL, ModelUnavailable, check_model, locate_model_folder, resolve_model,
                         save_user_model_dir, size_notes)
 
@@ -250,7 +251,7 @@ def _model_folder_command(args, ecfg, config_path) -> int:
             sys.stderr.write("model forget はフォルダを受け取りません(--model でモデルを選びます)\n")
             return EXIT_USAGE
         try:
-            spec = resolve_model(ecfg)
+            spec = resolve_model(replace(ecfg, model=args.model or ecfg.model, model_dir="", onnx_file=""))
             written = save_user_model_dir(spec.name, None) if spec.model_dir_source == "user" else None
         except ModelUnavailable as e:
             sys.stderr.write(f"{e}\n")
@@ -269,8 +270,8 @@ def _model_folder_command(args, ecfg, config_path) -> int:
     # モデルを引き継がない(別のモデルのフォルダを、前のモデルの名前で覚えないため)
     name = args.model or ecfg.model or DEFAULT_MODEL
     try:
-        spec = resolve_model(replace(ecfg, model=name, model_dir="", onnx_file=args.onnx_file or ""))
-        spec = replace(spec, model_dir_source="")
+        spec = resolve_model(replace(ecfg, model=name, model_dir="", onnx_file=args.onnx_file or ""),
+                             user_settings=False)
         located = locate_model_folder(args.folder, spec)
         onnx_file = located.onnx_file or (args.onnx_file or "")
         found = replace(spec, model_dir=str(located.folder), model_dir_source="user",
@@ -293,6 +294,10 @@ def _model_folder_command(args, ecfg, config_path) -> int:
         print("result: not saved (warnings; run again with --yes to save)")
         return EXIT_MODEL_NOT_SAVED
     try:
+        before = resolve_model(EmbeddingConfig()).name
+    except ModelUnavailable:
+        before = ""
+    try:
         written = save_user_model_dir(spec.name, str(located.folder), onnx_file)
     except ModelUnavailable as e:
         sys.stderr.write(f"{e}\n")
@@ -305,6 +310,13 @@ def _model_folder_command(args, ecfg, config_path) -> int:
     if ecfg.model_dir and config_path:
         print(f"  注意: {config_path} の [embedding] model_dir({ecfg.model_dir})が先に使われます。"
               "この作業フォルダでこのフォルダを使うときは、その行を消してください")
+    try:
+        after = resolve_model(EmbeddingConfig()).name
+    except ModelUnavailable:
+        after = before
+    if before and after != before:
+        print(f"  注意: 設定に model の無い作業フォルダのモデルが、{before} から {after} に変わりました。そこの索引は、"
+              f"`{command_hint('index')}` で作り直します(作り直すまで、検索は keyword だけになります)")
     if ecfg.model and ecfg.model != spec.name and config_path:
         print(f"  注意: {config_path} の [embedding] model は {ecfg.model} です。この作業フォルダでは、そちらを使います")
     print("result: saved" + (" (model " + spec.name + ")" if spec.name != DEFAULT_MODEL else ""))

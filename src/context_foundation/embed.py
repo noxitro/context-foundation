@@ -188,7 +188,8 @@ def save_user_model_dir(name: str, folder: str | None, onnx_file: str = "") -> P
             onnx[name] = onnx_file
         else:
             onnx.pop(name, None)
-        st["model"] = name
+        if name in MODEL_PRESETS:      # 既定の候補でないモデルは、作業フォルダの設定(pooling など)が要るので選ばない
+            st["model"] = name
     st["model_dirs"], st["onnx_files"] = dirs, onnx
     path = user_settings_path()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -198,15 +199,19 @@ def save_user_model_dir(name: str, folder: str | None, onnx_file: str = "") -> P
     return path
 
 
-def resolve_model(cfg: EmbeddingConfig) -> ModelSpec:
+def resolve_model(cfg: EmbeddingConfig, user_settings: bool = True) -> ModelSpec:
     """設定([embedding])と既定値から、使うモデルを決める。
 
     - モデル: 設定の model、`model use` で選んだモデル、既定のモデルの順
     - フォルダ: 設定の model_dir、`model use` で覚えたフォルダ、取得先のキャッシュの順
-    - ONNX のファイル: 設定の onnx_file、`model use` で覚えたもの(フォルダの設定が無いときだけ)、既定の順"""
-    st = _read_user_settings()
+    - ONNX のファイル: 設定の onnx_file、`model use` で覚えたもの(フォルダの設定が無いときだけ)、既定の順
+
+    user_settings が False なら、`model use` で覚えたものを読まない(`model use` が、覚え直すモデルを決めるとき)。"""
+    st = _read_user_settings() if user_settings else {}
     dirs = _str_map(st, "model_dirs")
     chosen = st.get("model") if isinstance(st.get("model"), str) and st.get("model") in dirs else ""
+    if chosen not in MODEL_PRESETS:
+        chosen = ""
     name = cfg.model or chosen or DEFAULT_MODEL
     p = MODEL_PRESETS.get(name)
     model_dir, source = cfg.model_dir, ("config" if cfg.model_dir else "")
@@ -362,6 +367,7 @@ def locate_model_folder(given: str, spec: ModelSpec) -> LocatedModel:
     p = Path(given.strip().strip('"').strip("'")).expanduser()
     if not p.exists():
         raise ModelUnavailable(f"そのパスはありません: {p}")
+    named = p.absolute()                # Hugging Face のキャッシュの .onnx は blobs/ へのリンク。名前は、たどる前に見る
     p = p.resolve()
     inner = Path(spec.onnx_file)
 
@@ -376,11 +382,12 @@ def locate_model_folder(given: str, spec: ModelSpec) -> LocatedModel:
         rel = onnx.relative_to(folder).as_posix()
         return LocatedModel(folder, "" if rel in (inner.as_posix(), inner.name) else rel)
 
-    if p.is_file() and p.suffix.lower() == ".onnx":       # 使う ONNX のファイルを名指しした
-        for c in (p.parent, p.parent.parent):
+    if p.is_file() and named.suffix.lower() == ".onnx":   # 使う ONNX のファイルを名指しした
+        for c in (named.parent, named.parent.parent):
             if (c / spec.tokenizer_file).is_file():
-                return own_onnx(c, p)
-        raise ModelUnavailable(f"{p} の隣にも 1 つ上のフォルダにも、{spec.tokenizer_file} がありません")
+                found = own_onnx(c, named)
+                return LocatedModel(c.resolve(), found.onnx_file)
+        raise ModelUnavailable(f"{named} の隣にも 1 つ上のフォルダにも、{spec.tokenizer_file} がありません")
     cands = [p.parent, p.parent.parent] if p.is_file() else [p]
     for c in list(cands):
         cands += _hf_snapshots(c, spec.revision)
