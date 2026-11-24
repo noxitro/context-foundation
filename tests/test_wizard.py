@@ -4,6 +4,7 @@ from __future__ import annotations
 import builtins
 import shutil
 from argparse import Namespace
+from pathlib import Path
 
 import pytest
 
@@ -59,6 +60,22 @@ def test_index_wizard_writes_config_and_builds_the_index(answers, tmp_path, caps
     answers += ["", "n"]
     assert wizard_main(Namespace(action="index")) == 0
     assert "やめました" in capsys.readouterr().out
+
+
+def test_index_wizard_keeps_a_linked_folder_as_typed(answers, tmp_path):
+    """ジャンクション(ここではシンボリックリンクで代える)は解決せず、入れたパスのまま、相対パスで書く。"""
+    ws = tmp_path / "work"
+    (ws / "external").mkdir(parents=True)
+    shutil.copytree(CORPUS / "engine", tmp_path / "engine-repo")
+    try:
+        (ws / "external" / "Engine").symlink_to(tmp_path / "engine-repo", target_is_directory=True)
+    except (OSError, NotImplementedError) as e:
+        pytest.skip(f"ここではフォルダのリンクを作れない: {e}")
+    answers += [str(ws), str(ws / "external" / "Engine"), "", ""]
+    assert wizard_main(Namespace(action="index")) == 0
+    cfg = load_config(ws / ".cf" / "config.toml")
+    assert [(s.id, s.root) for s in cfg.sources] == [("Engine", ws / "external" / "Engine")]
+    assert f"root = '{Path('external') / 'Engine'}'" in (ws / ".cf" / "config.toml").read_text(encoding="utf-8")
 
 
 def test_search_wizard_loops_until_an_empty_line(answers, indexed_workspace, capsys, monkeypatch):
