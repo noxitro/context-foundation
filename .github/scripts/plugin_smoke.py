@@ -100,8 +100,8 @@ def main() -> int:
         p = run([*ctxf, "setup"], env=env)
         models = Path(env["CF_HOME"]) / "models"
         had_model = models.is_dir() and any(models.rglob("*.onnx"))      # CI のキャッシュから戻したもの
-        check(p.returncode == 0 and "Python packages:" in p.stdout
-              and ("embedding model: installed" if had_model else "embedding model: not installed") in p.stdout,
+        check(p.returncode == 0 and "Python のパッケージ:" in p.stdout
+              and ("埋め込みモデル: 入っています" if had_model else "埋め込みモデル: インストールされていません") in p.stdout,
               "setup が仮想環境を用意し、埋め込みモデルは取得せずに有無を知らせる", p.stdout + p.stderr)
         # モデルは、利用者が確かめたうえで自分で取得するもの。ここでは、その手順(model download)を流す
         p = run([*ctxf, "model", "download"], env=env)
@@ -185,7 +185,7 @@ def main() -> int:
         p = run([node, work / "drive.mjs", ext, "context-setup", ""], env=ext_env, timeout=600)
         log = Path(env["CF_HOME"]) / "context-setup.log"
         check(p.returncode == 0 and "用意ができました" in p.stdout and "索引があります" in p.stdout and log.is_file()
-              and "already installed" in log.read_text(encoding="utf-8"),
+              and "Python のパッケージ: 入っています" in log.read_text(encoding="utf-8"),
               "/context-setup が、済んでいる用意を確かめて終わる(@microsoft の SDK)", p.stdout + p.stderr)
     else:
         print("  skipped: /context-index・/context-setup(node か python が PATH に無い)")

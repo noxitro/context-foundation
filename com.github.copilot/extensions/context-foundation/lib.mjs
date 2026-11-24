@@ -247,14 +247,14 @@ export function initSources(out) {
 // そちらが先に使われるので尋ねない)。されている・使わない・分からないときは null
 export function modelMissing(out) {
   const text = out ?? "";
-  const head = text.match(/^ {2}embedding model: not installed \((.*)\)$/m);
+  const head = text.match(/^ {2}埋め込みモデル: インストールされていません\((.*)\)$/m);
   if (!head) return null;
-  const m = text.match(/^ {4}To use it, check the model's source and licence, then run: (.+)$/m);
+  const m = text.match(/^ {4}使うには、モデルの入手先とライセンスを確かめてから、次を実行します: (.+)$/m);
   return {
     command: m ? m[1].trim() : "",
-    name: head[1].split(",")[0].trim(),
+    name: head[1].split("、")[0].trim(),
     about: head[1],
-    ask: !/in the folder set by \[embedding\] model_dir:/.test(head[1]),
+    ask: !/\[embedding\] model_dir のフォルダ:/.test(head[1]),
   };
 }
 
@@ -432,16 +432,16 @@ export const hasLocalVenv = (plugin) => existsSync(join(plugin, ".venv"));
 export function parseSetupProgress(text) {
   let snap = { phase: "start" };
   for (const line of (text ?? "").split(/\r?\n/)) {
-    if (/creating the virtual environment/.test(line)) snap = { phase: "venv" };
-    else if (/installing the Python packages/.test(line)) snap = { phase: "packages" };
-    else if (/^\s*Python packages: /.test(line)) snap = { phase: "packaged" };
-    else if (/^Setup is done/.test(line)) snap = { phase: "done" };
+    if (/仮想環境を作(?:ります|り直します)/.test(line)) snap = { phase: "venv" };
+    else if (/Python のパッケージを PyPI から入れます/.test(line)) snap = { phase: "packages" };
+    else if (/^\s*Python のパッケージ: /.test(line)) snap = { phase: "packaged" };
+    else if (/^用意ができました/.test(line)) snap = { phase: "done" };
   }
   return snap;
 }
 
-// ctxf.py setup のログの、利用者ごとの置き場("runtime folder: …" の行)。無ければ ""
-export const setupRuntimeFolder = (out) => ((out ?? "").match(/^\s*runtime folder: (.+)$/m)?.[1] ?? "").trim();
+// ctxf.py setup のログの、利用者ごとの置き場("利用者ごとの置き場: …" の行)。無ければ ""
+export const setupRuntimeFolder = (out) => ((out ?? "").match(/^\s*利用者ごとの置き場: (.+)$/m)?.[1] ?? "").trim();
 
 // 用意の進み具合を画面に出すか決める(progressNote と同じ考え方)。出すのは、段階が変わったときと、
 // 同じ段階が 1 分以上続いているとき(1 分ごと)。{ note(出さなければ ""), state(次の prev) }

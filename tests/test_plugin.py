@@ -188,10 +188,10 @@ def test_setup_checks_its_arguments_before_downloading_anything(tmp_path):
     env = {"CF_HOME": str(tmp_path / "home"), "SYSTEMROOT": __import__("os").environ.get("SYSTEMROOT", "")}
     r = subprocess.run([sys.executable, "-I", str(REPO / "ctxf.py"), "setup", "--help"], capture_output=True,
                        text=True, encoding="utf-8", env=env, timeout=60)
-    assert r.returncode == 0 and r.stdout.startswith("usage:") and "Ask the user" in r.stdout
+    assert r.returncode == 0 and r.stdout.startswith("使い方:") and "利用者に確かめてください" in r.stdout
     r = subprocess.run([sys.executable, "-I", str(REPO / "ctxf.py"), "setup", "--dry-run"], capture_output=True,
                        text=True, encoding="utf-8", env=env, timeout=60)
-    assert r.returncode == 2 and "unknown option" in r.stdout
+    assert r.returncode == 2 and "知らない指定です" in r.stdout
     assert not (tmp_path / "home" / "runtime" / "venv").exists()      # 何も作っていない
 
 

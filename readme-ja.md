@@ -214,10 +214,10 @@ Copilot CLI なら、すべてセッションで打つコマンドで済みま�
 ように知らせ、入手先と取得のコマンドを出します。
 
 ```text
-  embedding model: not installed (intfloat/multilingual-e5-small,
-  license MIT, about 487 MB, from https://huggingface.co/...)
-    Setup does not install it: ...
-    To use it, check the model's source and licence, then run:
+  埋め込みモデル: インストールされていません(intfloat/multilingual-e5-small、
+  ライセンス MIT、約 487 MB、入手先 https://huggingface.co/...)
+    setup では入れません。...
+    使うには、モデルの入手先とライセンスを確かめてから、次を実行します:
     python -I "<…>\ctxf.py" model download
 ```
 

@@ -192,6 +192,9 @@ def repair_command(kind=""):
 
 NEW_SESSION_NOTE = ("A Copilot session that is already running does not get the search tool after setup: "
                     "start a new session (the context-search skill works meanwhile).")
+# setup の終わりに出す(setup の文面は日本語。上の NEW_SESSION_NOTE は、エージェント向けの英語の文に入る)
+SETUP_NEW_SESSION_NOTE = ("動いている Copilot のセッションには、setup の後も検索の道具が出ません。新しいセッションを"
+                          "始めてください(それまでは、skill context-search が使えます)。")
 # Copilot CLI の拡張の /context-setup(利用者が打つ)。隣の .venv のときは直らないので、そのときは書かない
 SLASH_SETUP_NOTE = ("In Copilot CLI with extensions on, the user can instead type /context-setup, which runs the same "
                     "setup without the agent.")
@@ -306,19 +309,17 @@ def _say(text):
     sys.stdout.flush()
 
 
-SETUP_USAGE = """usage: python -I ctxf.py setup [--no-model] [--gpu | --cpu]
+SETUP_USAGE = """使い方: python -I ctxf.py setup [--no-model] [--gpu | --cpu]
 
-Creates a virtual environment with the Python packages (about 200 MB from PyPI) under
-the runtime folder. Ask the user before running it.
-Setup does not install the embedding model (open-source weights from Hugging Face): whether
-it may be used depends on the user's environment (licence, terms of use, network), so setup
-only reports whether it is installed, and where to get it. After checking, the user runs
-`model download` themselves. Without the model, search is keyword-only.
---no-model also skips that report.
---gpu (Windows) installs onnxruntime-directml instead of onnxruntime, so that building an
-index computes the embeddings on the GPU (any DirectX 12 GPU). The choice is remembered
-for later setups; --cpu switches back.
-Setup needs Python 3.11 to 3.14 (3.15 and later have no onnxruntime build yet).
+検索に要る Python のパッケージ(PyPI から約 200 MB)を入れた仮想環境を、利用者ごとの置き場に作ります。
+動かす前に、利用者に確かめてください。
+埋め込みモデル(Hugging Face の OSS)は入れません。使ってよいかは、利用者の環境(ライセンス・利用の条件・
+ネットワーク)によるので、setup は、入っているかと入手先を知らせるだけです。利用者が確かめたうえで、自分で
+`model download` を実行します。モデルが無ければ、検索は keyword だけです。
+--no-model: モデルの有無も知らせません。
+--gpu: (Windows)onnxruntime の代わりに onnxruntime-directml を入れ、索引づくりの埋め込みを GPU(DirectX 12 の
+GPU)で計算します。選び方は次の setup に引き継ぎます。--cpu で戻します。
+setup には Python 3.11 から 3.14 が要ります(3.15 からは、まだ onnxruntime の配布物がありません)。
 """
 SETUP_OPTIONS = ("--no-model", "--gpu", "--cpu")
 ORT_CPU, ORT_GPU = "onnxruntime", "onnxruntime-directml"
@@ -422,7 +423,7 @@ def _import_error(py):
     if p.returncode == 0:
         return ""
     lines = [x.strip() for x in (p.stderr or b"").decode("utf-8", "replace").splitlines() if x.strip()]
-    return lines[-1] if lines else "exit code %s" % p.returncode
+    return lines[-1] if lines else "終了コード %s" % p.returncode
 
 
 # _install の終わり方: pip は 0 で終わったが、入れたパッケージを読めない(Python を同じフォルダのまま別の版に
@@ -439,20 +440,20 @@ def setup(argv):
         return 0
     unknown = [a for a in argv if a not in SETUP_OPTIONS]
     if unknown:
-        sys.stdout.write("unknown option: " + " ".join(unknown) + "\n" + SETUP_USAGE)
+        sys.stdout.write("知らない指定です: " + " ".join(unknown) + "\n" + SETUP_USAGE)
         return 2
     if "--gpu" in argv and "--cpu" in argv:
-        sys.stdout.write("--gpu and --cpu cannot be used together\n" + SETUP_USAGE)
+        sys.stdout.write("--gpu と --cpu は一緒に指定できません\n" + SETUP_USAGE)
         return 2
     if "--gpu" in argv and os.name != "nt":
-        sys.stdout.write("--gpu installs onnxruntime-directml, which exists for Windows only. On other systems, "
-                         "install an onnxruntime build with a GPU provider into the virtual environment yourself.\n")
+        sys.stdout.write("--gpu が入れる onnxruntime-directml は、Windows にしかありません。ほかの OS では、GPU を使える "
+                         "onnxruntime を、仮想環境に自分で入れてください。\n")
         return 2
     if not python_supported(sys.version_info) and not os.environ.get(SETUP_REDIRECTED):
         found = find_supported_python()
         if found is not None:
             exe, ver = found
-            _say("Python %s (%s) is not supported; setup uses Python %s instead: %s"
+            _say("Python %s(%s)は使えないので、代わりに Python %s で setup をします: %s"
                  % ("%d.%d.%d" % tuple(sys.version_info[:3]), sys.executable, ver, exe))
             # 子(対応する版)が排他と仮想環境づくりをする。子が見つけ直さないよう印を付ける
             env = dict(os.environ, **{SETUP_REDIRECTED: "1"})
@@ -460,7 +461,7 @@ def setup(argv):
                 return _run_child([exe, "-I", os.path.abspath(__file__), "setup"] + list(argv), env=env)
             except OSError as e:
                 # 見つけた版はあるので「見つからない」とは言わない(python_range_message は言う)
-                _say("  could not start it (%s). Run setup with that Python yourself: \"%s\" -I \"%s\" setup"
+                _say("  起動できませんでした(%s)。その Python で、自分で setup を実行してください: \"%s\" -I \"%s\" setup"
                      % (e, exe, os.path.abspath(__file__)))
                 return 2
     os.makedirs(runtime_dir(), exist_ok=True)
@@ -470,8 +471,8 @@ def setup(argv):
             os.remove(lock)                  # 前の setup が途中で止まった(打ち切られた)ときの残り
         fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
     except FileExistsError:
-        _say("Another setup is running (" + lock + "). Wait for it to finish, then run setup again. "
-             "If no setup is running, delete that file.")
+        _say("別の setup が動いています(" + lock + ")。終わるのを待ってから、もう一度 setup を実行してください。"
+             "動いている setup が無いなら、そのファイルを消してください。")
         return 3
     try:
         os.write(fd, str(os.getpid()).encode("ascii"))
@@ -539,13 +540,14 @@ def python_range_message():
     want = "%d.%d" % MAX_PYTHON
     this = "%d.%d.%d" % tuple(sys.version_info[:3])
     cmd = ("py -" + want if os.name == "nt" else "python" + want) + ' -I "' + os.path.join(HERE, "ctxf.py") + '" setup'
-    why = (" (onnxruntime, which the search needs, has no build for it yet)" if sys.version_info[:2] > MAX_PYTHON
+    why = ("(検索に要る onnxruntime の、この版向けの配布物がまだありません)" if sys.version_info[:2] > MAX_PYTHON
            else "")
-    manager = (" (or, with the Python install manager, `py install %s`)" % want) if os.name == "nt" else ""
-    return ("Python %s is not supported%s. Setup needs Python %d.%d to %s, and none was found on this PC. "
-            "Install Python %s from https://www.python.org/downloads/%s and run setup again (or with it: %s)\n"
-            "(`python` itself may stay as it is: the plugin starts this launcher with it, and the launcher then uses "
-            "the virtual environment that setup made.)" % ((this, why) + MIN_PYTHON + (want, want, manager, cmd)))
+    manager = ("(Python install manager なら `py install %s`)" % want) if os.name == "nt" else ""
+    return ("Python %s は使えません%s。setup には Python %d.%d から %s が要りますが、この PC には見つかりませんでした。"
+            "https://www.python.org/downloads/ から Python %s を入れて%s、もう一度 setup を実行してください"
+            "(入れた Python で実行するなら: %s)\n"
+            "(`python` そのものは、そのままで構いません。プラグインはそれでこの入口を起動し、入口は setup が作った"
+            "仮想環境を使います)" % ((this, why) + MIN_PYTHON + (want, want, manager, cmd)))
 
 
 # 仮想環境の中で、いちばん深いファイルまでの文字数(onnxruntime の中のもの。実測 143 に余裕を足す)。
@@ -578,18 +580,18 @@ def pip_failure_hint(err):
     """pip の誤りの出力から、利用者が次にすべきことを 1 文で選ぶ(いつも「ネットワーク」とは言わない)。"""
     text = (err or "").lower()
     if any(m in text for m in LONG_PATH_MARKERS) or ("oserror" in text and "no such file or directory" in text):
-        return ("A path inside the virtual environment is probably too long for Windows (long paths are off). "
-                "Set the environment variable CF_HOME to a short folder (for example C:\\cf), or turn on long "
-                "paths, then run setup again.")
+        return ("仮想環境の中のパスが、Windows には長すぎる見込みです(長いパスが無効)。環境変数 CF_HOME を短い"
+                "フォルダ(C:\\cf など)にするか、長いパスを有効にしてから、もう一度 setup を実行してください。")
     if any(m in text for m in NETWORK_MARKERS):
-        return "pip could not reach PyPI. Check the network or the proxy settings (HTTPS_PROXY), then run setup again."
+        return ("pip が PyPI に届きませんでした。ネットワークかプロキシの設定(HTTPS_PROXY)を確かめてから、もう一度 "
+                "setup を実行してください。")
     if any(m in text for m in NO_BUILD_MARKERS):
         import platform          # ここでだけ読む(hook のたびに起動が遅くならないよう、先頭では読まない)
-        return ("pip found no installable build of a package: either it could not reach the package index (network, "
-                "proxy, or a pip index that lacks the package), or the package has no build for Python %s on this "
-                "system (%s). Setup is tested with Python %d.%d to %d.%d on Windows x64 and Linux x64."
-                % ((sys.version.split()[0], platform.machine() or "unknown machine") + MIN_PYTHON + MAX_PYTHON))
-    return "See pip's messages above for the cause, then run setup again."
+        return ("pip が、入れられるパッケージの配布物を見つけられませんでした。パッケージの置き場に届かなかった"
+                "(ネットワーク・プロキシ・そのパッケージの無い pip の置き場)か、この OS の Python %s(%s)向けの"
+                "配布物が無いかです。setup は、Windows x64 と Linux x64 の Python %d.%d から %d.%d で確かめています。"
+                % ((sys.version.split()[0], platform.machine() or "不明な CPU") + MIN_PYTHON + MAX_PYTHON))
+    return "わけは、上の pip の出力にあります。直してから、もう一度 setup を実行してください。"
 
 
 def _pip(pip, args):
@@ -616,6 +618,11 @@ def _ort_name(gpu):
     return ORT_GPU + " (the GPU build)" if gpu else ORT_CPU + " (the CPU build)"
 
 
+def _ort_name_ja(gpu):
+    """setup の文面に出す名前(where は英語の _ort_name)。"""
+    return ORT_GPU + "(GPU 版)" if gpu else ORT_CPU + "(CPU 版)"
+
+
 def _install(py, deps, stamp, gpu):
     """依存を入れる。成功なら 0。CPU 用と GPU 用を入れ替えるときは、入れられることを確かめてから今のものを外し、
     入れられなかったら前のものに戻す(onnxruntime が無いと、keyword の検索も動かないため)。
@@ -627,8 +634,8 @@ def _install(py, deps, stamp, gpu):
         r, err = _pip(pip, ["install", "--quiet", "--dry-run", "--no-deps", "--ignore-installed",
                             "--only-binary=:all:", *_ort_requirements(deps, gpu)])
         if r != 0:
-            _say("  " + _ort_name(gpu) + " cannot be installed on this PC. " + pip_failure_hint(err) +
-                 " Nothing was changed: " + _ort_name(not gpu) + " is kept, and search works as before.")
+            _say("  " + _ort_name_ja(gpu) + " は、この PC に入れられません。" + pip_failure_hint(err) +
+                 " 何も変えていません。" + _ort_name_ja(not gpu) + " のままで、検索はこれまでどおり動きます。")
             return 1
         # CPU 用と GPU 用は、同じ名前のモジュールを入れる。入れ替えるときは、先に両方を外す
         try:
@@ -645,18 +652,17 @@ def _install(py, deps, stamp, gpu):
         r2, _ = _pip(pip, ["install", "--quiet", *install_requirements(deps, not gpu)])
         if r2 == 0 and _healthy(py, IMPORT_CHECK):
             _write_stamp(deps, not gpu)
-            _say("  pip could not install %s (exit code %s). %s Put %s back; search works as before."
-                 % (_ort_name(gpu), r, hint, _ort_name(not gpu)))
+            _say("  pip が %s を入れられませんでした(終了コード %s)。%s %s に戻したので、検索はこれまでどおり動きます。"
+                 % (_ort_name_ja(gpu), r, hint, _ort_name_ja(not gpu)))
             return 1
         if r == 0 and r2 == 0:
             return INSTALLED_BUT_BROKEN
-        _say("  pip could not install %s (exit code %s), nor put %s back. %s Search does not work until setup "
-             "succeeds; `%s --cpu` installs the CPU build again." % (_ort_name(gpu), r, _ort_name(not gpu), hint,
-                                                                     setup_command()))
+        _say("  pip が %s を入れられず(終了コード %s)、%s にも戻せませんでした。%s setup が済むまで、検索は動きません。"
+             "`%s --cpu` で CPU 版を入れ直せます。" % (_ort_name_ja(gpu), r, _ort_name_ja(not gpu), hint, setup_command()))
         return 1
     if r == 0:
         return INSTALLED_BUT_BROKEN
-    _say("  pip failed (exit code %s). %s" % (r, hint))
+    _say("  pip が失敗しました(終了コード %s)。%s" % (r, hint))
     return 1
 
 
@@ -667,25 +673,25 @@ def _setup(argv):
         return 2
     deps = dependencies()
     if not deps:
-        _say("Cannot read the dependency list from " + PYPROJECT)
+        _say("依存の一覧を読めません: " + PYPROJECT)
         return 2
     rt = runtime_dir()
     venv = os.path.join(rt, "venv")
-    _say("== context-foundation setup")
-    _say("  runtime folder: " + rt)
+    _say("== context-foundation の用意(setup)")
+    _say("  利用者ごとの置き場: " + rt)
     if long_paths_disabled() and len(os.path.abspath(venv)) + VENV_DEEPEST > WINDOWS_MAX_PATH:
-        _say("  note: the runtime folder's path is long (%d characters) and Windows long paths are off, so pip may "
-             "fail with 'No such file or directory'. If it does, set CF_HOME to a short folder (for example C:\\cf), "
-             "or turn on long paths, then run setup again." % len(os.path.abspath(venv)))
+        _say("  注意: 置き場のパスが長く(%d 文字)、Windows の長いパスが無効なので、pip が「No such file or directory」"
+             "で失敗することがあります。そのときは、CF_HOME を短いフォルダ(C:\\cf など)にするか、長いパスを有効にして"
+             "から、もう一度 setup を実行してください。" % len(os.path.abspath(venv)))
     # GPU の選び方は、覚え書きを消す(仮想環境を作り直す)前に 1 回だけ決める。作り直しで --gpu の選び方を失わないため
     gpu = wants_gpu(argv, _read_stamp())
     py = _venv_python(venv)
     if py is not None and not _healthy(py, "import pip"):
-        _say("  the virtual environment is broken (an earlier setup stopped, or its Python was removed); recreating ...")
+        _say("  仮想環境が壊れています(前の setup が途中で止まったか、その Python が消された)。作り直します ...")
         py = None
     for attempt in (1, 2):
         if py is None:
-            _say("  creating the virtual environment ...")
+            _say("  仮想環境を作ります ...")
             try:
                 _keep_only_gpu_choice(gpu)
             except OSError:
@@ -693,36 +699,36 @@ def _setup(argv):
             r = subprocess.call([sys.executable, "-m", "venv", "--clear", venv])
             py = _venv_python(venv)
             if r != 0 or py is None:
-                _say("  could not create the virtual environment (exit code %s)" % r)
+                _say("  仮想環境を作れませんでした(終了コード %s)" % r)
                 return 1
         stamp = _read_stamp()
         if stamp.get("deps_hash") == deps_hash(deps) and bool(stamp.get("gpu")) == gpu and _healthy(py, IMPORT_CHECK):
-            _say("  Python packages: already installed" + (" (onnxruntime-directml, for the GPU)" if gpu else ""))
+            _say("  Python のパッケージ: 入っています" + ("(onnxruntime-directml、GPU 用)" if gpu else ""))
             break
-        _say("  installing the Python packages from PyPI (about 200 MB the first time) ...")
+        _say("  Python のパッケージを PyPI から入れます(初めては約 200 MB)...")
         r = _install(py, deps, stamp, gpu)
         if r == 0:
-            _say("  Python packages: installed" + (" (onnxruntime-directml, for the GPU)" if gpu else ""))
+            _say("  Python のパッケージ: 入れました" + ("(onnxruntime-directml、GPU 用)" if gpu else ""))
             break
         if r != INSTALLED_BUT_BROKEN:
             return 1
         why = _import_error(py)
         if attempt == 2:
-            _say("  pip installed the Python packages, but they cannot be loaded (%s). Delete the folder %s, then run "
-                 "setup again; if that does not help, reinstall Python." % (why, venv))
+            _say("  pip はパッケージを入れましたが、読み込めません(%s)。フォルダ %s を消してから、もう一度 setup を実行"
+                 "してください。それでも直らなければ、Python を入れ直してください。" % (why, venv))
             return 1
         # pip は dist-info だけを見て「入っている」とみなすので、入れ直さない。仮想環境ごと作り直す(1 回だけ)
-        _say("  the installed packages cannot be loaded (%s; its Python was probably replaced); recreating the "
-             "virtual environment ..." % why)
+        _say("  入れたパッケージを読み込めません(%s。仮想環境の Python が入れ替わった見込み)。仮想環境を作り直します ..."
+             % why)
         py = None
     if gpu and not _healthy(py, GPU_CHECK):
-        _say("  note: onnxruntime-directml is installed, but it reports no DirectML provider on this PC. "
-             "Building an index will use the CPU.")
+        _say("  注意: onnxruntime-directml は入りましたが、この PC では DirectML を使えないと報告しています。"
+             "索引づくりは CPU で計算します。")
     # 埋め込みモデルは取得しない(OSS を利用者の PC に勝手に入れない)。有無と入手先だけを出す
     if report_model:
         _say(model_report(_setup_model_info(py)))
-    _say("Setup is done. Next, build an index in the workspace: "
-         + entry_command() + " init <folder> [<folder> ...], then the same with index\n" + NEW_SESSION_NOTE)
+    _say("用意ができました。次は、作業フォルダで索引を作ります: " + entry_command()
+         + " init <フォルダ> [<フォルダ> ...] の後、同じ形で index\n" + SETUP_NEW_SESSION_NOTE)
     return 0
 
 
@@ -890,39 +896,40 @@ def _setup_model_info(py):
     except (OSError, subprocess.SubprocessError, ValueError) as e:
         return {"state": "unknown", "error": str(e)}
     return info if isinstance(info, dict) and info.get("state") else {"state": "unknown",
-                                                                      "error": "exit code %s" % p.returncode}
+                                                                      "error": "終了コード %s" % p.returncode}
 
 
 def model_report(info):
-    """setup が出す、埋め込みモデルの行。入っていなければ、入手先と、利用者が自分で取得するコマンドを書く。"""
+    """setup が出す、埋め込みモデルの行。入っていなければ、入手先と、利用者が自分で取得するコマンドを書く。
+    頭の行(「  埋め込みモデル: 」)と、取得のコマンドの行は、/context-setup の拡張が読む(lib.mjs の modelMissing)。"""
     state = info.get("state")
     if state == "installed":
-        return "  embedding model: installed (" + info.get("name", "") + ", " + info.get("folder", "") + ")"
+        return "  埋め込みモデル: 入っています(" + info.get("name", "") + "、" + info.get("folder", "") + ")"
     if state == "off":
-        return "  embedding model: not used (embedding is off in " + info.get("config", "") + ")"
+        return "  埋め込みモデル: 使いません(" + info.get("config", "") + " で、埋め込みを切っています)"
     if state == "unknown":
-        return ("  embedding model: unknown (" + info.get("error", "") + "). `" + entry_command() + " model info` "
-                "shows it.")
+        return ("  埋め込みモデル: 分かりません(" + info.get("error", "") + ")。`" + entry_command() + " model info` "
+                "で確かめられます。")
     by_use = info.get("dir_source") == "user"
-    where_from = (", from " + info.get("url", "") if not info.get("own_folder")
-                  else " in the folder set with `model use`: " + info.get("folder", "") if by_use
-                  else " in the folder set by [embedding] model_dir: " + info.get("folder", ""))
-    size = " about %s MB" % info["size_mb"] if info.get("size_mb") else ""
-    lines = ["  embedding model: not installed (" + info.get("name", "") + ", license " +
-             (info.get("license") or "unknown") + "," + size + where_from + ")",
-             "    Setup does not install it: it is open-source software from outside PyPI, and whether it may be "
-             "used depends on this PC's environment (licence, terms of use, network). Search is keyword-only "
-             "(BM25) until it is installed."]
+    where_from = ("入手先 " + info.get("url", "") if not info.get("own_folder")
+                  else "`model use` で覚えたフォルダ: " + info.get("folder", "") if by_use
+                  else "[embedding] model_dir のフォルダ: " + info.get("folder", ""))
+    about = [info.get("name", ""), "ライセンス " + (info.get("license") or "不明")]
+    if info.get("size_mb"):
+        about.append("約 %s MB" % info["size_mb"])
+    lines = ["  埋め込みモデル: インストールされていません(" + "、".join(about + [where_from]) + ")",
+             "    setup では入れません。PyPI の外の OSS で、使ってよいかは、この PC の環境(ライセンス・利用の条件・"
+             "ネットワーク)によるためです。入るまで、検索は keyword(BM25)だけです。"]
     if by_use:
-        lines.append("    The model files are no longer in that folder. Check it, then run: " + entry_command() +
-                     ' model use "<folder>" (or `model forget` to stop using it)')
+        lines.append("    そのフォルダに、モデルのファイルがもうありません。確かめてから、次を実行します: " + entry_command() +
+                     ' model use "<フォルダ>"(使うのをやめるなら `model forget`)')
     elif info.get("own_folder"):
-        lines.append("    To use it, put the model files in that folder.")
+        lines.append("    使うには、そのフォルダにモデルのファイルを置きます。")
     else:
-        lines.append("    To use it, check the model's source and licence, then run: " + entry_command() +
+        lines.append("    使うには、モデルの入手先とライセンスを確かめてから、次を実行します: " + entry_command() +
                      " model download")
-        lines.append("    If the model is already on this PC, run instead: " + entry_command() +
-                     ' model use "<folder>"')
+        lines.append("    この PC にモデルが置いてあれば、代わりに次を実行します: " + entry_command() +
+                     ' model use "<フォルダ>"')
     return "\n".join(lines)
 
 
