@@ -198,8 +198,9 @@ python -I "<プラグインのフォルダ>\ctxf.py" setup
 あるので、利用者の PC では勝手に入れません。
 
 - `ctxf.py setup`・`/context-setup`・`setup.bat`・`index.bat` は、モデルを
-  取得しません(取得するかも尋ねません)。無ければ「embedding model: not
-  installed」(`.bat` では「埋め込みモデルがインストールされていません」)と、
+  取得しません(取得するかも尋ねません)。無ければ「埋め込みモデル:
+  インストールされていません」(`.bat` では「埋め込みモデルがインストール
+  されていません」)と、
   入手先と取得のコマンドを出します。`/context-setup` と `setup.bat` は、
   そのうえで、この PC に置いたモデルのフォルダを尋ねます(下の
   `model use` と同じく、確かめてから覚えます)
@@ -347,7 +348,7 @@ python -I "<プラグインのフォルダ>\ctxf.py" setup
 のように書きます。)
 
 モデルは、ほかの PC の置き場の `models` フォルダを、同じ場所に写せば使え
-ます(setup の終わりに「embedding model: installed」と出ます)。写す前に、
+ます(setup の終わりに「埋め込みモデル: 入っています」と出ます)。写す前に、
 この PC で使ってよいかを確かめてください。置き場の仮想環境
 (`runtime\venv`)は、写しても使えません。中に、もとの Python の場所が
 書かれているためです。
@@ -1105,7 +1106,7 @@ Haiku 5.5、合成のコーパス、毎回空の設定フォルダ)。
   "name": "context-foundation",
   "source": { "source": "github", "repo": "noxitro/context-foundation" },
   "description": "Find code and design docs by meaning and keywords, locally.",
-  "version": "0.4.15"
+  "version": "0.4.16"
 }
 ```
 

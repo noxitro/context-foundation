@@ -111,10 +111,10 @@ def test_setup_refuses_a_python_newer_than_the_tested_range(monkeypatch, tmp_pat
     monkeypatch.setattr(ctxf.subprocess, "call", lambda *a, **k: started.append(a) or 0)
     assert ctxf._setup([]) == 2
     out = capsys.readouterr().out
-    assert "3.15.2 is not supported" in out and "onnxruntime" in out and "3.11 to 3.14" in out
-    assert "none was found on this PC" in out
+    assert "3.15.2 は使えません" in out and "onnxruntime" in out and "3.11 から 3.14" in out
+    assert "この PC には見つかりませんでした" in out
     assert ("py -3.14 -I" if os.name == "nt" else "python3.14 -I") in out and 'ctxf.py" setup' in out
-    assert "network" not in out
+    assert "ネットワーク" not in out
     assert started == [] and not (tmp_path / "home" / "runtime" / "venv").exists()   # 何も作らない
 
 
@@ -140,7 +140,7 @@ def test_setup_with_an_unsupported_python_runs_itself_again_with_a_supported_one
     assert cmd == [exe, "-I", os.path.abspath(ctxf.__file__), "setup", "--no-model", "--cpu"]
     assert env[ctxf.SETUP_REDIRECTED] == "1"
     out = capsys.readouterr().out
-    assert "3.15.0" in out and "not supported" in out and "uses Python 3.14.2 instead: " + exe in out
+    assert "3.15.0" in out and "使えない" in out and "代わりに Python 3.14.2 で setup をします: " + exe in out
     assert not (tmp_path / "home" / "runtime").exists()
 
 
@@ -154,14 +154,14 @@ def test_a_found_python_that_cannot_be_started_is_named_not_reported_missing(mon
     monkeypatch.setattr(ctxf, "_run_child", cannot_start)
     assert ctxf.setup([]) == 2
     out = capsys.readouterr().out
-    assert "could not start it (blocked)" in out and f'"{exe}" -I ' in out and "none was found" not in out
+    assert "起動できませんでした(blocked)" in out and f'"{exe}" -I ' in out and "見つかりませんでした" not in out
     assert not (tmp_path / "home" / "runtime").exists()
 
 
 def test_setup_with_an_unsupported_python_and_no_other_says_what_to_install(monkeypatch, tmp_path, capsys):
     ctxf, children = _unsupported_setup(monkeypatch, tmp_path, None)
     assert ctxf.setup([]) == 2 and children == []
-    assert "none was found on this PC" in capsys.readouterr().out
+    assert "この PC には見つかりませんでした" in capsys.readouterr().out
 
 
 def test_a_redirected_setup_does_not_search_again(monkeypatch, tmp_path, capsys):
@@ -174,7 +174,7 @@ def test_a_redirected_setup_does_not_search_again(monkeypatch, tmp_path, capsys)
 def test_an_argument_error_is_reported_before_another_python_is_searched(monkeypatch, tmp_path, capsys):
     ctxf, children = _unsupported_setup(monkeypatch, tmp_path, ("x", "3.14.0"))
     assert ctxf.setup(["--bogus"]) == 2 and children == []
-    assert "unknown option" in capsys.readouterr().out
+    assert "知らない指定です" in capsys.readouterr().out
 
 
 def test_python_candidates_are_newest_first_and_use_the_py_launcher_on_windows(monkeypatch, tmp_path):
@@ -229,14 +229,14 @@ def test_supported_python_range_agrees_everywhere(monkeypatch, tmp_path):
 def test_pip_failure_hint_names_the_likely_cause(monkeypatch, tmp_path):
     ctxf = load_launcher(monkeypatch, tmp_path / "home")
     no_build = ctxf.pip_failure_hint("ERROR: No matching distribution found for onnxruntime>=1.20")
-    assert "no installable build" in no_build and ".".join(map(str, sys.version_info[:2])) in no_build
-    assert "3.11 to 3.14" in no_build
+    assert "配布物を見つけられませんでした" in no_build and ".".join(map(str, sys.version_info[:2])) in no_build
+    assert "3.11 から 3.14" in no_build
     long_path = ctxf.pip_failure_hint("ERROR: Could not install packages due to an OSError: [Errno 2] No such file "
                                       "or directory: 'C:\\x\\y.py'\nHINT: ... Long Path support ...")
-    assert "too long" in long_path and "CF_HOME" in long_path and "network" not in long_path
+    assert "長すぎる" in long_path and "CF_HOME" in long_path and "ネットワーク" not in long_path
     net = ctxf.pip_failure_hint("WARNING: Retrying ... NewConnectionError ... Max retries exceeded")
-    assert "network" in net and "proxy" in net
-    assert "network" not in ctxf.pip_failure_hint("ERROR: something else")
+    assert "ネットワーク" in net and "プロキシ" in net
+    assert "ネットワーク" not in ctxf.pip_failure_hint("ERROR: something else")
 
 
 def test_a_failed_pip_install_reports_the_cause_and_writes_no_stamp(monkeypatch, tmp_path, capsys):
@@ -245,7 +245,7 @@ def test_a_failed_pip_install_reports_the_cause_and_writes_no_stamp(monkeypatch,
     monkeypatch.setattr(ctxf, "_healthy", lambda py, check: True)
     assert ctxf._install("py", ctxf.dependencies(), {}, False) == 1
     out = capsys.readouterr().out
-    assert "pip failed (exit code 1)" in out and "no installable build" in out
+    assert "pip が失敗しました(終了コード 1)" in out and "配布物を見つけられませんでした" in out
     assert not (tmp_path / "home" / "runtime" / "deps.json").exists()
 
 
@@ -256,7 +256,7 @@ def test_setup_warns_when_the_runtime_path_is_too_long_for_windows(monkeypatch, 
     monkeypatch.setattr(ctxf.subprocess, "call", lambda *a, **k: 1)        # 仮想環境は作らずに止める
     assert ctxf._setup(["--no-model"]) == 1
     out = capsys.readouterr().out
-    assert "path is long" in out and "CF_HOME" in out
+    assert "パスが長く" in out and "CF_HOME" in out
 
 
 # --- CPU 用と GPU 用の入れ替え(INST-2) ---
@@ -286,7 +286,7 @@ def test_gpu_switch_keeps_the_cpu_build_when_directml_cannot_be_installed(monkey
     assert uninstalled == []                                              # 今のものは外していない
     assert ctxf._read_stamp()["gpu"] is False and ctxf._read_stamp()["deps_hash"] == ctxf.deps_hash(deps)
     out = capsys.readouterr().out
-    assert "Nothing was changed" in out and "onnxruntime (the CPU build) is kept" in out
+    assert "何も変えていません" in out and "onnxruntime(CPU 版) のまま" in out
 
 
 def test_gpu_switch_puts_the_cpu_build_back_when_the_install_fails(monkeypatch, tmp_path, capsys):
@@ -297,7 +297,7 @@ def test_gpu_switch_puts_the_cpu_build_back_when_the_install_fails(monkeypatch, 
     assert any(a.startswith("onnxruntime-directml") for a in calls[1])   # GPU 用を入れようとして
     assert any(re.match(r"onnxruntime(?!-)", a) for a in calls[2])       # 失敗したので CPU 用に戻した
     assert ctxf._read_stamp()["gpu"] is False and ctxf._read_stamp()["deps_hash"] == ctxf.deps_hash(deps)
-    assert "Put onnxruntime (the CPU build) back" in capsys.readouterr().out
+    assert "onnxruntime(CPU 版) に戻した" in capsys.readouterr().out
 
 
 def test_gpu_switch_that_cannot_restore_says_how_to_get_the_cpu_build(monkeypatch, tmp_path, capsys):
@@ -316,7 +316,7 @@ def test_setup_done_says_a_new_session_is_needed(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(ctxf, "_healthy", lambda py, check: True)
     assert ctxf._setup(["--no-model"]) == 0
     out = capsys.readouterr().out
-    assert "Setup is done" in out and "new session" in out and 'ctxf.py" init <folder>' in out
+    assert "用意ができました" in out and "新しいセッション" in out and 'ctxf.py" init <フォルダ>' in out
     assert "new session" in ctxf.not_ready_message("not set up")
 
 
@@ -334,19 +334,19 @@ def test_setup_does_not_download_the_model_and_says_it_is_not_installed(monkeypa
     assert ctxf._setup([]) == 0
     out = capsys.readouterr().out
     assert not any("download" in map(str, cmd) for cmd in started), started
-    assert "embedding model: not installed (intfloat/multilingual-e5-small, license MIT, about 487 MB" in out
-    assert "https://huggingface.co/intfloat/multilingual-e5-small" in out and "keyword-only" in out
-    assert 'ctxf.py" model download' in out and "Setup is done" in out
+    assert "埋め込みモデル: インストールされていません(intfloat/multilingual-e5-small、ライセンス MIT、約 487 MB" in out
+    assert "https://huggingface.co/intfloat/multilingual-e5-small" in out and "keyword(BM25)だけ" in out
+    assert 'ctxf.py" model download' in out and "用意ができました" in out
 
 
 def test_setup_model_report_for_each_state(monkeypatch, tmp_path):
     ctxf = load_launcher(monkeypatch, tmp_path / "home")
     assert ctxf.model_report({"state": "installed", "name": "m", "folder": "/m"}).strip() == \
-        "embedding model: installed (m, /m)"
-    assert "not used" in ctxf.model_report({"state": "off", "config": "/w/.cf/config.toml"})
+        "埋め込みモデル: 入っています(m、/m)"
+    assert "使いません" in ctxf.model_report({"state": "off", "config": "/w/.cf/config.toml"})
     assert "model info" in ctxf.model_report({"state": "unknown", "error": "x"})
     own = ctxf.model_report({"state": "missing", "name": "m", "license": "", "folder": "/mine", "own_folder": True})
-    assert "not installed" in own and "model_dir: /mine" in own and "put the model files" in own
+    assert "インストールされていません" in own and "model_dir のフォルダ: /mine" in own and "モデルのファイルを置きます" in own
     assert "model download" not in own
 
 
@@ -591,8 +591,8 @@ def test_setup_recreates_a_venv_whose_installed_packages_cannot_be_loaded(monkey
     assert ctxf._setup(["--no-model"]) == 0
     out = capsys.readouterr().out
     assert len(made) == 1 and "venv" in made[0] and "--clear" in made[0]          # 1 回だけ作り直す
-    assert "cannot be loaded (ImportError: numpy._core._multiarray_umath" in out and "Setup is done" in out
-    assert "pip failed (exit code 0)" not in out
+    assert "読み込めません(ImportError: numpy._core._multiarray_umath" in out and "用意ができました" in out
+    assert "pip が失敗しました(終了コード 0)" not in out
     assert ctxf._read_stamp()["deps_hash"] == ctxf.deps_hash(ctxf.dependencies())
 
 
@@ -604,7 +604,7 @@ def test_recreating_a_broken_venv_keeps_the_gpu_choice(monkeypatch, tmp_path, ca
     assert len(made) == 1
     assert ctxf._read_stamp()["gpu"] is True
     assert any("onnxruntime-directml" in a for a in ctxf.pip_calls[-1])
-    assert "installed (onnxruntime-directml, for the GPU)" in out
+    assert "入れました(onnxruntime-directml、GPU 用)" in out
 
 
 def test_a_rebuild_that_stops_midway_still_keeps_the_gpu_choice(monkeypatch, tmp_path):
@@ -646,8 +646,8 @@ def test_setup_says_the_packages_cannot_be_loaded_when_recreating_does_not_help(
     assert ctxf._setup(["--no-model"]) == 1
     out = capsys.readouterr().out
     assert len(made) == 1                                                         # 作り直すのは 1 回だけ
-    assert "pip installed the Python packages, but they cannot be loaded" in out and "Delete the folder" in out
-    assert "pip failed (exit code 0)" not in out and "Setup is done" not in out
+    assert "pip はパッケージを入れましたが、読み込めません" in out and "を消してから" in out
+    assert "pip が失敗しました(終了コード 0)" not in out and "用意ができました" not in out
     assert not ctxf._read_stamp().get("deps_hash")                               # 「用意済み」とは言わない
 
 

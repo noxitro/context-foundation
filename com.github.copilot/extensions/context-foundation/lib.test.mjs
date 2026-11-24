@@ -233,14 +233,15 @@ test("hasLocalVenv は、プラグインの隣の .venv を見る", () => {
 
 // ctxf.py setup のログの形(_setup の _say と model_report の行)。setup は埋め込みモデルを取得しない
 const SETUP_LINES = [
-  "== context-foundation setup",
-  "  runtime folder: C:\\cf\\runtime",
-  "  creating the virtual environment ...",
-  "  installing the Python packages from PyPI (about 200 MB the first time) ...",
-  "  Python packages: installed",
-  "  embedding model: not installed (intfloat/multilingual-e5-small, license MIT, about 487 MB, from https://huggingface.co/intfloat/multilingual-e5-small)",
-  "    Setup does not install it: it is open-source software from outside PyPI, and whether it may be used depends on this PC's environment (licence, terms of use, network). Search is keyword-only (BM25) until it is installed.",
-  '    To use it, check the model\'s source and licence, then run: python -I "C:\\p\\ctxf.py" model download',
+  "== context-foundation の用意(setup)",
+  "  利用者ごとの置き場: C:\\cf\\runtime",
+  "  仮想環境を作ります ...",
+  "  Python のパッケージを PyPI から入れます(初めては約 200 MB)...",
+  "  Python のパッケージ: 入れました",
+  "  埋め込みモデル: インストールされていません(intfloat/multilingual-e5-small、ライセンス MIT、約 487 MB、入手先 https://huggingface.co/intfloat/multilingual-e5-small)",
+  "    setup では入れません。PyPI の外の OSS で、使ってよいかは、この PC の環境(ライセンス・利用の条件・ネットワーク)によるためです。入るまで、検索は keyword(BM25)だけです。",
+  '    使うには、モデルの入手先とライセンスを確かめてから、次を実行します: python -I "C:\\p\\ctxf.py" model download',
+  '    この PC にモデルが置いてあれば、代わりに次を実行します: python -I "C:\\p\\ctxf.py" model use "<フォルダ>"',
 ];
 
 test("parseSetupProgress は setup のログの最後の段階を返す", () => {
@@ -249,28 +250,30 @@ test("parseSetupProgress は setup のログの最後の段階を返す", () => 
   assert.deepEqual(upto(3), { phase: "venv" });
   assert.deepEqual(upto(4), { phase: "packages" });
   assert.deepEqual(upto(5), { phase: "packaged" });
-  assert.deepEqual(upto(8), { phase: "packaged" });  // モデルの有無を出すだけで、取得の段階は無い
-  assert.deepEqual(parseSetupProgress([...SETUP_LINES, "Setup is done. Next, ..."].join("\n")), { phase: "done" });
+  assert.deepEqual(upto(9), { phase: "packaged" });  // モデルの有無を出すだけで、取得の段階は無い
+  assert.deepEqual(parseSetupProgress([...SETUP_LINES, "用意ができました。次は、..."].join("\n")), { phase: "done" });
+  // 入れたパッケージを読めず、仮想環境を作り直すときも、仮想環境を作る段階
+  assert.deepEqual(parseSetupProgress("  入れたパッケージを読み込めません(x)。仮想環境を作り直します ..."), { phase: "venv" });
   assert.equal(setupRuntimeFolder(SETUP_LINES.join("\n")), "C:\\cf\\runtime");
   assert.equal(setupRuntimeFolder("nothing"), "");
 });
 
 test("modelMissing は、setup のログから埋め込みモデルが無いことと、利用者が自分で取得するコマンドを読む", () => {
-  const e5 = "intfloat/multilingual-e5-small, license MIT, about 487 MB, from https://huggingface.co/intfloat/multilingual-e5-small";
+  const e5 = "intfloat/multilingual-e5-small、ライセンス MIT、約 487 MB、入手先 https://huggingface.co/intfloat/multilingual-e5-small";
   assert.deepEqual(modelMissing(SETUP_LINES.join("\r\n")),
     { command: 'python -I "C:\\p\\ctxf.py" model download', name: "intfloat/multilingual-e5-small", about: e5, ask: true });
   // 作業フォルダの設定の model_dir が置き場を決めている: model use で覚えても、そちらが先なので尋ねない
-  const ownFolder = "  embedding model: not installed (m, license unknown, in the folder set by [embedding] model_dir: D:\\m)\n" +
-    "    Setup does not install it: ...\n    To use it, put the model files in that folder.\n";
+  const ownFolder = "  埋め込みモデル: インストールされていません(m、ライセンス 不明、[embedding] model_dir のフォルダ: D:\\m)\n" +
+    "    setup では入れません。...\n    使うには、そのフォルダにモデルのファイルを置きます。\n";
   assert.deepEqual(modelMissing(ownFolder),
-    { command: "", name: "m", about: "m, license unknown, in the folder set by [embedding] model_dir: D:\\m", ask: false });
+    { command: "", name: "m", about: "m、ライセンス 不明、[embedding] model_dir のフォルダ: D:\\m", ask: false });
   // model use で覚えたフォルダからファイルが無くなった: 尋ね直す
-  const moved = "  embedding model: not installed (m, license MIT, in the folder set with `model use`: D:\\old)\n" +
-    "    The model files are no longer in that folder. Check it, then run: python -I \"C:\\p\\ctxf.py\" model use \"<folder>\"\n";
+  const moved = "  埋め込みモデル: インストールされていません(m、ライセンス MIT、`model use` で覚えたフォルダ: D:\\old)\n" +
+    "    そのフォルダに、モデルのファイルがもうありません。確かめてから、次を実行します: python -I \"C:\\p\\ctxf.py\" model use \"<フォルダ>\"\n";
   assert.equal(modelMissing(moved).ask, true);
   assert.equal(modelMissing(moved).command, "");
-  assert.equal(modelMissing("  embedding model: installed (m, C:\\m)\n"), null);
-  assert.equal(modelMissing("  embedding model: not used (embedding is off in C:\\w\\.cf\\config.toml)\n"), null);
+  assert.equal(modelMissing("  埋め込みモデル: 入っています(m、C:\\m)\n"), null);
+  assert.equal(modelMissing("  埋め込みモデル: 使いません(C:\\w\\.cf\\config.toml で、埋め込みを切っています)\n"), null);
   assert.equal(modelMissing(""), null);
 });
 
@@ -289,10 +292,10 @@ test("setupProgressNote は段階が変わったとき・同じ段階が 1 分�
 
 test("setupFailureMessage は終了コードごとに、わけと次にすることを出す", () => {
   const log = "C:\\cf\\context-setup.log";
-  assert.match(setupFailureMessage(2, "Python 3.15.0 is not supported ...\n", log), /この Python では.*3\.15\.0/s);
-  assert.match(setupFailureMessage(3, "Another setup is running (x).\n", log), /別の用意.*Another setup/s);
-  assert.match(setupFailureMessage(1, "  installing ...\n  pip failed (exit code 1). pip could not reach PyPI.\n", log),
-    /終了コード 1.*pip could not reach PyPI\.$/s);
+  assert.match(setupFailureMessage(2, "Python 3.15.0 は使えません ...\n", log), /この Python では.*3\.15\.0/s);
+  assert.match(setupFailureMessage(3, "別の setup が動いています(x)。\n", log), /別の用意.*別の setup が動いています/s);
+  assert.match(setupFailureMessage(1, "  入れます ...\n  pip が失敗しました(終了コード 1)。pip が PyPI に届きませんでした。\n", log),
+    /終了コード 1.*pip が PyPI に届きませんでした。$/s);
 });
 
 test("initSources と keywordOnly は ctxf.py の出力を読む", () => {
@@ -407,7 +410,7 @@ test("モデルのフォルダのダイアログ: 形・文・答えの読み方
   assert.equal(schema.required, undefined);  // 空のまま送ると飛ばす
   const missing = modelMissing(SETUP_LINES.join("\n"));
   const first = modelFolderPrompt(missing);
-  assert.match(first, /^context-foundation: 埋め込みモデル\(intfloat\/multilingual-e5-small, license MIT/);
+  assert.match(first, /^context-foundation: 埋め込みモデル\(intfloat\/multilingual-e5-small、ライセンス MIT/);
   assert.match(first, /写しも取得もしません/);
   assert.match(modelFolderPrompt(missing, "D:\\x は使えませんでした: 無い"), /^context-foundation: D:\\x は使えませんでした: 無い\n埋め込みモデル/);
   assert.equal(pickedModelFolder({ folder: '  "D:\\models\\e5"  ' }), "D:\\models\\e5");

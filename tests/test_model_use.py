@@ -430,10 +430,10 @@ def test_setup_report_names_model_use(monkeypatch, tmp_path):
     ctxf = load_launcher(monkeypatch, tmp_path / "home")
     missing = ctxf.model_report({"state": "missing", "name": "m", "license": "MIT", "url": "https://huggingface.co/m",
                                  "folder": "/c", "own_folder": False, "dir_source": ""})
-    assert "model download" in missing and 'model use "<folder>"' in missing
+    assert "model download" in missing and 'model use "<フォルダ>"' in missing
     moved = ctxf.model_report({"state": "missing", "name": "m", "license": "MIT", "folder": "/mine",
                                "own_folder": True, "dir_source": "user"})
-    assert "set with `model use`: /mine" in moved and "model forget" in moved and "model download" not in moved
+    assert "`model use` で覚えたフォルダ: /mine" in moved and "model forget" in moved and "model download" not in moved
 
 
 # --- setup の skill ---
@@ -465,8 +465,8 @@ def test_setup_skill_asks_before_each_step_and_never_downloads_the_model():
     assert "EXIT_MODEL_NOT_SAVED = 4" in cli and "exit code 4" in text
     assert "設定がすでにあります" in cli and "設定がすでにあります" in text and "変わりました" in cli
     launcher = (REPO / "ctxf.py").read_text(encoding="utf-8")
-    for word in ("present:", "missing:", "set with `model use`", "setup:", "runtime:", "index:", "Setup is done",
-                 "Another setup is running", "python3 -m venv --clear .venv"):
+    for word in ("present:", "missing:", "set with `model use`", "setup:", "runtime:", "index:", "用意ができました",
+                 "別の setup が動いています", "python3 -m venv --clear .venv"):
         assert word in launcher, word
     # 1 つで通しで進められること: 用意・モデル・確かめ・索引・終わり
     assert re.findall(r"^## (\d)\. ", text, re.M) == ["1", "2", "3", "4", "5", "6"]
