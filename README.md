@@ -54,7 +54,9 @@ grepping, only in workspaces that have an index. A **skill**
 as a fallback for when the MCP tools are not available. A Copilot CLI
 **extension** adds two slash commands that the user types and that run in
 the background without calling the model: `/context-setup` installs the
-Python dependencies, and `/context-index` builds or
+Python dependencies and, if the embedding model is missing, asks in a dialog
+for the folder of a model already on the PC and registers it (it never
+downloads the model), and `/context-index` builds or
 updates the index (extensions are experimental in Copilot CLI and load after
 `/settings experimental on`). Python dependencies
 (about 200 MB) and the embedding model (about 490 MB) live outside the

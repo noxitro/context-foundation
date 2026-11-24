@@ -119,7 +119,9 @@ def test_extension_adds_the_index_command_and_its_library_passes_its_tests():
     # 入口は、プラグインのルートの ctxf.py(skill のフォルダの写しは要らない)。/context-index は init と index だけを
     # 動かし、setup は /context-setup だけが動かす(利用者が打つコマンド。大きな取得を、索引のコマンドからは始めない)
     assert ext.count('"ctxf.py")') == 2 and '"init"' in ext and '"index"' in ext
-    assert ext.count('"setup"') == 1 and '"ctxf.py"), "setup", ...opts.args]' in ext
+    assert ext.count('"setup"') == 1 and '[ctxf, "setup", ...opts.args]' in ext
+    # /context-setup は、手元に置いたモデルのフォルダを model use で覚えるだけ。モデルを取得するコマンドは動かさない
+    assert ext.count('"model", "use"') == 2 and '"download"' not in ext and '"--download"' not in ext
     plugin = json.loads((REPO / "plugin.json").read_text(encoding="utf-8"))
     assert "/context-index" in plugin["description"] and "/context-setup" in plugin["description"]
     # skill は、索引が無いとき利用者にこのコマンドを勧める
