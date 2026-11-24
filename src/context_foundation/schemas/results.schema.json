@@ -90,6 +90,11 @@
       "type": "string",
       "description": "Key for joining with an external session log."
     },
+    "tools_by_name": {
+      "type": "object",
+      "additionalProperties": { "type": "integer", "minimum": 0 },
+      "description": "Agent methods: number of calls per tool, by the name the host uses (for example view, Read, lsp, mcp__serena__find_symbol)."
+    },
     "notes": { "type": "string" }
   },
   "$defs": {
@@ -109,8 +114,8 @@
           "description": "true when the file changed after the index was built."
         },
         "origin": {
-          "enum": ["search_result", "opened", "cited"],
-          "description": "search_result: returned by a search call. opened: a file range the agent read. cited: named as evidence in the answer."
+          "enum": ["search_result", "opened", "cited", "symbol_result"],
+          "description": "search_result: returned by a search call. opened: a file range the agent read. cited: named as evidence in the answer. symbol_result: the body of a symbol that a code-intelligence tool (Serena, a language server) returned."
         }
       }
     }

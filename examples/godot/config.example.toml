@@ -1,0 +1,12 @@
+# Godot 4.7.2-stable を題材にした評価例の設定。
+#
+# 使い方: <godot> を、取得した Godot のフォルダに置き換えて、作業フォルダの
+# .cf\config.toml に置く(README.md の「再現のしかた」)。
+# source の id は、cases.jsonl の source_id とそろえてある。変えないこと。
+# .serena(Serena のプロジェクト)と .cache(clangd の索引)は、比べる道具が
+# ソースのルートに書くので、索引に入れない。
+
+[[source]]
+id = "godot"
+root = '<godot>'
+exclude = ['**/thirdparty/**', '**/tests/**', '**/.serena/**', '**/.cache/**']

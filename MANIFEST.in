@@ -7,7 +7,9 @@ include ctxf.py plugin.json mcp.json README.md readme-ja.md CHANGELOG.md LICENSE
 include docs/benchmarks.md docs/comparison-runbook.md docs/copilot.md docs/design.md docs/evaluation-data-spec.md
 include docs/production.md
 include bench/README.md bench/agent_run.py bench/answer-format.txt bench/claude_run.py bench/compare.py bench/grade_pack.py bench/interleave.py
+include bench/methods.py bench/hint_hook.py bench/arms.claude.example.json
 include examples/o3de/README.md examples/o3de/cases.jsonl examples/o3de/config.example.toml
+include examples/godot/config.example.toml
 include skills/context-search/SKILL.md skills/context-search/ctxf.py
 include skills/context-search-setup/SKILL.md skills/context-search-setup/ctxf.py
 include com.github.copilot/hooks/hooks.json

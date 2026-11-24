@@ -95,17 +95,90 @@ def test_interleave_rotates_the_order(tmp_path):
 def test_claude_run_command_restricts_tools_and_settings(tmp_path):
     cr = _load("claude_run")
     cmd = cr.build_command("claude", "agent_cf_mcp", "haiku", [Path("D:/src")], tmp_path / "m.json",
-                           tmp_path / "e.json", "Use the\n search tool first.")
+                           "Use the search tool first.")
     assert cmd[cmd.index("--setting-sources") + 1] == ""          # 利用者の設定と指示のファイルを読ませない
     assert "--strict-mcp-config" in cmd and "--bare" not in cmd
     assert cmd[cmd.index("--append-system-prompt") + 1] == "Use the search tool first."
     allowed = cmd[cmd.index("--allowedTools") + 1].split(",")
     assert "mcp__context-foundation__search" in allowed and "Bash" not in allowed
-    grep = cr.build_command("claude", "agent_grep", "haiku", [], tmp_path / "m.json", tmp_path / "e.json", "")
+    # 既存の手順は、MCP サーバーの無い設定(手法ごとのファイル)を渡し、始めの文を足さない
+    grep = cr.build_command("claude", "agent_grep", "haiku", [], tmp_path / "e.json", "")
     assert "--append-system-prompt" not in grep and grep[grep.index("--mcp-config") + 1].endswith("e.json")
+    assert cr.mcp_servers("agent_grep", "py", tmp_path, None) == {}
     raw = "\n".join(json.dumps(e) for e in [
         {"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Grep"}]}},
         {"type": "assistant", "message": {"content": [{"type": "text", "text": "x"}]}},
         {"type": "result", "result": "answer", "usage": {"output_tokens": 3}}])
     final, calls, by_name = cr.parse_stream(raw + "\nnot json")
     assert final["result"] == "answer" and calls == 1 and by_name == {"Grep": 1}
+
+
+def _rows_and_cases(tmp_path):
+    cases = [{"case_id": "AR-01", "category": "natural_language_only", "question_language": "ja",
+              "expected_answer_points": ["BufferPool::Release returns it."],
+              "expected_evidence": [{"source_id": "engine", "path": "Render/BufferPool.cpp", "start_line": 40,
+                                     "end_line": 50}]},
+             {"case_id": "BR-01", "category": "cross_language", "question_language": "en",
+              "expected_answer_points": ["VoiceMixer::Mix mixes."], "expected_evidence": []}]
+    ev = {"source_id": "engine", "path": "Render/BufferPool.cpp", "start_line": 44, "end_line": 46}
+    rows = [
+        {"run_id": "r", "case_id": "AR-01", "method": "agent_grep", "trial": 1, "status": "completed",
+         "answer": "Release", "answer_correctness": 1.0, "task_time_seconds": 10, "cost_usd": 0.02, "input_tokens": 100,
+         "output_tokens": 10, "tool_calls": 3, "returned_bytes": 2048,
+         "retrieved_evidence": [dict(rank=1, origin="opened", **ev)], "tools_by_name": {"grep": 2, "view": 1}},
+        {"run_id": "r", "case_id": "AR-01", "method": "agent_serena", "trial": 1, "status": "completed",
+         "answer": "Release", "answer_correctness": 0.5, "task_time_seconds": 20, "cost_usd": 0.04,
+         "retrieved_evidence": [dict(rank=1, origin="cited", **ev)],
+         "tools_by_name": {"mcp__serena__find_symbol": 2, "Read": 1}},
+        {"run_id": "r", "case_id": "BR-01", "method": "agent_serena", "trial": 1, "status": "timeout",
+         "answer": None, "retrieved_evidence": []},
+        {"run_id": "r", "case_id": "BR-01", "method": "agent_grep", "trial": 1, "status": "completed",
+         "answer": "Mix", "answer_correctness": "acceptable", "task_time_seconds": 30, "retrieved_evidence": []},
+    ]
+    r, c = tmp_path / "r.jsonl", tmp_path / "c.jsonl"
+    r.write_text("\n".join(json.dumps(x) for x in rows), encoding="utf-8")
+    c.write_text("\n".join(json.dumps(x) for x in cases), encoding="utf-8")
+    return r, c
+
+
+def test_summary_counts_failures_evidence_and_groups(compare, tmp_path):
+    r, c = _rows_and_cases(tmp_path)
+    rows_all, cases = compare.load_all(r, c)
+    (_, table), *groups = compare.summary_tables(rows_all, cases, "area")
+    by = {t["method"]: t for t in table}
+    assert (by["agent_serena"]["runs"], by["agent_serena"]["timeout"], by["agent_serena"]["completed"]) == (2, 1, 1)
+    # 根拠の当たり: 回答が根拠に挙げた場所(cited)だけ / 開いた場所も含める(seen)。正解の場所の無い質問は除く
+    assert (by["agent_grep"]["evidence_cited"], by["agent_grep"]["evidence_seen"]) == (0.0, 1.0)
+    assert (by["agent_serena"]["evidence_cited"], by["agent_serena"]["evidence_seen"]) == (1.0, 1.0)
+    # 文字の採点(acceptable)は、点の平均に入れない
+    assert (by["agent_grep"]["scored"], by["agent_grep"]["pass"]) == (1, 1)
+    assert [g for g, _ in groups] == ["area: AR", "area: BR"]
+    assert compare.group_of(cases["AR-01"], "language") == "ja"
+    assert compare.group_of(cases["BR-01"], "category") == "cross_language"
+
+
+def test_cost_and_tool_tables(compare, tmp_path):
+    r, c = _rows_and_cases(tmp_path)
+    rows = compare.load(r, c)[0]
+    grep = [x for x in rows if x["method"] == "agent_grep"]
+    cost = compare.cost_row(grep)
+    assert (cost["time_median"], cost["cost_total"], cost["returned_kb_median"]) == (20, 0.02, 2.0)
+    tools = compare.tools_row([x for x in rows if x["method"] == "agent_serena"])
+    assert (tools["serena_per_run"], tools["serena_used"], tools["read_per_run"], tools["grep_used"]) == (2, 1.0, 1, 0.0)
+    assert compare.tools_row(grep)["runs"] == 1                                # tools_by_name の無い回は除く
+    text = compare.render([dict(method="agent_grep", **cost)], compare.COST_COLUMNS, "markdown")
+    assert text.splitlines()[0].startswith("| method | runs | time_s") and "| agent_grep | 2 |" in text
+
+
+def test_cli_prints_every_table(compare, tmp_path):
+    import subprocess
+    r, c = _rows_and_cases(tmp_path)
+    for args in (["summary", "--by", "language"], ["cost"], ["tools"], ["summary", "--format", "json"],
+                 ["paired", "agent_serena", "agent_grep"]):
+        cmd = [sys.executable, str(REPO / "bench" / "compare.py"), args[0], str(r), str(c), *args[1:]]
+        p = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", timeout=60)
+        assert p.returncode == 0, p.stderr
+        assert p.stdout.strip()
+    assert "language: ja" in subprocess.run([sys.executable, str(REPO / "bench" / "compare.py"), "summary", str(r),
+                                             str(c), "--by", "language"], capture_output=True, text=True,
+                                            encoding="utf-8").stdout
