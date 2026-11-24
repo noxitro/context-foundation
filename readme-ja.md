@@ -230,6 +230,45 @@ download`)。
 python -I "<…>\ctxf.py" model download
 ```
 
+### 手元に置いたモデルを使う
+
+モデルを、すでにこの PC に置いているとき(ほかの PC から写した、共有の
+フォルダから入れた、Hugging Face のキャッシュにある、など)は、取得せずに、
+そのフォルダを指定します。
+
+```text
+python -I "<…>\ctxf.py" model use "D:\models\multilingual-e5-small"
+```
+
+- 渡すのは、`onnx\model.onnx`(フォルダの直下の `model.onnx` でも可)と
+  `tokenizer.json` が入ったフォルダです。その中のファイル(`model.onnx`)、
+  Hugging Face のキャッシュのフォルダ(`models--intfloat--multilingual-e5-small`)、
+  下にモデルが 1 つだけある上のフォルダでも構いません
+- 量子化したものなど、別の名前の ONNX を使うときは、その `.onnx` の
+  パスを渡します(`tokenizer.json` が、その隣か 1 つ上のフォルダに要り
+  ます)。既定の名前の ONNX が無く、隣の ONNX が 1 つだけなら、フォルダを
+  渡しても、それを使います
+- もう 1 つの既定の候補のモデルなら、`--model
+  ibm-granite/granite-embedding-97m-multilingual-r2` をフォルダの前に付け
+  ます。最後に `model use` したモデルを、設定に `model` の無い作業フォルダ
+  で使います。モデルが変わると、それまでの索引は、作り直すまで keyword
+  だけで検索されます(`model use` がそう知らせます)
+- モデルを 1 回読み込んで確かめてから、利用者ごとの設定
+  (`%LOCALAPPDATA%\context-foundation\settings.json`)に覚えます。この
+  PC のすべての作業フォルダに効きます。ファイルは写しも取得もしません
+- 確かめて、ファイルの大きさや埋め込みの次元が、そのモデルの控えの値と
+  違えば、覚えずに終わります(終了コード 4。別の版か別のモデルの
+  ようです)。それでよければ `--yes` を付けて、もう一度実行します
+- 外すときは `model forget`(ファイルは消しません)。作業フォルダの
+  `.cf\config.toml` の `[embedding]` の `model`・`model_dir`・`onnx_file`
+  は、こちらより先に使われます
+- `setup.bat` も、モデルが無ければ、最後にこのフォルダを尋ねます(空のまま
+  Enter で飛ばせます)
+- Copilot のセッションでは、skill `context-search-setup` が、用意を対話で
+  通しで進めます。パッケージを入れてよいかを尋ね、手元のモデルのフォルダ
+  を尋ねて `model use` で覚え、索引を作るかも尋ねます(モデルは取得しま
+  せん)
+
 モデルが無くても使えます。そのときは、keyword(BM25)だけの
 検索になります。モデルの置き場は `%LOCALAPPDATA%\context-foundation\models`
 です(環境変数 `CF_HOME` で、置き場の親を変えられます。Linux の場所は
@@ -304,6 +343,7 @@ PC・PyPI のミラー」)。
 | `validate --cases <cases.jsonl>` | 評価データの形式を検査する |
 | `serve` | 読み取り専用の MCP サーバー(stdio) |
 | `model download` / `model info` | 埋め込みモデルの取得と確認(取得は、利用者が自分で実行するもの。setup などからは動かさない) |
+| `model use <フォルダ>` / `model forget` | 手元に置いた埋め込みモデルのフォルダを、確かめてから利用者ごとの設定に覚える・外す(`--model <名前>` で既定と違うモデル、`--onnx-file <名前>` で別の名前の ONNX、`--no-check` で読み込みの確かめを省く、`--yes` で確かめて気になる点があっても覚える)。終了コード: 0 覚えた、2 覚えられない、4 気になる点があって覚えていない |
 | `copilot register` / `unregister` / `status` | このフォルダを手元の Marketplace としてプラグインを入れる・外す・状態を見る(取得したリポジトリのフォルダからだけ) |
 
 `index` の終了コードは、0 が成功、1 が索引を置き換えられなかった(ほかの
@@ -460,7 +500,9 @@ top_k = 8
 `status`)が入っています。セッションの始めの hook が、索引のある作業
 フォルダでだけ「探すときは、検索を grep より先に」と 1 文で知らせ、モデルが
 検索の道具を呼びます。MCP の道具が使えない場面のために、同じ検索を CLI で
-呼ぶ skill `context-search` も入っています。用意をするには `/context-setup`、
+呼ぶ skill `context-search` と、用意を対話で進める skill
+`context-search-setup`(手元のモデルのフォルダを尋ねて覚え、索引まで進める)も入って
+います。用意をするには `/context-setup`、
 索引を作る・作り直すには `/context-index` と、セッションで打ちます(拡張。
 Copilot CLI の実験的機能で、`/settings experimental on` で読み込まれます)。
 
@@ -568,6 +610,7 @@ GitHub Actions では、次の 4 つを回します(`.github/workflows`)。
 | `src/context_foundation` | 道具の本体(取り込み・分割・索引・検索・評価・MCP サーバー) |
 | `mcp.json`、`com.github.copilot` | プラグインの MCP サーバーの定義、セッションの始めの hook、索引を作る拡張(`/context-index`) |
 | `skills/context-search` | MCP の道具が使えないときに、検索の CLI の呼び方を伝える skill |
+| `skills/context-search-setup` | 用意を、利用者に尋ねながら通しで進める skill(パッケージ、手元に置いたモデルのフォルダ、索引) |
 | `ctxf.py` | MCP サーバー・hook・skill が呼ぶ入口 |
 | `bench` | エージェントを使う手法を Copilot CLI で回して記録する道具 |
 | `tests` | テストと、合成のコーパス |

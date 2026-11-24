@@ -14,7 +14,7 @@ import hashlib
 import json
 import os
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import numpy as np
@@ -90,6 +90,7 @@ class ModelSpec:
     files: dict[str, tuple[int, str]]
     model_dir: str                 # 利用者が置いたフォルダ(空なら取得先のキャッシュ)
     cache_dir: str
+    model_dir_source: str = ""     # model_dir の出どころ: "config"([embedding] model_dir)/ "user"(`model use`)
 
 
 def data_home() -> Path:
@@ -113,22 +114,126 @@ def default_cache_dir() -> Path:
     return Path.home() / ".cache" / "context-foundation" / "models"     # 0.1 と同じ場所(Windows 以外)
 
 
-def resolve_model(cfg: EmbeddingConfig) -> ModelSpec:
-    name = cfg.model or DEFAULT_MODEL
+USER_SETTINGS_FILE = "settings.json"
+USE_HINT = 'model use "<フォルダ>"'
+
+
+def user_settings_path() -> Path:
+    """利用者ごとの設定(どの作業フォルダにも効く)。`model use` で覚えたモデルの名前・フォルダ・ONNX のファイルを
+    書く。環境変数 CF_SETTINGS で、ファイルの場所を変えられる(テストが、利用者の設定を読まないため)。"""
+    env = os.environ.get("CF_SETTINGS")
+    return Path(env) if env else data_home() / USER_SETTINGS_FILE
+
+
+class SettingsUnreadable(ModelUnavailable):
+    """利用者ごとの設定のファイルが、読めない形になっている。上書きしない。"""
+
+
+def _read_user_settings(strict: bool = False) -> dict:
+    """利用者ごとの設定。無ければ {}。壊れていれば、strict なら SettingsUnreadable、そうでなければ {}
+    (検索や索引づくりは、設定が無いものとして動く。書き換えるときだけ止める)。"""
+    path = user_settings_path()
+    try:
+        text = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return {}
+    except OSError as e:
+        if strict:
+            raise SettingsUnreadable(f"利用者ごとの設定 {path} を読めません({e})") from None
+        return {}
+    try:
+        d = json.loads(text)
+    except ValueError:
+        d = None
+    if not isinstance(d, dict):
+        if strict:
+            raise SettingsUnreadable(f"利用者ごとの設定 {path} が JSON の形ではないので、上書きしません。"
+                                     "中身を直すか、ファイルを消してから、もう一度実行してください")
+        return {}
+    return d
+
+
+def _str_map(d: dict, key: str) -> dict[str, str]:
+    m = d.get(key)
+    if not isinstance(m, dict):
+        return {}
+    return {k: v for k, v in m.items() if isinstance(k, str) and isinstance(v, str) and v}
+
+
+def user_model_dirs() -> dict[str, str]:
+    """`model use` で覚えた、モデルの名前 → 手元のフォルダ。"""
+    return _str_map(_read_user_settings(), "model_dirs")
+
+
+def user_model() -> str:
+    """`model use` で最後に選んだモデルの名前(作業フォルダの設定に model が無いときに使う)。無ければ ""。"""
+    st = _read_user_settings()
+    name = st.get("model")
+    return name if isinstance(name, str) and name in _str_map(st, "model_dirs") else ""
+
+
+def save_user_model_dir(name: str, folder: str | None, onnx_file: str = "") -> Path:
+    """モデル name の手元のフォルダを覚え、使うモデルにする(folder が None なら忘れる)。onnx_file は、既定と
+    違う名前の ONNX を使うとき(フォルダからの相対パス)。書いた設定ファイルの場所を返す。"""
+    st = _read_user_settings(strict=True)
+    dirs, onnx = _str_map(st, "model_dirs"), _str_map(st, "onnx_files")
+    if folder is None:
+        dirs.pop(name, None)
+        onnx.pop(name, None)
+        if st.get("model") == name:
+            st.pop("model")
+    else:
+        dirs[name] = folder
+        if onnx_file:
+            onnx[name] = onnx_file
+        else:
+            onnx.pop(name, None)
+        if name in MODEL_PRESETS:      # 既定の候補でないモデルは、作業フォルダの設定(pooling など)が要るので選ばない
+            st["model"] = name
+    st["model_dirs"], st["onnx_files"] = dirs, onnx
+    path = user_settings_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(st, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+    os.replace(tmp, path)
+    return path
+
+
+def resolve_model(cfg: EmbeddingConfig, user_settings: bool = True) -> ModelSpec:
+    """設定([embedding])と既定値から、使うモデルを決める。
+
+    - モデル: 設定の model、`model use` で選んだモデル、既定のモデルの順
+    - フォルダ: 設定の model_dir、`model use` で覚えたフォルダ、取得先のキャッシュの順
+    - ONNX のファイル: 設定の onnx_file、`model use` で覚えたもの(フォルダの設定が無いときだけ)、既定の順
+
+    user_settings が False なら、`model use` で覚えたものを読まない(`model use` が、覚え直すモデルを決めるとき)。"""
+    st = _read_user_settings() if user_settings else {}
+    dirs = _str_map(st, "model_dirs")
+    chosen = st.get("model") if isinstance(st.get("model"), str) and st.get("model") in dirs else ""
+    if chosen not in MODEL_PRESETS:
+        chosen = ""
+    name = cfg.model or chosen or DEFAULT_MODEL
     p = MODEL_PRESETS.get(name)
-    if p is None and not (cfg.pooling and (cfg.model_dir or cfg.onnx_file)):
+    model_dir, source = cfg.model_dir, ("config" if cfg.model_dir else "")
+    user_onnx = ""
+    if not model_dir:
+        model_dir = dirs.get(name, "")
+        source = "user" if model_dir else ""
+        user_onnx = _str_map(st, "onnx_files").get(name, "") if model_dir else ""
+    onnx_file = cfg.onnx_file or user_onnx
+    if p is None and not (cfg.pooling and (model_dir or onnx_file)):
         raise ModelUnavailable(
             f"モデル {name} は既定の候補にありません。[embedding] に pooling(cls / mean)と、"
             "onnx_file か model_dir を書いてください")
     return ModelSpec(
         name=name, repo=p.repo if p else name, revision=cfg.revision or (p.revision if p else "main"),
-        onnx_file=cfg.onnx_file or (p.onnx_file if p else "onnx/model.onnx"),
+        onnx_file=onnx_file or (p.onnx_file if p else "onnx/model.onnx"),
         tokenizer_file=p.tokenizer_file if p else "tokenizer.json",
         pooling=cfg.pooling or (p.pooling if p else "mean"),
         query_prefix=cfg.query_prefix if cfg.query_prefix is not None else (p.query_prefix if p else ""),
         passage_prefix=cfg.passage_prefix if cfg.passage_prefix is not None else (p.passage_prefix if p else ""),
         max_tokens=cfg.max_tokens, dim=p.dim if p else 0, license=p.license if p else "",
-        files=dict(p.files) if p else {}, model_dir=cfg.model_dir, cache_dir=cfg.cache_dir)
+        files=dict(p.files) if p else {}, model_dir=model_dir, cache_dir=cfg.cache_dir, model_dir_source=source)
 
 
 def model_folder(spec: ModelSpec) -> Path:
@@ -145,12 +250,18 @@ def model_files(spec: ModelSpec) -> tuple[Path, Path]:
     if not onnx.is_file() and (folder / Path(spec.onnx_file).name).is_file():
         onnx = folder / Path(spec.onnx_file).name     # フォルダの直下に置かれた場合
     missing = [str(x) for x in (onnx, tok) if not x.is_file()]
+    if missing and spec.model_dir_source == "user":
+        redo = command_hint(USE_HINT)
+        raise ModelUnavailable(
+            f"`model use` で覚えたフォルダ {folder} に、埋め込みモデルのファイルがありません: " + ", ".join(missing) +
+            f"\nフォルダを確かめて `{redo}` をやり直すか、"
+            f"`{command_hint('model forget')}` で外してください。モデル無しでも keyword(BM25)の検索は使えます")
     if missing:
         raise ModelUnavailable(
             "埋め込みモデルがインストールされていません: " + ", ".join(missing) +
             "\nこのモデルは PyPI の外の OSS なので、setup では入れません。入手先とライセンスを確かめ、この PC で"
-            f"使ってよければ `{command_hint('model download')}` で取得します。"
-            "モデル無しでも keyword(BM25)の検索は使えます")
+            f"使ってよければ `{command_hint('model download')}` で取得します。すでに手元にあれば "
+            f"`{command_hint(USE_HINT)}` でそのフォルダを指定します。モデル無しでも keyword(BM25)の検索は使えます")
     return onnx, tok
 
 
@@ -180,6 +291,9 @@ def download_model(spec: ModelSpec, log=print) -> Path:
 
     送るのは、取得するファイルの名前だけ(利用者のソースや質問は送らない)。
     """
+    if spec.model_dir_source == "user":
+        raise ModelUnavailable(f"`model use` で手元のフォルダ({spec.model_dir})を使うように覚えているので、取得しません。"
+                               f"取得するときは、先に `{command_hint('model forget')}` で外してください")
     if spec.model_dir:
         raise ModelUnavailable("[embedding] model_dir を指定しているときは、取得しません(そのフォルダに置いてください)")
     from huggingface_hub import hf_hub_download
@@ -208,6 +322,147 @@ def download_model(spec: ModelSpec, log=print) -> Path:
         "repo": spec.repo, "revision": spec.revision, "onnx_file": spec.onnx_file, "license": spec.license,
         "downloaded_at": time.strftime("%Y-%m-%dT%H:%M:%S%z")}, ensure_ascii=False, indent=1), encoding="utf-8")
     return folder
+
+
+def _hf_snapshots(folder: Path, revision: str) -> list[Path]:
+    """Hugging Face のキャッシュの形(models--<組織>--<名前>/snapshots/<コミット>/)なら、その snapshot の
+    フォルダ(revision と同じものを先に、ほかは新しい順)。"""
+    snaps = folder / "snapshots"
+    if not snaps.is_dir():
+        return []
+    try:
+        found = [d for d in snaps.iterdir() if d.is_dir()]
+    except OSError:
+        return []
+    found.sort(key=lambda d: (d.name != revision, -d.stat().st_mtime))
+    return found
+
+
+def _find_onnx(base: Path, max_depth: int = 6, max_dirs: int = 5000, max_files: int = 200) -> tuple[list[Path], bool]:
+    """base の下の .onnx ファイルと、上限で打ち切ったか(深さ・見るフォルダの数・見つける数に上限。ドライブの根を
+    渡されても待たせない)。"""
+    found: list[Path] = []
+    seen = 0
+    for root, dirs, files in os.walk(base, followlinks=True):
+        seen += 1
+        depth = len(Path(root).relative_to(base).parts)
+        dirs[:] = sorted(d for d in dirs if not d.startswith(".")) if depth < max_depth else []
+        found += [Path(root) / f for f in sorted(files) if f.lower().endswith(".onnx")]
+        if seen >= max_dirs or len(found) >= max_files:
+            return found[:max_files], True
+    return found, False
+
+
+@dataclass(frozen=True)
+class LocatedModel:
+    folder: Path
+    onnx_file: str = ""            # 既定と違う ONNX を使うとき(フォルダからの相対パス)。"" なら spec のもの
+
+
+def locate_model_folder(given: str, spec: ModelSpec) -> LocatedModel:
+    """利用者が入れたパスから、spec のモデル(ONNX と tokenizer.json)が入ったフォルダを探す。渡せるのは、モデルの
+    フォルダ・その中のファイル(model.onnx や、量子化したものなど別の名前の .onnx)・Hugging Face のキャッシュの
+    フォルダ(models--<組織>--<名前>)・それらの上のフォルダ(下にモデルが 1 つだけあるとき)。既定の名前の ONNX が
+    無く、tokenizer.json の隣に .onnx が 1 つだけあれば、それを使う。見つからなければ ModelUnavailable。"""
+    p = Path(given.strip().strip('"').strip("'")).expanduser()
+    if not p.exists():
+        raise ModelUnavailable(f"そのパスはありません: {p}")
+    named = p.absolute()                # Hugging Face のキャッシュの .onnx は blobs/ へのリンク。名前は、たどる前に見る
+    p = p.resolve()
+    inner = Path(spec.onnx_file)
+
+    def holds_model(folder: Path) -> bool:
+        try:
+            model_files(replace(spec, model_dir=str(folder), model_dir_source="check"))
+            return True
+        except ModelUnavailable:
+            return False
+
+    def own_onnx(folder: Path, onnx: Path) -> LocatedModel:
+        rel = onnx.relative_to(folder).as_posix()
+        return LocatedModel(folder, "" if rel in (inner.as_posix(), inner.name) else rel)
+
+    if p.is_file() and named.suffix.lower() == ".onnx":   # 使う ONNX のファイルを名指しした
+        for c in (named.parent, named.parent.parent):
+            if (c / spec.tokenizer_file).is_file():
+                found = own_onnx(c, named)
+                return LocatedModel(c.resolve(), found.onnx_file)
+        raise ModelUnavailable(f"{named} の隣にも 1 つ上のフォルダにも、{spec.tokenizer_file} がありません")
+    cands = [p.parent, p.parent.parent] if p.is_file() else [p]
+    for c in list(cands):
+        cands += _hf_snapshots(c, spec.revision)
+    for c in cands:
+        if holds_model(c):
+            return LocatedModel(c)
+    # tokenizer.json はあるが、既定の名前の ONNX が無い: 隣(onnx フォルダを含む)の .onnx が 1 つだけなら、それを使う
+    for c in cands:
+        if (c / spec.tokenizer_file).is_file():
+            near = _find_onnx(c, max_depth=1)[0]
+            if len(near) == 1:
+                return own_onnx(c, near[0])
+            if near:
+                raise ModelUnavailable(
+                    f"{c} に、{inner.as_posix()} が無く、ほかの ONNX が {len(near)} つあります: " +
+                    ", ".join(f.relative_to(c).as_posix() for f in near[:10]) +
+                    "。使う ONNX のファイルのパスを渡してください")
+    # 上のフォルダ(D:\models など)を渡されたとき: 下にある ONNX から、モデルの入ったフォルダを探す
+    base, below = cands[0], []
+    onnx, truncated = _find_onnx(base)
+    for f in onnx:
+        for d in ((f.parent.parent,) if f.parent.name == inner.parent.name and inner.parent.name else ()) + (f.parent,):
+            if d not in below and holds_model(d):
+                below.append(d)
+    # 同じ Hugging Face のキャッシュの、いくつもの snapshot は、1 つ(spec の版のもの、無ければ新しいもの)にまとめる
+    picked: list[Path] = []
+    for d in below:
+        if d.parent.name == "snapshots":
+            d = next(x for x in _hf_snapshots(d.parent.parent, spec.revision) if x in below)
+        if d not in picked:
+            picked.append(d)
+    if len(picked) == 1:
+        return LocatedModel(picked[0])
+    if picked:
+        raise ModelUnavailable(f"{base} の下に、モデル {spec.name} の入ったフォルダが {len(picked)} つあります。"
+                               "使うものを 1 つ選んで、そのフォルダを渡してください: " +
+                               ", ".join(str(d) for d in picked[:10]))
+    msg = (f"{base} に、モデル {spec.name} のファイルが見つかりません。要るのは {inner.as_posix()}"
+           f"(フォルダの直下に {inner.name} でもよい)と {spec.tokenizer_file} です")
+    if onnx:
+        msg += ("。このフォルダの下にある ONNX: " + ", ".join(f.relative_to(base).as_posix() for f in onnx[:10]) +
+                "。別の名前の ONNX(量子化したものなど)を使うときは、その .onnx のファイルのパスを渡します"
+                f"({spec.tokenizer_file} が、その隣か 1 つ上のフォルダに要ります)")
+    if truncated:
+        msg += "。フォルダが多いので、途中までしか探していません。モデルの入ったフォルダを、もっと近くで渡してください"
+    raise ModelUnavailable(msg)
+
+
+def size_notes(spec: ModelSpec) -> list[str]:
+    """既定の候補のモデルなら、手元のファイルの大きさを、控えてある値と比べる。違うものの説明の並び。"""
+    notes = []
+    for path, name in zip(model_files(spec), (spec.onnx_file, spec.tokenizer_file)):
+        want = spec.files.get(name)
+        if want and path.stat().st_size != want[0]:
+            notes.append(f"{path.name} の大きさ({path.stat().st_size:,} バイト)が、{spec.name} の版 {spec.revision[:12]} "
+                         f"の値({want[0]:,} バイト)と違います。別の版か、別のモデルかもしれません")
+    return notes
+
+
+def check_model(spec: ModelSpec) -> tuple[int, list[str]]:
+    """モデルを読み込んで、文を 1 つ埋め込んでみる。(次元, 気づいたことの並び) を返す。読めなければ ModelUnavailable。
+    既定の候補のモデルなら、ファイルの大きさと次元を、控えてある値と比べる(違っても誤りにはしない)。"""
+    notes = size_notes(spec)
+    try:
+        emb = OnnxEmbedder(replace(spec, dim=0))
+        dim = len(emb.embed_query("test"))
+    except ModelUnavailable:
+        raise
+    except Exception as e:
+        first = (str(e).strip().splitlines() or [""])[0][:200]
+        raise ModelUnavailable(f"モデルを読み込めませんでした({type(e).__name__}: {first})。ファイルが壊れているか、"
+                               "ONNX の形ではないようです") from None
+    if spec.dim and dim != spec.dim:
+        notes.append(f"埋め込みの次元が {dim} で、{spec.name} の {spec.dim} と違います。別のモデルのようです")
+    return dim, notes
 
 
 class Embedder:

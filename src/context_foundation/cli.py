@@ -7,6 +7,7 @@
   ctxf serve                    読み取り専用の MCP サーバー(stdio)
   ctxf validate --cases ...     cases.jsonl / results.jsonl の検査
   ctxf model download           埋め込みモデルを取得する
+  ctxf model use <フォルダ>     手元に置いた埋め込みモデルを使う(利用者ごとの設定に覚える)
   ctxf copilot register         Copilot CLI・アプリへの登録(unregister で解除)
   ctxf wizard index|search|eval .bat から呼ぶ、対話の形
 """
@@ -187,16 +188,22 @@ def cmd_status(args) -> int:
 
 def cmd_model(args) -> int:
     from .config import EmbeddingConfig
-    from .embed import MODEL_PRESETS, ModelUnavailable, download_model, model_files, model_folder, resolve_model
+    from .embed import (MODEL_PRESETS, USE_HINT, ModelUnavailable, download_model, model_files, model_folder,
+                        resolve_model)
 
     path = find_config(getattr(args, "config", None))
     ecfg = load_config(path).embedding if path else EmbeddingConfig()
+    if args.action in ("use", "forget"):
+        return _model_folder_command(args, ecfg, path)
     if args.model:
         ecfg.model = args.model
     try:
         spec = resolve_model(ecfg)
     except ModelUnavailable as e:
         sys.stderr.write(f"{e}\n")
+        return EXIT_USAGE
+    if args.folder and args.action in ("download", "info"):
+        sys.stderr.write(f"model {args.action} はフォルダを受け取りません(手元のモデルを使うときは model use)\n")
         return EXIT_USAGE
     if args.action == "download":
         try:
@@ -212,12 +219,107 @@ def cmd_model(args) -> int:
     if preset:
         size = sum(preset.files[n][0] for n in (spec.onnx_file, spec.tokenizer_file) if n in preset.files)
         print(f"  大きさ: 約 {size / 1e6:.0f} MB  次元: {preset.dim}  {preset.note}")
-    print(f"  置き場: {model_folder(spec)}")
+    origin = {"config": "(設定の [embedding] model_dir)", "user": "(`model use` で指定したフォルダ)"}
+    print(f"  置き場: {model_folder(spec)}{origin.get(spec.model_dir_source, '')}")
     try:
         model_files(spec)
         print("  状態: 手元にあります")
     except ModelUnavailable:
-        print(f"  状態: まだありません(`{command_hint('model download')}` で取得)")
+        print(f"  状態: まだありません(`{command_hint('model download')}` で取得。手元にあれば "
+              f"`{command_hint(USE_HINT)}`)")
+    return 0
+
+
+EXIT_MODEL_NOT_SAVED = 4             # model use: 確かめると気になる点があったので、覚えなかった(--yes で覚える)
+
+
+def _model_folder_command(args, ecfg, config_path) -> int:
+    """`model use <フォルダ>`: 手元に置いたモデルのフォルダを確かめて、利用者ごとの設定に覚え、使うモデルにする
+    (どの作業フォルダにも効く)。`model forget`: 覚えたフォルダを外す。モデルのファイルは消さない。
+
+    終わりに、英語の 1 行(result: ...)を出す。端末の文字コードで日本語が読めないエージェントのため。
+    終了コードは 0 が覚えた・外した、2 が覚えられない(パス・ファイル・読み込み)、4 が気になる点があって覚えて
+    いない(--yes で覚える)。"""
+    from dataclasses import replace
+
+    from .config import EmbeddingConfig
+    from .embed import (DEFAULT_MODEL, ModelUnavailable, check_model, locate_model_folder, resolve_model,
+                        save_user_model_dir, size_notes)
+
+    if args.action == "forget":
+        if args.folder:
+            sys.stderr.write("model forget はフォルダを受け取りません(--model でモデルを選びます)\n")
+            return EXIT_USAGE
+        try:
+            spec = resolve_model(replace(ecfg, model=args.model or ecfg.model, model_dir="", onnx_file=""))
+            written = save_user_model_dir(spec.name, None) if spec.model_dir_source == "user" else None
+        except ModelUnavailable as e:
+            sys.stderr.write(f"{e}\n")
+            return EXIT_USAGE
+        if written is None:
+            print(f"{spec.name} には、`model use` で覚えたフォルダがありません")
+            print("result: nothing to forget")
+        else:
+            print(f"{spec.name} のフォルダ {spec.model_dir} を外しました(ファイルは消していません。設定: {written})")
+            print("result: forgotten")
+        return 0
+    if not args.folder:
+        sys.stderr.write("モデルのフォルダを渡してください: " + command_hint('model use "<フォルダ>"') + "\n")
+        return EXIT_USAGE
+    # 覚えるのは、名指ししたモデル(無ければ作業フォルダの設定のモデルか、既定のモデル)。前に `model use` で選んだ
+    # モデルを引き継がない(別のモデルのフォルダを、前のモデルの名前で覚えないため)
+    name = args.model or ecfg.model or DEFAULT_MODEL
+    try:
+        spec = resolve_model(replace(ecfg, model=name, model_dir="", onnx_file=args.onnx_file or ""),
+                             user_settings=False)
+        located = locate_model_folder(args.folder, spec)
+        onnx_file = located.onnx_file or (args.onnx_file or "")
+        found = replace(spec, model_dir=str(located.folder), model_dir_source="user",
+                        onnx_file=onnx_file or spec.onnx_file)
+        if args.no_check:
+            dim, notes = 0, size_notes(found)
+        else:
+            print(f"モデルを読み込んで確かめます: {located.folder}" + (f"(ONNX: {onnx_file})" if onnx_file else ""),
+                  flush=True)
+            dim, notes = check_model(found)
+    except ModelUnavailable as e:
+        sys.stderr.write(f"{e}\n")
+        print("result: not saved (error)")
+        return EXIT_USAGE
+    for n in notes:
+        print(f"  注意: {n}")
+    if notes and not args.yes:
+        print("確かめると、上の気になる点がありました。覚えていません。このフォルダでよければ、--yes を付けて"
+              "もう一度実行します")
+        print("result: not saved (warnings; run again with --yes to save)")
+        return EXIT_MODEL_NOT_SAVED
+    try:
+        before = resolve_model(EmbeddingConfig()).name
+    except ModelUnavailable:
+        before = ""
+    try:
+        written = save_user_model_dir(spec.name, str(located.folder), onnx_file)
+    except ModelUnavailable as e:
+        sys.stderr.write(f"{e}\n")
+        print("result: not saved (error)")
+        return EXIT_USAGE
+    print(f"{spec.name} のフォルダを覚えました: {located.folder}" + (f"(ONNX: {onnx_file})" if onnx_file else "") +
+          (f"(埋め込みの次元 {dim})" if dim else ""))
+    print(f"  設定: {written}(この PC のすべての作業フォルダで、このモデルを使います。外すときは "
+          f"`{command_hint('model forget')}`)")
+    if ecfg.model_dir and config_path:
+        print(f"  注意: {config_path} の [embedding] model_dir({ecfg.model_dir})が先に使われます。"
+              "この作業フォルダでこのフォルダを使うときは、その行を消してください")
+    try:
+        after = resolve_model(EmbeddingConfig()).name
+    except ModelUnavailable:
+        after = before
+    if before and after != before:
+        print(f"  注意: 設定に model の無い作業フォルダのモデルが、{before} から {after} に変わりました。そこの索引は、"
+              f"`{command_hint('index')}` で作り直します(作り直すまで、検索は keyword だけになります)")
+    if ecfg.model and ecfg.model != spec.name and config_path:
+        print(f"  注意: {config_path} の [embedding] model は {ecfg.model} です。この作業フォルダでは、そちらを使います")
+    print("result: saved" + (" (model " + spec.name + ")" if spec.name != DEFAULT_MODEL else ""))
     return 0
 
 
@@ -334,8 +436,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("model", help="埋め込みモデルの取得と確認", allow_abbrev=False)
     common(p)
-    p.add_argument("action", choices=("download", "info"))
+    p.add_argument("action", choices=("download", "info", "use", "forget"),
+                   help="download: 取得する / info: 確かめる / use <フォルダ>: 手元に置いたモデルを使う / forget: use を外す")
+    p.add_argument("folder", nargs="?", help="use: モデルのフォルダ(ONNX と tokenizer.json が入ったもの)")
     p.add_argument("--model", help="モデルの名前(省くと設定か既定のもの)")
+    p.add_argument("--no-check", action="store_true", help="use: モデルを読み込んで確かめるのを省く")
+    p.add_argument("--onnx-file", help="use: 既定と違う名前の ONNX(フォルダからの相対パス。量子化したものなど)")
+    p.add_argument("--yes", action="store_true", help="use: 確かめて気になる点があっても覚える")
     p.set_defaults(func=cmd_model)
 
     p = sub.add_parser("copilot", help="Copilot CLI・アプリへの登録と解除", allow_abbrev=False)
@@ -352,7 +459,15 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     _utf8_stdio()
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args, extra = parser.parse_known_args(argv)
+    # Python 3.11 の argparse は、オプションの後ろに来た省ける位置引数(`model use --model <名前> <フォルダ>` の
+    # フォルダ)を受け取らずに余りにする(3.12 からは受け取る)。その 1 つだけを、受け取ったものとして扱う
+    if (len(extra) == 1 and not extra[0].startswith("-") and getattr(args, "func", None) is cmd_model
+            and args.folder is None):
+        args.folder, extra = extra[0], []
+    if extra:
+        parser.error("unrecognized arguments: " + " ".join(extra))
     try:
         return int(args.func(args) or 0)
     except ConfigError as e:

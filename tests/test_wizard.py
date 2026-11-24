@@ -69,16 +69,18 @@ def test_search_wizard_loops_until_an_empty_line(answers, indexed_workspace, cap
     assert "方法を keyword にしました" in out and "engine:Core/JobScheduler.cpp:" in out
 
 
-def test_setup_wizard_reports_a_missing_model_without_asking_or_downloading(answers, monkeypatch, capsys):
+def test_setup_wizard_reports_a_missing_model_and_never_asks_to_download_it(answers, monkeypatch, capsys):
     import context_foundation.embed as embed
 
     called = []
     monkeypatch.setattr(embed, "download_model", lambda *a, **k: called.append(a))
-    answers.append("y")                  # 尋ねられても「はい」と答える入力を置いておく。読まれないこと
+    # 尋ねるのは、手元に置いたモデルのフォルダだけ。「はい」と答えても、取得の同意にはならない(フォルダとして読む)
+    answers.append("y")
     assert wizard_main(Namespace(action="setup")) == 0
     out = capsys.readouterr().out
-    assert not called and answers == ["y"]
+    assert not called and answers == []
     assert "インストールされていません" in out and "model download" in out and "keyword(BM25)だけ" in out
+    assert "そのパスはありません" in out and "用意ができました" in out
 
 
 def test_wizard_stops_when_input_is_closed(answers):

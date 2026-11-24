@@ -809,13 +809,17 @@ try:
         print("not used (embedding is off in " + str(path) + ")")
         raise SystemExit(0)
     spec = resolve_model(emb)
+    by_use = getattr(spec, "model_dir_source", "") == "user"
     try:
         model_files(spec)
-        print("present: " + spec.name + "  " + str(model_folder(spec)))
+        print("present: " + spec.name + "  " + str(model_folder(spec)) + ("  (set with `model use`)" if by_use else ""))
     except ModelUnavailable:
         print("missing: " + spec.name + "  " + str(model_folder(spec)) +
-              "  (not installed. Setup does not install it; to use it, check its source and licence, then run "
-              "`model download`. Without it, search is keyword-only)")
+              ("  (the folder set with `model use` no longer has the model files. Check it and run "
+               "`model use \"<folder>\"` again, or `model forget`. Without it, search is keyword-only)" if by_use else
+               "  (not installed. Setup does not install it; to use it, check its source and licence, then run "
+               "`model download`, or `model use \"<folder>\"` if it is already on this PC. Without it, search is "
+               "keyword-only)"))
 except SystemExit:
     raise
 except Exception as e:
@@ -842,7 +846,8 @@ try:
         size = sum(p.files[n][0] for n in (spec.onnx_file, spec.tokenizer_file) if n in p.files) if p else 0
         out = {"name": spec.name, "license": spec.license, "size_mb": round(size / 1e6),
                "url": "" if spec.model_dir else "https://huggingface.co/" + spec.repo,
-               "folder": str(model_folder(spec)), "own_folder": bool(spec.model_dir)}
+               "folder": str(model_folder(spec)), "own_folder": bool(spec.model_dir),
+               "dir_source": spec.model_dir_source}
         try:
             model_files(spec)
             out["state"] = "installed"
@@ -876,19 +881,26 @@ def model_report(info):
     if state == "unknown":
         return ("  embedding model: unknown (" + info.get("error", "") + "). `" + entry_command() + " model info` "
                 "shows it.")
-    where_from = (" in the folder set by [embedding] model_dir: " + info.get("folder", "") if info.get("own_folder")
-                  else ", from " + info.get("url", ""))
+    by_use = info.get("dir_source") == "user"
+    where_from = (", from " + info.get("url", "") if not info.get("own_folder")
+                  else " in the folder set with `model use`: " + info.get("folder", "") if by_use
+                  else " in the folder set by [embedding] model_dir: " + info.get("folder", ""))
     size = " about %s MB" % info["size_mb"] if info.get("size_mb") else ""
     lines = ["  embedding model: not installed (" + info.get("name", "") + ", license " +
              (info.get("license") or "unknown") + "," + size + where_from + ")",
              "    Setup does not install it: it is open-source software from outside PyPI, and whether it may be "
              "used depends on this PC's environment (licence, terms of use, network). Search is keyword-only "
              "(BM25) until it is installed."]
-    if info.get("own_folder"):
+    if by_use:
+        lines.append("    The model files are no longer in that folder. Check it, then run: " + entry_command() +
+                     ' model use "<folder>" (or `model forget` to stop using it)')
+    elif info.get("own_folder"):
         lines.append("    To use it, put the model files in that folder.")
     else:
         lines.append("    To use it, check the model's source and licence, then run: " + entry_command() +
                      " model download")
+        lines.append("    If the model is already on this PC, run instead: " + entry_command() +
+                     ' model use "<folder>"')
     return "\n".join(lines)
 
 

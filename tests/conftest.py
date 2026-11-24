@@ -27,9 +27,11 @@ def write_config(workspace: Path, corpus: Path = CORPUS, extra: str = "") -> Pat
 
 
 @pytest.fixture(autouse=True)
-def _hash_embedder(monkeypatch):
+def _hash_embedder(monkeypatch, tmp_path):
     """既定では、テスト用の埋め込みを使う(モデルの実物を使うテストは、自分で外す)。"""
     monkeypatch.setenv("CF_TEST_EMBEDDER", "hash")
+    # 利用者ごとの設定(`model use` で覚えたモデル)は、開発者の PC のものを読まない
+    monkeypatch.setenv("CF_SETTINGS", str(tmp_path / "cf-settings.json"))
     monkeypatch.delenv("CF_CONFIG", raising=False)
     monkeypatch.delenv("COPILOT_SESSION_CWD", raising=False)   # MCP サーバーが作業フォルダを探す変数(Copilot のシェルで入る)
 
