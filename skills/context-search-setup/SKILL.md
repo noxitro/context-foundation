@@ -75,8 +75,9 @@ the background and wait for it; do not start it a second time while it
 runs. It ends with `Setup is done` and exit code 0.
 
 - Exit code 3 and `Another setup is running`: an earlier run is still
-  going. Wait a minute and run it again; do not delete the lock file unless
-  the user confirms no setup is running
+  going. Wait a minute and run it again, at most three times. If it still
+  says so, show the user the lock file named in that line; do not delete it
+  unless the user confirms no setup is running
 - Any other failure: show the last lines of its output (they say the cause
   and the fix) and stop here
 

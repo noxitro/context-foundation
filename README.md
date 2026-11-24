@@ -71,10 +71,11 @@ remembers it for every workspace instead. A second skill,
 session: it asks before installing the packages, asks for the folder of the
 model already on disk and registers it (it never downloads the model), and
 offers to build the index. A third skill, **`context-search-install`**,
-is the command form of the rest: typed as `/context-search-install`
-(`gpu`, `cpu`), it installs the Python packages and checks that the
-`python` on PATH, which the plugin starts with, works. It leaves out the
-model and the index, and it needs no experimental setting.
+does only the part of the setup that is not the model or the index, as a
+command: typed as `/context-search-install` (`gpu`, `cpu`), it installs the
+Python packages and checks that the `python` on PATH, which the plugin
+starts with, works. It needs no experimental setting (that the slash form
+passes its arguments in Copilot CLI is not verified yet).
 Without the model, search is
 keyword-only. With these, everything from installing
 the plugin (`/plugin install`) to building the index can be done inside a
