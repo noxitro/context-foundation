@@ -5,6 +5,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -589,6 +590,37 @@ def test_session_hint_for_a_ready_indexed_workspace_is_the_031_text(root_workspa
                        env=dict(os.environ, CF_PYTHON=sys.executable), timeout=60)
     assert r.returncode == 0
     assert_golden("session_hint_mcp.json", r.stdout)
+
+
+def test_session_hint_notes_an_index_built_a_week_or_more_ago(tmp_path):
+    """作ってから 7 日以上たった索引では、もとの文の後に、日数と作り直し方を 1 文足す。もとの文は変えない。
+    日数は環境変数 CF_INDEX_AGE_WARN_DAYS で変えられ、0 で出さない。用意ができていないときの文には足さない。"""
+    ws = tmp_path / "ws"
+    (ws / ".cf").mkdir(parents=True)
+    db = ws / ".cf" / "index.db"
+    db.write_bytes(b"")                               # hook は、ファイルがあるかと更新日時だけを見る
+    ready = dict(os.environ, CF_PYTHON=sys.executable)
+    ready.pop("CF_INDEX_AGE_WARN_DAYS", None)
+
+    def hint(env, mcp=True) -> str:
+        r = subprocess.run([sys.executable, "-I", str(REPO / "ctxf.py"), "session-hint"] + (["--mcp"] if mcp else []),
+                           capture_output=True, input=json.dumps({"cwd": str(ws)}), text=True, encoding="utf-8",
+                           cwd=tmp_path, env=env, timeout=60)
+        assert r.returncode == 0
+        return json.loads(r.stdout)["additionalContext"]
+
+    fresh = hint(ready)
+    assert "Note:" not in fresh
+    os.utime(db, (time.time() - 10 * 86400,) * 2)
+    old = hint(ready)
+    assert old.startswith(fresh) and "built 10 days ago" in old and "/context-index" in old and "grep" in old
+    assert "built 10 days ago" in hint(ready, mcp=False)
+    assert "Note:" not in hint(dict(ready, CF_INDEX_AGE_WARN_DAYS="0"))
+    assert "Note:" not in hint(dict(ready, CF_INDEX_AGE_WARN_DAYS="30"))
+    assert "built 10 days ago" in hint(dict(ready, CF_INDEX_AGE_WARN_DAYS="3"))
+    assert "built 10 days ago" in hint(dict(ready, CF_INDEX_AGE_WARN_DAYS="oops"))   # 読めない値は既定の 7 日
+    os.utime(db, (time.time() + 5 * 86400,) * 2)       # 時計がずれて未来の日時でも、足さない
+    assert "Note:" not in hint(ready)
 
 
 def test_golden_files_hold_nothing_of_this_machine():

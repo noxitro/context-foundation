@@ -252,9 +252,30 @@ def find_index(cwd):
     return None
 
 
-def has_index(cwd):
-    """cwd かその親に、索引(.cf/index.db)があるか。"""
-    return find_index(cwd) is not None
+INDEX_AGE_ENV = "CF_INDEX_AGE_WARN_DAYS"
+INDEX_AGE_DEFAULT_DAYS = 7
+
+
+def index_age_note(path, now=None):
+    """索引が作ってから INDEX_AGE_DEFAULT_DAYS 日(環境変数 CF_INDEX_AGE_WARN_DAYS。0 で出さない)以上たって
+    いれば、そのことの 1 文。そうでなければ空。古さは索引のファイルの更新日時で見る(作り直しはファイルを置き
+    換えるので、作った時刻になる)。ソースが変わったかは見ない(フォルダを歩くと、セッションの始まりが遅くなる
+    ため)。sqlite も開かない(Windows で、作り直しの置き換えを妨げないため)。何が起きても空を返す。"""
+    try:
+        try:
+            limit = int(os.environ.get(INDEX_AGE_ENV, "").strip())
+        except ValueError:                             # 無い・読めない値は既定の日数
+            limit = INDEX_AGE_DEFAULT_DAYS
+        if limit <= 0:
+            return ""
+        days = int(((time.time() if now is None else now) - os.stat(path).st_mtime) // 86400)
+        if days < limit:
+            return ""
+        return (" Note: this index was built %d days ago. Files added since then do not appear in search results, "
+                "so also grep when looking for recent code, and tell the user once that rebuilding the index "
+                "(/context-index in Copilot CLI) brings it up to date." % days)
+    except (OSError, ValueError, OverflowError):
+        return ""
 
 
 def session_hint(mcp=False):
@@ -269,9 +290,10 @@ def session_hint(mcp=False):
         except ValueError:
             data = {}
         cwd = data.get("cwd") if isinstance(data, dict) else None
-        if has_index(cwd or os.getcwd()):
+        index = find_index(cwd or os.getcwd())
+        if index is not None:
             py, kind, reason = find_python()
-            hint = ((SESSION_HINT_MCP if mcp else SESSION_HINT) if py is not None
+            hint = ((SESSION_HINT_MCP if mcp else SESSION_HINT) + index_age_note(index) if py is not None
                     else session_hint_not_ready(reason, kind))
             sys.stdout.write(json.dumps({"additionalContext": hint}))
     except BaseException:        # hook はセッションを止めない
