@@ -17,6 +17,30 @@
   固定します([docs/copilot.md](docs/copilot.md) の「チームの Marketplace
   に載せる」)
 
+## 次の版(まだ出していません)
+
+ベンチマーク(計測の道具と題材)を広げました。道具そのもの(検索・索引・
+プラグイン)は変わっていません。
+
+- 比べる手法に、言語サーバー(clangd などの LSP)と Serena を足しました
+  (`agent_lsp`・`agent_cf_mcp_lsp`・`agent_serena`・`agent_cf_mcp_serena`)。
+  Copilot CLI(`bench/agent_run.py`)と Claude Code(`bench/claude_run.py`)
+  の両方で流せます。Serena は、手を加えない既定の形で渡します。用意の
+  手順は bench/README.md の「言語サーバーと Serena を用意する」
+- `bench/compare.py` に、最後まで通らなかった回の内訳・根拠の当たり・
+  時間と費用とトークン・道具の種類ごとの使われ方・質問の種類と言語と区域
+  ごとの内訳と、文書に貼る表(`--format markdown`)を足しました
+- 2 つ目の公開の評価例 `examples/godot`(Godot 4.7.2、質問 32 件)を
+  足しました。検索だけの手法の結果も載せています
+- 記録(results.jsonl)に、道具ごとの呼び出しの数(`tools_by_name`)と、
+  記号の道具が返した場所(`origin` の `symbol_result`)を足しました。同じ
+  範囲が、開いた場所と回答の根拠の両方に出たとき、回答の根拠のほうを
+  落としていたのを直しました
+
+### 更新のあとにすること
+
+ありません(道具の依存の一覧も、索引の形も変わっていません)。
+
 ## 0.4.11(2026-11-24)
 
 0.4.10 の `model use` の誤りを直しました。
