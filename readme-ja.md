@@ -532,7 +532,7 @@ root = 'external\Docs'
 - `init`(`index.bat`・`/context-index` も)は、渡したパスを、ジャンクション
   を解決せずに書きます。`ctxf init . external\Engine` なら
   `root = 'external\Engine'` で、呼び名は `Engine` です。指示ファイルに
-  書いたパスと、検索結果の `roots:` の行がそろいます(0.4.12 までは、
+  書いたパスと、検索結果の `roots:` の行がそろいます(0.4.13 までは、
   ジャンクションの先の絶対パスと、その名前を書いていました)
 - ジャンクションが作業フォルダの中を指すとき(`external\Self` → `src`)は、
   そのフォルダは、ジャンクションの source の側で入ります

@@ -331,7 +331,7 @@ def source_root(folder: str | os.PathLike, workspace: str | os.PathLike) -> str:
     フォルダのリンク・ジャンクションは解決せず、渡されたパスの字面のまま書く(external の下に置いた
     ジャンクションなら 'external/Engine')。指示ファイルなどに書いたパスと、検索結果の roots: の行をそろえる
     ため。字面で作業フォルダの外でも、リンクを解決すると中にあるとき(作業フォルダそのものがリンクの先など)は、
-    解決したもの同士の相対パスにする(0.4.12 までと同じ)。"""
+    解決したもの同士の相対パスにする(0.4.13 までと同じ)。"""
     plain = os.path.abspath(folder)
     rel = _relative_inside(plain, os.path.abspath(workspace))
     if rel is None:

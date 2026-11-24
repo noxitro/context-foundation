@@ -497,6 +497,14 @@ GitHub Copilot app は、拡張がセッションに出す知らせのうち、�
   ファイルや消えたファイルを指す結果には印が付きます(`[changed since
   index]`、`[file no longer exists]`)が、増えたファイルは結果に出ない
   ので、印も付きません
+- 索引を作ってから 7 日以上たつと、セッションの始まりに、作ってからの
+  日数と、増えたファイルは出ないこと、作り直し方を、エージェントに知らせ
+  ます。エージェントは、新しく足したコードは grep でも探し、利用者に 1 度、
+  作り直しを勧めます。見るのは索引のファイルの日付だけで、ソースが変わった
+  かは見ません(セッションの始まりを遅くしないため)。日数は環境変数
+  `CF_INDEX_AGE_WARN_DAYS` で変えられ、`0` で知らせません。Copilot を起動
+  する前に設定します(0.4.13 から)。知らせでエージェントの検索の使い方が
+  変わるかは、まだ測っていません【未確認】
 - どれだけ古いかは、`status --check` で数えられます。索引の後に変わった・
   増えた・消えたファイルの数と、その例を出します。フォルダを歩いて
   ファイルを読むので、大きいコーパスでは数十秒かかります(既定の
@@ -555,6 +563,9 @@ schtasks /Create /TN "context-foundation index" /SC DAILY /ST 07:00 ^
   `%LOCALAPPDATA%` にあるため)
 - 同期の後に流すのが一番よいので、同期をスクリプトにしているなら、その
   最後に上の 1 行を足すほうが確かです
+- git なら、自分で置いた `post-merge` のフックから流すこともできますが、例は
+  載せていません。`git pull` のたびに、変わらなくても全部のファイルを読み、
+  `git pull --rebase` では動きません。Perforce には、`p4 sync` の後に手元で動くフックがありません
 - ドライブが外れていて source のルートが無い日は、何も書かずに終了
   コード 2 で止まり、前の索引が残ります
 
@@ -1093,7 +1104,7 @@ Haiku 5.5、合成のコーパス、毎回空の設定フォルダ)。
   "name": "context-foundation",
   "source": { "source": "github", "repo": "noxitro/context-foundation" },
   "description": "Find code and design docs by meaning and keywords, locally.",
-  "version": "0.4.13"
+  "version": "0.4.14"
 }
 ```
 
