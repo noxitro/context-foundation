@@ -17,7 +17,7 @@
   固定します([docs/copilot.md](docs/copilot.md) の「チームの Marketplace
   に載せる」)
 
-## 次の版(まだ出していません)
+## 0.4.11(2026-11-24)
 
 0.4.10 の `model use` の誤りを直しました。
 
