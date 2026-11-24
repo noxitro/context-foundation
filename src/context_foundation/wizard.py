@@ -15,7 +15,7 @@ import time
 from pathlib import Path
 
 from . import command_hint
-from .config import CONFIG_DIR_NAME, CONFIG_FILE_NAME, MODES, ConfigError, config_template, load_config
+from .config import CONFIG_DIR_NAME, CONFIG_FILE_NAME, MODES, ConfigError, config_template, load_config, source_root
 
 
 def _state_file() -> Path:
@@ -62,7 +62,8 @@ def yes(prompt: str, default: bool = True, when_closed: bool | None = None) -> b
     return default if not s else s.startswith("y")
 
 
-def ask_folder(prompt: str, default: str = "", allow_empty: bool = False) -> Path | None:
+def ask_folder(prompt: str, default: str = "", allow_empty: bool = False, resolve: bool = True) -> Path | None:
+    """フォルダを尋ねる。resolve=False なら、リンク・ジャンクションを解決せず、入れたパスのまま返す。"""
     while True:
         s = ask(prompt, default)
         if not s:
@@ -72,7 +73,7 @@ def ask_folder(prompt: str, default: str = "", allow_empty: bool = False) -> Pat
             continue
         p = Path(s).expanduser()
         if p.is_dir():
-            return p.resolve()
+            return p.resolve() if resolve else Path(os.path.abspath(p))
         print(f"  フォルダがありません: {p}")
         default = ""
 
@@ -225,7 +226,7 @@ def wizard_index() -> int:
         first = True
         while True:
             p = ask_folder("検索したいフォルダ" + ("" if first else "(空のまま Enter で終わり)"),
-                           str(ws) if first else "", allow_empty=not first)
+                           str(ws) if first else "", allow_empty=not first, resolve=False)
             if p is None:
                 break
             sid = ask("  このフォルダの呼び名(英数字と . _ -。検索結果に出ます)", _source_id(p, used))
@@ -233,12 +234,7 @@ def wizard_index() -> int:
                 sid = _source_id(p, used)
                 print(f"  呼び名は {sid} にしました")
             used.add(sid)
-            try:
-                root = os.path.relpath(p, ws)
-                root = "." if root == "." else (str(p) if root.startswith("..") else root)
-            except ValueError:      # ドライブが違う
-                root = str(p)
-            sources.append((sid, root))
+            sources.append((sid, source_root(p, ws)))
             first = False
         cf_dir.mkdir(exist_ok=True)
         (cf_dir / ".gitignore").write_text("*\n", encoding="utf-8")   # 索引と設定を git に入れない

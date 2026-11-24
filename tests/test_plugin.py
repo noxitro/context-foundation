@@ -232,7 +232,7 @@ def test_init_writes_a_config_with_relative_and_absolute_roots(tmp_path, corpus_
     assert cli_main(["init", "docs", str(corpus_copy / "engine")]) == 0
     cfg = load_config(ws / ".cf" / "config.toml")
     assert [s.id for s in cfg.sources] == ["docs", "engine"]
-    assert cfg.sources[0].root == (ws / "docs").resolve() and cfg.sources[1].root == (corpus_copy / "engine").resolve()
+    assert cfg.sources[0].root == ws / "docs" and cfg.sources[1].root == corpus_copy / "engine"
     assert (ws / ".cf" / ".gitignore").read_text(encoding="utf-8") == "*\n"
     assert cli_main(["init", "docs"]) == 2                     # すでにあれば、--force なしでは書き直さない
     (ws / ".cf" / ".gitignore").write_text("*\n# mine\n", encoding="utf-8")
@@ -240,6 +240,65 @@ def test_init_writes_a_config_with_relative_and_absolute_roots(tmp_path, corpus_
     assert (ws / ".cf" / ".gitignore").read_text(encoding="utf-8") == "*\n# mine\n"   # あれば書き換えない
     assert (ws / ".cf" / "config.toml.bak").is_file()                                  # 前の設定を残す
     assert cli_main(["init", str(tmp_path / "no-such-folder"), "--force"]) == 2
+
+
+def _dir_link(target: Path, link: Path) -> None:
+    """フォルダのリンク(Windows ではジャンクション。Linux・macOS ではシンボリックリンクで代える)。"""
+    try:
+        if sys.platform == "win32":
+            import _winapi
+            _winapi.CreateJunction(str(target), str(link))
+        else:
+            link.symlink_to(target, target_is_directory=True)
+    except (OSError, NotImplementedError) as e:
+        pytest.skip(f"ここではフォルダのリンクを作れない: {e}")
+
+
+def test_init_keeps_a_linked_folder_under_the_workspace_as_written(tmp_path, corpus_copy, monkeypatch):
+    """external の下のジャンクションは、解決せずに 'external/Engine' と書き、呼び名もリンクの名前から作る。
+    作業フォルダ('.')と並べても、リンクの先のファイルは Engine の側だけに 1 回入る。"""
+    from context_foundation.indexer import build_index
+    from context_foundation.search import Searcher
+
+    ws = tmp_path / "ws"
+    (ws / "src").mkdir(parents=True)
+    (ws / "src" / "Main.cpp").write_text("int app_main_entry();\n", encoding="utf-8")
+    (ws / "external").mkdir()
+    _dir_link(corpus_copy / "engine", ws / "external" / "Engine")
+    monkeypatch.chdir(ws)
+    assert cli_main(["init", ".", str(Path("external") / "Engine")]) == 0
+    text = (ws / ".cf" / "config.toml").read_text(encoding="utf-8")
+    assert f"root = '{Path('external') / 'Engine'}'" in text
+    cfg = load_config(ws / ".cf" / "config.toml")
+    assert [(s.id, s.root) for s in cfg.sources] == [("ws", ws), ("Engine", ws / "external" / "Engine")]
+    cfg.embedding.enabled = False
+    build_index(cfg, progress=False, log=lambda s: None)
+    st = Searcher.from_config(cfg).status()
+    assert st["stats"]["nested_roots"] == ["ws:external/Engine → Engine"]
+    assert "skipped_dirs" not in st["stats"]
+    import sqlite3
+    from contextlib import closing
+    with closing(sqlite3.connect(str(cfg.index_path))) as db:
+        rows = list(db.execute("SELECT source_id, path FROM files"))
+    assert ("ws", "src/Main.cpp") in rows
+    assert not [p for sid, p in rows if sid == "ws" and p.startswith("external/")]
+    assert ("Engine", "Render/BufferPool.cpp") in rows                 # リンクの先は Engine の側だけに入る
+
+
+def test_source_root_is_relative_inside_the_workspace_and_absolute_outside(tmp_path):
+    from context_foundation.config import source_root
+    ws = tmp_path / "ws"
+    (ws / "a" / "b").mkdir(parents=True)
+    (tmp_path / "..foo").mkdir()
+    (ws / "..foo").mkdir()
+    assert source_root(ws, ws) == "."
+    assert source_root(ws / "a" / "b", ws) == str(Path("a") / "b")
+    assert source_root(ws / "..foo", ws) == "..foo"                   # 名前が .. で始まるだけなら中
+    assert source_root(tmp_path / "..foo", ws) == str(tmp_path / "..foo")
+    assert source_root(tmp_path, ws) == str(tmp_path)
+    # 作業フォルダそのものをリンク越しに渡したとき: 字面では外でも、解決すると中なら、相対パスにする
+    _dir_link(ws, tmp_path / "ws-link")
+    assert source_root(ws / "a", tmp_path / "ws-link") == "a"
 
 
 def test_register_status_reads_the_marketplace_name():
