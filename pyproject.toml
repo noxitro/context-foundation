@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "context-foundation"
-version = "0.4.14"
+version = "0.4.15"
 description = "Retrieval-only search tool: find evidence passages in large codebases and design documents from natural-language questions."
 readme = "README.md"
 license = "MIT"

@@ -416,9 +416,10 @@ python -I "<プラグインのフォルダ>\ctxf.py" index
   (`.git`・`node_modules`・`build`・`bin` など、索引に入らない名前)と、
   名前が `.` で始まるものは、一覧に出しません。フォルダへのリンク・
   ジャンクションは出します。`external\Engine` のように、直下のフォルダの
-  中にあるジャンクションは一覧に出ないので、`/context-index . external\Engine`
-  のように並べて打ちます(ジャンクションの中は、それを root にした source
-  でしか入りません。readme-ja.md の「複数のリポジトリを横断して検索する」)。
+  中にあるジャンクションは一覧に出ませんが、「. (作業フォルダ全体)」か
+  `external` を選べば、init がそれを root にした source を足します(選んだ
+  フォルダの 2 段下まで。0.4.15 から。readme-ja.md の「複数のリポジトリを
+  横断して検索する」)。
   一覧は名前の順で 40 個までで、それより多い
   ときは、出していない数を一覧の説明に書きます。「. (作業フォルダ全体)」を
   選ぶと、直下のファイルも含めて作業フォルダごと入れます。CLI が足す
@@ -1104,7 +1105,7 @@ Haiku 5.5、合成のコーパス、毎回空の設定フォルダ)。
   "name": "context-foundation",
   "source": { "source": "github", "repo": "noxitro/context-foundation" },
   "description": "Find code and design docs by meaning and keywords, locally.",
-  "version": "0.4.14"
+  "version": "0.4.15"
 }
 ```
 

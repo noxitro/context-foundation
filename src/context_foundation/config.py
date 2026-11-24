@@ -339,6 +339,18 @@ def source_root(folder: str | os.PathLike, workspace: str | os.PathLike) -> str:
     return plain if rel is None else rel
 
 
+def linked_sources(folders: list[Path], workspace: Path, used: set[str]) -> list[tuple[str, str]]:
+    """folders の中にあるフォルダのリンク・ジャンクション(ingest.linked_folders)を、足す source の
+    (呼び名, root)の並びにする。呼び名はリンクの名前から作り、used に足す。"""
+    from .ingest import linked_folders
+    out: list[tuple[str, str]] = []
+    for link in linked_folders(folders):
+        sid = source_id_for(link, used)
+        used.add(sid)
+        out.append((sid, source_root(link, workspace)))
+    return out
+
+
 def toml_string(s: str) -> str:
     """TOML の文字列にする。Windows のパスを読みやすく書くため、使えるなら '…'(中をそのまま読む形)にする。"""
     if "'" not in s and "\n" not in s and "\r" not in s:

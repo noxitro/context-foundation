@@ -15,7 +15,8 @@ import time
 from pathlib import Path
 
 from . import command_hint
-from .config import CONFIG_DIR_NAME, CONFIG_FILE_NAME, MODES, ConfigError, config_template, load_config, source_root
+from .config import (CONFIG_DIR_NAME, CONFIG_FILE_NAME, MODES, ConfigError, config_template, load_config,
+                     linked_sources, source_root)
 
 
 def _state_file() -> Path:
@@ -222,6 +223,7 @@ def wizard_index() -> int:
     else:
         print("検索したいフォルダを、1 つずつ入れてください(エンジンのソース、参考にするアプリ、設計文書 など)。")
         sources: list[tuple[str, str]] = []
+        folders: list[Path] = []
         used: set[str] = set()
         first = True
         while True:
@@ -235,7 +237,13 @@ def wizard_index() -> int:
                 print(f"  呼び名は {sid} にしました")
             used.add(sid)
             sources.append((sid, source_root(p, ws)))
+            folders.append(p)
             first = False
+        # 入れたフォルダの中のジャンクション(external\Engine など)は、索引づくりがたどらないので、source に足す
+        for sid, root in linked_sources(folders, ws, used):
+            sources.append((sid, root))
+            print(f"  フォルダのリンク・ジャンクション {root} を、source {sid} として足しました"
+                  "(索引づくりは、リンクの中をたどらないため)")
         cf_dir.mkdir(exist_ok=True)
         (cf_dir / ".gitignore").write_text("*\n", encoding="utf-8")   # 索引と設定を git に入れない
         cfg_path.write_text(config_template(sources), encoding="utf-8")
