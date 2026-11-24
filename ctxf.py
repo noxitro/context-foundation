@@ -271,9 +271,9 @@ def index_age_note(path, now=None):
         days = int(((time.time() if now is None else now) - os.stat(path).st_mtime) // 86400)
         if days < limit:
             return ""
-        return (" Note: this index was built %d days ago. Files added since then do not appear in search results, "
-                "so also grep when looking for recent code, and tell the user once that rebuilding the index "
-                "(/context-index in Copilot CLI) brings it up to date." % days)
+        return (" Note: this index was built %d day%s ago. Files added since then do not appear in search results, "
+                "so for recently added code, grep as well, and tell the user once that rebuilding the index "
+                "(/context-index in Copilot CLI) brings it up to date." % (days, "" if days == 1 else "s"))
     except (OSError, ValueError, OverflowError):
         return ""
 

@@ -117,7 +117,7 @@ def main() -> int:
     if args.method == "agent_cf_mcp":
         p = subprocess.run([args.python, "-I", str(REPO / "ctxf.py"), "session-hint", "--mcp"], capture_output=True,
                            input=json.dumps({"cwd": str(cfg.workspace)}), text=True, encoding="utf-8",
-                           env=dict(os.environ, CF_PYTHON=args.python), timeout=60)
+                           env=dict(os.environ, CF_PYTHON=args.python, CF_INDEX_AGE_WARN_DAYS="0"), timeout=60)
         hint = json.loads(p.stdout)["additionalContext"] if p.stdout.strip() else ""
         if not hint:
             raise SystemExit("始めの 1 文が取れません(索引が見つからない?)")

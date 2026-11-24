@@ -619,6 +619,8 @@ def test_session_hint_notes_an_index_built_a_week_or_more_ago(tmp_path):
     assert "Note:" not in hint(dict(ready, CF_INDEX_AGE_WARN_DAYS="30"))
     assert "built 10 days ago" in hint(dict(ready, CF_INDEX_AGE_WARN_DAYS="3"))
     assert "built 10 days ago" in hint(dict(ready, CF_INDEX_AGE_WARN_DAYS="oops"))   # 読めない値は既定の 7 日
+    os.utime(db, (time.time() - 1.5 * 86400,) * 2)
+    assert "built 1 day ago." in hint(dict(ready, CF_INDEX_AGE_WARN_DAYS="1"))
     os.utime(db, (time.time() + 5 * 86400,) * 2)       # 時計がずれて未来の日時でも、足さない
     assert "Note:" not in hint(ready)
 
