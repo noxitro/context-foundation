@@ -6,8 +6,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  chooseFallback, dataHome, escapeMarkdown, failureMessage, findConfig, folderChoices, folderSchema, hasLocalVenv, indexFile, MAX_FOLDER_CHOICES, pickedFolders, WHOLE_WORKSPACE, initSources, joinOptions, keywordOnly, lastCwd, loadSdk, logTail,
-  makeNotifier, modelMissing, parseIndexArgs, parseProgress, parseSetupArgs, parseSetupProgress, planIndex, pluginRoot, progressNote, repairCommand,
+  chooseFallback, commandHandler, dataHome, escapeMarkdown, failureMessage, findConfig, folderChoices, folderSchema, hasLocalVenv, indexFile, MAX_FOLDER_CHOICES, pickedFolders, WHOLE_WORKSPACE, initSources, joinOptions, keywordOnly, lastCwd, loadSdk, logTail,
+  makeNotifier, modelFolderPrompt, modelFolderSchema, modelMissing, modelUseResult, parseIndexArgs, pickedModelFolder, parseProgress, parseSetupArgs, parseSetupProgress, planIndex, pluginRoot, progressNote, repairCommand,
   SDK_NAMES, SETUP_HELP, setupFailureMessage, setupProgressNote, setupRuntimeFolder, splitArgs, wantDialog, workspaceOf,
 } from "./lib.mjs";
 
@@ -233,14 +233,15 @@ test("hasLocalVenv は、プラグインの隣の .venv を見る", () => {
 
 // ctxf.py setup のログの形(_setup の _say と model_report の行)。setup は埋め込みモデルを取得しない
 const SETUP_LINES = [
-  "== context-foundation setup",
-  "  runtime folder: C:\\cf\\runtime",
-  "  creating the virtual environment ...",
-  "  installing the Python packages from PyPI (about 200 MB the first time) ...",
-  "  Python packages: installed",
-  "  embedding model: not installed (intfloat/multilingual-e5-small, license MIT, about 487 MB, from https://huggingface.co/intfloat/multilingual-e5-small)",
-  "    Setup does not install it: it is open-source software from outside PyPI, and whether it may be used depends on this PC's environment (licence, terms of use, network). Search is keyword-only (BM25) until it is installed.",
-  '    To use it, check the model\'s source and licence, then run: python -I "C:\\p\\ctxf.py" model download',
+  "== context-foundation の用意(setup)",
+  "  利用者ごとの置き場: C:\\cf\\runtime",
+  "  仮想環境を作ります ...",
+  "  Python のパッケージを PyPI から入れます(初めては約 200 MB)...",
+  "  Python のパッケージ: 入れました",
+  "  埋め込みモデル: インストールされていません(intfloat/multilingual-e5-small、ライセンス MIT、約 487 MB、入手先 https://huggingface.co/intfloat/multilingual-e5-small)",
+  "    setup では入れません。PyPI の外の OSS で、使ってよいかは、この PC の環境(ライセンス・利用の条件・ネットワーク)によるためです。入るまで、検索は keyword(BM25)だけです。",
+  '    使うには、モデルの入手先とライセンスを確かめてから、次を実行します: python -I "C:\\p\\ctxf.py" model download',
+  '    この PC にモデルが置いてあれば、代わりに次を実行します: python -I "C:\\p\\ctxf.py" model use "<フォルダ>"',
 ];
 
 test("parseSetupProgress は setup のログの最後の段階を返す", () => {
@@ -249,19 +250,30 @@ test("parseSetupProgress は setup のログの最後の段階を返す", () => 
   assert.deepEqual(upto(3), { phase: "venv" });
   assert.deepEqual(upto(4), { phase: "packages" });
   assert.deepEqual(upto(5), { phase: "packaged" });
-  assert.deepEqual(upto(8), { phase: "packaged" });  // モデルの有無を出すだけで、取得の段階は無い
-  assert.deepEqual(parseSetupProgress([...SETUP_LINES, "Setup is done. Next, ..."].join("\n")), { phase: "done" });
+  assert.deepEqual(upto(9), { phase: "packaged" });  // モデルの有無を出すだけで、取得の段階は無い
+  assert.deepEqual(parseSetupProgress([...SETUP_LINES, "用意ができました。次は、..."].join("\n")), { phase: "done" });
+  // 入れたパッケージを読めず、仮想環境を作り直すときも、仮想環境を作る段階
+  assert.deepEqual(parseSetupProgress("  入れたパッケージを読み込めません(x)。仮想環境を作り直します ..."), { phase: "venv" });
   assert.equal(setupRuntimeFolder(SETUP_LINES.join("\n")), "C:\\cf\\runtime");
   assert.equal(setupRuntimeFolder("nothing"), "");
 });
 
 test("modelMissing は、setup のログから埋め込みモデルが無いことと、利用者が自分で取得するコマンドを読む", () => {
-  assert.deepEqual(modelMissing(SETUP_LINES.join("\r\n")), { command: 'python -I "C:\\p\\ctxf.py" model download' });
-  const ownFolder = "  embedding model: not installed (m, license unknown, in the folder set by [embedding] model_dir: D:\\m)\n" +
-    "    Setup does not install it: ...\n    To use it, put the model files in that folder.\n";
-  assert.deepEqual(modelMissing(ownFolder), { command: "" });
-  assert.equal(modelMissing("  embedding model: installed (m, C:\\m)\n"), null);
-  assert.equal(modelMissing("  embedding model: not used (embedding is off in C:\\w\\.cf\\config.toml)\n"), null);
+  const e5 = "intfloat/multilingual-e5-small、ライセンス MIT、約 487 MB、入手先 https://huggingface.co/intfloat/multilingual-e5-small";
+  assert.deepEqual(modelMissing(SETUP_LINES.join("\r\n")),
+    { command: 'python -I "C:\\p\\ctxf.py" model download', name: "intfloat/multilingual-e5-small", about: e5, ask: true });
+  // 作業フォルダの設定の model_dir が置き場を決めている: model use で覚えても、そちらが先なので尋ねない
+  const ownFolder = "  埋め込みモデル: インストールされていません(m、ライセンス 不明、[embedding] model_dir のフォルダ: D:\\m)\n" +
+    "    setup では入れません。...\n    使うには、そのフォルダにモデルのファイルを置きます。\n";
+  assert.deepEqual(modelMissing(ownFolder),
+    { command: "", name: "m", about: "m、ライセンス 不明、[embedding] model_dir のフォルダ: D:\\m", ask: false });
+  // model use で覚えたフォルダからファイルが無くなった: 尋ね直す
+  const moved = "  埋め込みモデル: インストールされていません(m、ライセンス MIT、`model use` で覚えたフォルダ: D:\\old)\n" +
+    "    そのフォルダに、モデルのファイルがもうありません。確かめてから、次を実行します: python -I \"C:\\p\\ctxf.py\" model use \"<フォルダ>\"\n";
+  assert.equal(modelMissing(moved).ask, true);
+  assert.equal(modelMissing(moved).command, "");
+  assert.equal(modelMissing("  埋め込みモデル: 入っています(m、C:\\m)\n"), null);
+  assert.equal(modelMissing("  埋め込みモデル: 使いません(C:\\w\\.cf\\config.toml で、埋め込みを切っています)\n"), null);
   assert.equal(modelMissing(""), null);
 });
 
@@ -280,10 +292,10 @@ test("setupProgressNote は段階が変わったとき・同じ段階が 1 分�
 
 test("setupFailureMessage は終了コードごとに、わけと次にすることを出す", () => {
   const log = "C:\\cf\\context-setup.log";
-  assert.match(setupFailureMessage(2, "Python 3.15.0 is not supported ...\n", log), /この Python では.*3\.15\.0/s);
-  assert.match(setupFailureMessage(3, "Another setup is running (x).\n", log), /別の用意.*Another setup/s);
-  assert.match(setupFailureMessage(1, "  installing ...\n  pip failed (exit code 1). pip could not reach PyPI.\n", log),
-    /終了コード 1.*pip could not reach PyPI\.$/s);
+  assert.match(setupFailureMessage(2, "Python 3.15.0 は使えません ...\n", log), /この Python では.*3\.15\.0/s);
+  assert.match(setupFailureMessage(3, "別の setup が動いています(x)。\n", log), /別の用意.*別の setup が動いています/s);
+  assert.match(setupFailureMessage(1, "  入れます ...\n  pip が失敗しました(終了コード 1)。pip が PyPI に届きませんでした。\n", log),
+    /終了コード 1.*pip が PyPI に届きませんでした。$/s);
 });
 
 test("initSources と keywordOnly は ctxf.py の出力を読む", () => {
@@ -350,6 +362,64 @@ test("makeNotifier: exclusive のダイアログを出している間の知ら�
   assert.equal(order.at(-1), "open 次");
 });
 
+// アプリは、どのコマンドも待っていないダイアログが開くと、スピナーを回し続ける。ダイアログを出すときは、
+// 仕事が終わり、ダイアログがすべて閉じるまでコマンドを終えない
+test("commandHandler: アプリでは、仕事と結果のダイアログを閉じるまで終えない", async () => {
+  const closers = [];
+  const session = {
+    capabilities: { ui: { elicitation: true } },
+    log: async () => { },
+    ui: { elicitation: (o) => new Promise((r) => closers.push([o.message, r])) },
+  };
+  const n = makeNotifier(() => session, {});
+  assert.equal(n.waits, true);
+  let finishWork;
+  const h = commandHandler(async () => {
+    await n.tell("始めました");
+    await new Promise((r) => { finishWork = r; });
+    await n.tell("できました");
+  }, n, () => { });
+  let ended = false;
+  const run = h({ args: "" }).then(() => { ended = true; });
+  const tick = () => new Promise((r) => setTimeout(r, 10));
+  await tick();
+  assert.deepEqual(closers.map((c) => c[0]), ["始めました"]);
+  closers[0][1]({ action: "accept" });  // 始めのダイアログを閉じても、仕事が続く間は終えない
+  await tick();
+  assert.equal(ended, false);
+  finishWork();
+  await tick();
+  assert.deepEqual(closers.map((c) => c[0]), ["始めました", "できました"]);
+  assert.equal(ended, false);  // 結果のダイアログが開いている
+  closers[1][1]({ action: "accept" });
+  await run;
+  assert.equal(ended, true);
+});
+
+test("commandHandler: CLI(ダイアログを出さない)では待たずに戻り、失敗は onError に渡す", async () => {
+  const session = { capabilities: { ui: { elicitation: true } }, log: async () => { }, ui: { elicitation: async () => { } } };
+  const n = makeNotifier(() => session, { CF_DISPLAY: "timeline" });
+  assert.equal(n.waits, false);
+  let release, failed = null;
+  const h = commandHandler(async () => {
+    await new Promise((r) => { release = r; });
+    throw new Error("こわれた");
+  }, n, (err) => { failed = err.message; });
+  await h({ args: "" });  // 仕事が終わる前に戻る
+  assert.equal(failed, null);
+  release();
+  await new Promise((r) => setTimeout(r, 10));
+  assert.equal(failed, "こわれた");
+});
+
+test("commandHandler: アプリで仕事が失敗しても、知らせてから終える", async () => {
+  const session = { capabilities: { ui: { elicitation: true } }, log: async () => { }, ui: { elicitation: async () => { } } };
+  const n = makeNotifier(() => session, {});
+  let failed = null;
+  await commandHandler(async () => { throw new Error("だめ"); }, n, (err) => { failed = err.message; })({});
+  assert.equal(failed, "だめ");
+});
+
 // Copilot CLI 1.0.113 は @microsoft/copilot-sdk だけを、1.0.112 まで と GitHub Copilot app は @github/copilot-sdk だけを
 // 同梱の SDK に向ける。見つからないときの誤りは、Node.js の ERR_MODULE_NOT_FOUND と同じ形にする
 const notFound = (name) => Object.assign(new Error(`Cannot find package '${name.split("/").slice(0, 2).join("/")}' imported from x`),
@@ -390,4 +460,36 @@ test("joinOptions: コマンドを、新しい SDK の interaction.commands と�
   const o = joinOptions(commands);
   assert.equal(o.commands, commands);
   assert.equal(o.interaction.commands, commands);
+});
+
+test("モデルのフォルダのダイアログ: 形・文・答えの読み方", () => {
+  const schema = modelFolderSchema();
+  assert.equal(schema.properties.folder.type, "string");
+  assert.equal(schema.required, undefined);  // 空のまま送ると飛ばす
+  const missing = modelMissing(SETUP_LINES.join("\n"));
+  const first = modelFolderPrompt(missing);
+  assert.match(first, /^context-foundation: 埋め込みモデル\(intfloat\/multilingual-e5-small、ライセンス MIT/);
+  assert.match(first, /写しも取得もしません/);
+  assert.match(modelFolderPrompt(missing, "D:\\x は使えませんでした: 無い"), /^context-foundation: D:\\x は使えませんでした: 無い\n埋め込みモデル/);
+  assert.equal(pickedModelFolder({ folder: '  "D:\\models\\e5"  ' }), "D:\\models\\e5");
+  assert.equal(pickedModelFolder({ folder: "   " }), "");
+  assert.equal(pickedModelFolder({}), "");
+  assert.equal(pickedModelFolder(undefined), "");
+  assert.equal(pickedModelFolder({ folder: 3 }), "");
+});
+
+test("modelUseResult は model use の終了コードと result: の行で決める", () => {
+  assert.deepEqual(modelUseResult(0, "モデルを読み込んで確かめます: D:\\m\nintfloat/multilingual-e5-small のフォルダを覚えました: D:\\m\n" +
+    "  注意: C:\\w\\.cf\\config.toml の [embedding] model_dir(x)が先に使われます\nresult: saved\n"),
+  { state: "saved", notes: ["C:\\w\\.cf\\config.toml の [embedding] model_dir(x)が先に使われます"], detail: "" });
+  const warned = modelUseResult(4, "モデルを読み込んで確かめます: D:\\m\n  注意: model.onnx の大きさが違います\n確かめると…\n" +
+    "result: not saved (warnings; run again with --yes to save)\n");
+  assert.deepEqual(warned, { state: "warnings", notes: ["model.onnx の大きさが違います"], detail: "" });
+  const err = modelUseResult(2, "フォルダがありません: D:\\nope\nresult: not saved (error)\n");
+  assert.equal(err.state, "error");
+  assert.equal(err.detail, "フォルダがありません: D:\\nope");
+  // 終了コードと result: の行が合わないときは、覚えていないものとみなす
+  assert.equal(modelUseResult(0, "").state, "error");
+  assert.equal(modelUseResult(1, "result: saved\n").state, "error");
+  assert.equal(modelUseResult(null, "").detail, "終了コード null");
 });

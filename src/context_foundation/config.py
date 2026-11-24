@@ -314,6 +314,43 @@ def source_id_for(path: Path, used: set[str]) -> str:
     return sid
 
 
+def _relative_inside(path: str, base: str) -> str | None:
+    """path が base の中なら、base からの相対パス。外か、ドライブが違えば None。"""
+    try:
+        rel = os.path.relpath(path, base)
+    except ValueError:                      # ドライブが違う
+        return None
+    if rel == os.pardir or rel.startswith(os.pardir + os.sep):
+        return None
+    return rel
+
+
+def source_root(folder: str | os.PathLike, workspace: str | os.PathLike) -> str:
+    """設定の [[source]] root に書くパス。作業フォルダの中なら相対パス、外なら絶対パス。
+
+    フォルダのリンク・ジャンクションは解決せず、渡されたパスの字面のまま書く(external の下に置いた
+    ジャンクションなら 'external/Engine')。指示ファイルなどに書いたパスと、検索結果の roots: の行をそろえる
+    ため。字面で作業フォルダの外でも、リンクを解決すると中にあるとき(作業フォルダそのものがリンクの先など)は、
+    解決したもの同士の相対パスにする(0.4.13 までと同じ)。"""
+    plain = os.path.abspath(folder)
+    rel = _relative_inside(plain, os.path.abspath(workspace))
+    if rel is None:
+        rel = _relative_inside(str(Path(folder).resolve()), str(Path(workspace).resolve()))
+    return plain if rel is None else rel
+
+
+def linked_sources(folders: list[Path], workspace: Path, used: set[str]) -> list[tuple[str, str]]:
+    """folders の中にあるフォルダのリンク・ジャンクション(ingest.linked_folders)を、足す source の
+    (呼び名, root)の並びにする。呼び名はリンクの名前から作り、used に足す。"""
+    from .ingest import linked_folders
+    out: list[tuple[str, str]] = []
+    for link in linked_folders(folders):
+        sid = source_id_for(link, used)
+        used.add(sid)
+        out.append((sid, source_root(link, workspace)))
+    return out
+
+
 def toml_string(s: str) -> str:
     """TOML の文字列にする。Windows のパスを読みやすく書くため、使えるなら '…'(中をそのまま読む形)にする。"""
     if "'" not in s and "\n" not in s and "\r" not in s:

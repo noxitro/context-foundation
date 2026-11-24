@@ -26,8 +26,9 @@ to that path as it is, and do not go up to a parent folder. Below,
 Some output is in Japanese. If it is garbled, run
 `[Console]::OutputEncoding = [Text.Encoding]::UTF8` once, as a command of
 its own, and run the command again. Where this file says how to tell
-success from failure, it names the exit code and an English line, so you do
-not have to read the Japanese text to decide.
+success from failure, it names the exit code first, so you can decide by
+the exit code even if the text is garbled. The lines it quotes are only a
+check (the setup output is in Japanese).
 
 ## 1. See what is there
 
@@ -72,11 +73,14 @@ On Windows, in the same question, ask which one to install:
 If they agree, run `ctxf.py setup --no-model` (add `--gpu` if they chose
 the GPU). Give the command a timeout of at least 15 minutes, or run it in
 the background and wait for it; do not start it a second time while it
-runs. It ends with `Setup is done` and exit code 0.
+runs. It ends with exit code 0 (its last lines start with `用意ができました`,
+"setup is done").
 
-- Exit code 3 and `Another setup is running`: an earlier run is still
-  going. Wait a minute and run it again; do not delete the lock file unless
-  the user confirms no setup is running
+- Exit code 3 (the line `別の setup が動いています`, "another setup is
+  running"): an earlier run is still
+  going. Wait a minute and run it again, at most three times. If it still
+  says so, show the user the lock file named in that line; do not delete it
+  unless the user confirms no setup is running
 - Any other failure: show the last lines of its output (they say the cause
   and the fix) and stop here
 

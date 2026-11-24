@@ -65,7 +65,8 @@ before running one, say what it does, and run it only after they agree.
   `/context-setup` in the session: it runs the same setup in the
   background without calling the model. After setup, the search tool
   appears only in a new session; in this session, keep using this skill
-- "embedding model: not installed", or a note that the embedding model is
+- `埋め込みモデル: インストールされていません` in the setup output ("the
+  embedding model is not installed"), or a note that the embedding model is
   not available: search still works, keyword-only. The model is
   open-source software from outside PyPI (Hugging Face), and whether it may
   be used depends on the user's environment, so it is never installed

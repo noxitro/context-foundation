@@ -112,7 +112,7 @@ def test_setup_rejects_conflicting_gpu_options_before_doing_anything(tmp_path):
     env = {"CF_HOME": str(tmp_path / "home"), "SYSTEMROOT": __import__("os").environ.get("SYSTEMROOT", "")}
     r = subprocess.run([sys.executable, "-I", str(REPO / "ctxf.py"), "setup", "--gpu", "--cpu"], capture_output=True,
                        text=True, encoding="utf-8", env=env, timeout=60)
-    assert r.returncode == 2 and "cannot be used together" in r.stdout
+    assert r.returncode == 2 and "一緒に指定できません" in r.stdout
     assert not (tmp_path / "home" / "runtime" / "venv").exists()      # 何も作っていない
     r = subprocess.run([sys.executable, "-I", str(REPO / "ctxf.py"), "setup", "--help"], capture_output=True,
                        text=True, encoding="utf-8", env=env, timeout=60)
@@ -120,7 +120,7 @@ def test_setup_rejects_conflicting_gpu_options_before_doing_anything(tmp_path):
     if sys.platform != "win32":
         r = subprocess.run([sys.executable, "-I", str(REPO / "ctxf.py"), "setup", "--gpu"], capture_output=True,
                            text=True, encoding="utf-8", env=env, timeout=60)
-        assert r.returncode == 2 and "Windows only" in r.stdout
+        assert r.returncode == 2 and "Windows にしかありません" in r.stdout
         assert not (tmp_path / "home" / "runtime" / "venv").exists()
 
 

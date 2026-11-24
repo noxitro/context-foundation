@@ -325,7 +325,8 @@ def command_for(args, exe: str, prompt: str, usage_file: Path, share: Path, root
     cmd = [exe, "-p", prompt, "--model", args.model, "-s", "--log-level", "error",
            "--usage-output-file", str(usage_file), "--share", str(share),
            "--allow-tool", "read", "--allow-tool", "shell(python:*)", "--deny-tool", "write"]
-    env: dict[str, str] = {}
+    # 索引の古さの 1 文(session-hint)は足さない。足すと、前の回と文面が変わって比べられなくなる
+    env: dict[str, str] = {"CF_INDEX_AGE_WARN_DAYS": "0"}
     if args.method == "agent_cf":
         env["COPILOT_SKILLS_DIRS"] = str(REPO / "skills")
     elif args.method == "agent_grep_cxxref":

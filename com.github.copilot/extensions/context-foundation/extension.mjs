@@ -25,9 +25,9 @@ import { closeSync, existsSync, mkdirSync, openSync, readFileSync } from "node:f
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  chooseFallback, dataHome, failureMessage, findConfig, folderChoices, folderSchema, hasLocalVenv, indexFile, initSources, joinOptions,
-  keywordOnly, lastCwd, loadSdk, makeNotifier, modelMissing, parseProgress, parseSetupArgs, parseSetupProgress, pickedFolders, planIndex,
-  pluginRoot, progressNote, SETUP_HELP, setupFailureMessage, setupProgressNote, setupRuntimeFolder, workspaceOf,
+  chooseFallback, commandHandler, dataHome, failureMessage, findConfig, folderChoices, folderSchema, hasLocalVenv, indexFile, initSources, joinOptions,
+  keywordOnly, lastCwd, loadSdk, makeNotifier, modelFolderPrompt, modelFolderSchema, modelMissing, modelUseResult, parseProgress,
+  parseSetupArgs, parseSetupProgress, pickedFolders, pickedModelFolder, planIndex, pluginRoot, progressNote, SETUP_HELP, setupFailureMessage, setupProgressNote, setupRuntimeFolder, workspaceOf,
 } from "./lib.mjs";
 
 const { joinSession } = await loadSdk((name) => import(name));
@@ -59,10 +59,10 @@ function run(args, log, env) {
   });
 }
 
-// 出力を受け取る版(init。ctxf.py はパイプにも UTF-8 で出す)
-function runText(args) {
+// 出力を受け取る版(init・model use。ctxf.py はパイプにも UTF-8 で出す)。env を渡せば、子の環境変数をそれにする
+function runText(args, env) {
   return new Promise((done) => {
-    const p = spawn(PYTHON, ["-I", ...args], { stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
+    const p = spawn(PYTHON, ["-I", ...args], { stdio: ["ignore", "pipe", "pipe"], windowsHide: true, ...(env ? { env } : {}) });
     let out = "";
     p.stdout.setEncoding("utf8");
     p.stderr.setEncoding("utf8");
@@ -95,7 +95,13 @@ function busy() {
 // 利用者に見せる文は tell、進み具合は say で出す。GitHub Copilot app は session.log の info と warning を表示しない
 // (error だけ出る)ので、アプリで動いているときは tell の文をダイアログにも出す(lib.mjs の makeNotifier。
 // CF_DISPLAY で切り替えられる)。session は下の joinSession で決まり、コマンドが呼ばれるのはその後
-const { tell, say, exclusive } = makeNotifier(() => session, process.env);
+const notifier = makeNotifier(() => session, process.env);
+const { tell, say, exclusive } = notifier;
+// 走っている間のことの断り。ダイアログを出すとき(GitHub Copilot app)は、コマンドは結果のダイアログを閉じるまで終わらない
+const carryOn = notifier.waits
+  ? "終わったら、結果をダイアログに出します(閉じると、このコマンドが終わります)。"
+  : "裏で動かすので、作業を続けてかまいません。";
+const handle = (fn) => commandHandler(fn, notifier, (err) => tell(`context-foundation: ${err?.message ?? err}`, "error"));
 
 // 初めての索引で、フォルダを並べずに打たれたとき: 作業フォルダの直下のフォルダから、索引に入れるものを選ばせる
 // (複数選べるダイアログ。モデルは呼ばない)。選んだフォルダの一覧か、やめた・出せないときは null。
@@ -142,6 +148,47 @@ function watchProgress(log, t0, parse = parseProgress, decide = progressNote) {
 
 const plugin = () => pluginRoot(dirname(fileURLToPath(import.meta.url)));
 
+// /context-setup の後で、手元に置いた埋め込みモデルのフォルダを尋ね、ctxf.py model use で確かめて覚える
+// (取得はしない。モデルは呼ばない)。ダイアログは知らせのダイアログと同じ列に並べる。
+// { state: "saved", folder, notes } か { state: "skipped", why }。ダイアログを出せないホストでは null
+const MODEL_TRIES = 3;
+async function askModelFolder(ctxf, env, missing) {
+  if (!session.capabilities?.ui?.elicitation) return null;
+  let retry = "";
+  for (let i = 0; i < MODEL_TRIES; i++) {
+    let folder;
+    try {
+      const r = await exclusive(() => session.ui.elicitation({
+        message: modelFolderPrompt(missing, retry), requestedSchema: modelFolderSchema(),
+      }));
+      folder = r.action === "accept" ? pickedModelFolder(r.content) : "";
+    } catch (err) {
+      return i ? { state: "skipped", why: `ダイアログを出せませんでした(${err?.message ?? err})` } : null;
+    }
+    if (!folder) return { state: "skipped", why: "" };
+    await say(`context-foundation: モデルを読み込んで確かめています(${folder})`);
+    let r = await runText([ctxf, "model", "use", folder], env);
+    if (r.error) return { state: "skipped", why: cannotStart(r) };
+    let u = modelUseResult(r.code, r.out);
+    if (u.state === "warnings") {
+      // 大きさが控えの値と違う(別の版・別のモデル)など。覚える前に、使うかを尋ねる
+      const ok = await exclusive(() => session.ui.confirm(
+        `context-foundation: ${folder} を確かめると、気になる点がありました。\n${u.notes.map((n) => `- ${n}`).join("\n")}\n` +
+        "このフォルダを使いますか")).catch(() => false);
+      if (!ok) {
+        retry = "前のフォルダは使いませんでした。";
+        continue;
+      }
+      r = await runText([ctxf, "model", "use", "--yes", folder], env);
+      if (r.error) return { state: "skipped", why: cannotStart(r) };
+      u = modelUseResult(r.code, r.out);
+    }
+    if (u.state === "saved") return { state: "saved", folder, notes: u.notes };
+    retry = `${folder} は使えませんでした: ${u.detail}`;
+  }
+  return { state: "skipped", why: `${MODEL_TRIES} 回とも使えませんでした(${retry})` };
+}
+
 async function indexCommand(ctx) {
   if (busy()) return;
   running = "索引づくり";
@@ -187,7 +234,7 @@ async function indexCommand(ctx) {
     const what = first ? "初めての索引" : plan.full ? "作り直し。すべて埋め込み直す" : "作り直し。変わっていない passage の埋め込みは使い回す";
     await tell(`context-foundation: ${made}索引づくりを始めました(${what}、${ws})。` +
       (first ? "大きなコードでは数十分かかります(約 8,000 ファイルで 30 分ほど)。" : "") +
-      `裏で動かすので、作業を続けてかまいません。ログ: ${log}`);
+      `${carryOn}ログ: ${log}`);
     const args = [ctxf, "index", "--config", config, ...(plan.full ? ["--full"] : [])];
     const stop = watchProgress(log, t0);
     const r = await run(args, log).finally(stop);
@@ -221,6 +268,7 @@ async function setupCommand(ctx) {
   running = "用意(setup)";
   try {
     const root = plugin();
+    const ctxf = join(root, "ctxf.py");
     if (hasLocalVenv(root)) {
       await tell(`context-foundation: このプラグインは、取得したリポジトリの .venv(${join(root, ".venv")})で動いています。` +
         `用意をやり直すときは、ターミナルで次を実行してください: "${join(root, "setup.bat")}"`, "error");
@@ -232,7 +280,7 @@ async function setupCommand(ctx) {
     const t0 = Date.now();
     await tell("context-foundation: 用意(setup)を始めました。" +
       `Python のパッケージ(PyPI から約 200 MB)を、${home} に入れます(埋め込みモデルは入れません)。` +
-      "初めては数分かかります(済んでいれば、確かめるだけで終わります)。裏で動かすので、作業を続けてかまいません。" +
+      `初めては数分かかります(済んでいれば、確かめるだけで終わります)。${carryOn}` +
       `ログ: ${log}`);
     // setup がモデルの有無を確かめるときに、このセッションの作業フォルダの設定を読むように、設定のファイルを渡す
     // (Copilot は、拡張をプラグインのフォルダで動かすので、そのままでは子は作業フォルダの設定を見つけない。
@@ -245,7 +293,7 @@ async function setupCommand(ctx) {
     }
     const env = config && !process.env.CF_CONFIG ? { ...process.env, CF_CONFIG: config } : undefined;
     const stop = watchProgress(log, t0, parseSetupProgress, setupProgressNote);
-    const r = await run([join(root, "ctxf.py"), "setup", ...opts.args], log, env).finally(stop);
+    const r = await run([ctxf, "setup", ...opts.args], log, env).finally(stop);
     const sec = Math.round((Date.now() - t0) / 1000);
     if (r.error) {
       await tell(`context-foundation: ${cannotStart(r)}`, "error");
@@ -263,13 +311,29 @@ async function setupCommand(ctx) {
         ? "次に /context-index を打って、索引を作ってください。できたら、新しいセッションを始めます"
         : "次に /context-index を打ち、索引に入れるフォルダを選んでください(並べて打っても構いません。例: /context-index Engine Docs)。" +
           "できたら、新しいセッションを始めます";
-    // 埋め込みモデル(PyPI の外の OSS)は、利用者の環境で確かめてから入れるものなので、入れずに、無いことを知らせる
-    const missing = modelMissing(out);
+    // 埋め込みモデル(PyPI の外の OSS)は、利用者の環境で確かめてから入れるものなので、取得しない。
+    // 無ければ、手元に置いたフォルダを尋ねて覚える(ダイアログ)。飛ばしたら、無いことと入れ方を知らせる
+    // no-model のときは尋ねない(setup もモデルの有無を出さないが、出ていても尋ねない)
+    const missing = opts.args.includes("--no-model") ? null : modelMissing(out);
+    let picked = null;
+    if (missing?.ask) {
+      running = "埋め込みモデルのフォルダの指定";
+      picked = await askModelFolder(ctxf, env, missing);
+    }
+    const hasIndex = Boolean(config && existsSync(indexFile(config)));
     const modelNote = !missing ? ""
-      : "埋め込みモデルはインストールされていません(Hugging Face の OSS なので、setup では入れません)。" +
-        "意味での検索には要ります。入手先とライセンスを確かめ、この PC で使ってよければ、" +
-        (missing.command ? `ターミナルで次を実行してください: ${missing.command}\n` : "設定の model_dir のフォルダにモデルを置いてください。\n") +
-        "入れるまでは、検索は keyword だけです。\n";
+      : picked?.state === "saved"
+        ? `埋め込みモデルのフォルダを覚えました(${picked.folder}。この PC のすべての作業フォルダで使います)。` +
+          picked.notes.map((n) => `注意: ${n}\n`).join("") +
+          (hasIndex ? "今の索引は keyword だけのことがあります。/context-index を打つと、意味での検索が加わります。\n" : "")
+        : (picked?.why ? `モデルのフォルダは覚えていません(${picked.why})。` : "") +
+          `埋め込みモデル(${missing.name})はインストールされていません(Hugging Face の OSS なので、setup では入れません)。` +
+          "意味での検索には要ります。" +
+          (!missing.ask ? "設定の model_dir のフォルダにモデルを置いてください。\n"
+            : "この PC に置いてあれば、もう一度 /context-setup を打ってフォルダを入れるか、ターミナルで次を実行します: " +
+              `python -I "${ctxf}" model use "<フォルダ>"\n` +
+              (missing.command ? `取得するときは、入手先とライセンスを確かめ、この PC で使ってよければ、ターミナルで次を実行します: ${missing.command}\n` : "\n")) +
+          "入れるまでは、検索は keyword だけです。\n";
     await tell(`context-foundation: 用意ができました(${sec} 秒、置き場: ${setupRuntimeFolder(out) || home})。` +
       modelNote + next);
   } finally {
@@ -281,17 +345,13 @@ const commands = [
   {
     name: "context-setup",
     description: "[no-model] [gpu | cpu] — この PC の検索の用意(context-foundation)。Python のパッケージ約 200 MB を入れる(埋め込みモデルは入れず、有無を知らせる)。初めに 1 回。裏で動かす(モデルは呼ばない)",
-    handler: (ctx) => {
-      setupCommand(ctx).catch((err) => tell(`context-foundation: ${err?.message ?? err}`, "error"));
-    },
+    handler: handle(setupCommand),
   },
   {
     // 拡張のコマンドには引数のヒントを付けられないので、説明文の先頭に引数を書く
     name: "context-index",
     description: "[full] [<フォルダ> ...] — コードと設計文書の検索の索引(context-foundation)を作る・作り直す。初めは検索したいフォルダを並べるか、省いて一覧から選ぶ。full ですべて埋め込み直す。裏で動かす(モデルは呼ばない)",
-    handler: (ctx) => {
-      indexCommand(ctx).catch((err) => tell(`context-foundation: ${err?.message ?? err}`, "error"));
-    },
+    handler: handle(indexCommand),
   },
 ];
 const session = await joinSession(joinOptions(commands));

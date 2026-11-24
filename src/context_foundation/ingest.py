@@ -382,6 +382,55 @@ def _is_dir_link(entry: os.DirEntry) -> bool:
     return False
 
 
+LINK_SEARCH_DEPTH = 2                   # init が、フォルダのリンクを探す深さ(渡したフォルダの何段下まで)
+
+
+def linked_folders(roots: list[Path], depth: int = LINK_SEARCH_DEPTH) -> list[Path]:
+    """init に渡されたフォルダ(roots)の、depth 段下までにあるフォルダのリンク・ジャンクション。
+
+    索引づくりは、source の中のフォルダのリンクをたどらないので、external\\Engine のようなジャンクションは、
+    それを root にした source にしないと入らない。init はこれで見つけたものを source に足す。返すのは、指す先が
+    どの roots の中にも無く(中を指すものは、もとの場所で入る)、どの roots も含まず(上のフォルダを指すものは、
+    作業フォルダの外まで広く入れてしまう)、ほかの roots や先に見つけたリンクと同じ場所を指さないもの。
+    見つけたリンクの先が、ほかに見つけたリンクの先の中にあれば、外側だけを返す(内側は外側の source で入る)。
+    既定の名前で除くフォルダ(build・.git など)の中と、その名前のリンク(索引づくりでも数えない)と、リンクの先の
+    中は探さない。指す先の無いリンクは返さない。名前の順に、渡したパスの字面で返す。
+    """
+    reals = [_real(r) for r in roots]
+    targets = set(reals)
+    found: list[tuple[Path, str]] = []
+
+    def walk(folder: str, level: int) -> None:
+        try:
+            with os.scandir(_long_path(folder)) as it:
+                entries = sorted(it, key=lambda e: e.name)
+        except OSError:
+            return
+        for e in entries:
+            try:
+                if not e.is_dir():              # リンクなら、指す先がフォルダか(壊れたリンクは False)
+                    continue
+            except OSError:
+                continue
+            if e.name.lower() in DEFAULT_EXCLUDED_DIRS:
+                continue
+            path = os.path.join(folder, e.name)
+            if _is_dir_link(e):
+                # ジャンクションは、先が無くても is_dir() が True になる(属性だけを見る)ので、先を確かめる
+                if not os.path.isdir(_long_path(path)):
+                    continue
+                t = _real(path)
+                if t not in targets and not any(_inside(t, r) or _inside(r, t) for r in reals):
+                    targets.add(t)
+                    found.append((Path(path), t))
+            elif level < depth:
+                walk(path, level + 1)
+
+    for root in roots:
+        walk(str(root), 1)
+    return [p for p, t in found if not any(t != u and _inside(t, u) for _, u in found)]
+
+
 def iter_source_files(source: SourceConfig, index_cfg: IndexConfig, stats: IngestStats,
                       sources: list[SourceConfig] | None = None) -> Iterator[SourceFile]:
     """source のルートを歩き、索引に入れるファイルを、中身を読んだ形で返す(パスの順)。
