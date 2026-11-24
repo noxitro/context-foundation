@@ -12,9 +12,11 @@ import tarfile
 # setuptools が作るもの
 GENERATED = {"PKG-INFO", "setup.cfg"}
 # 追跡しているが、テストにも配布にも要らないもの
-# (.claude は、クラウドのセッションの始めに共通の git フックを入れるためのもの)
+# (.claude は、クラウドのセッションの始めに共通の git フックを入れるものと、共通のフックの無い端末からの
+# push を止めるもの)
 NOT_SHIPPED = {".gitattributes", ".gitignore", ".markdownlint-cli2.yaml",
-               ".claude/settings.json", ".claude/hooks/session-start.sh"}
+               ".claude/settings.json", ".claude/hooks/session-start.sh",
+               ".claude/hooks/push-guard.sh", ".claude/hooks/push-guard.py"}
 
 
 def main(path):
