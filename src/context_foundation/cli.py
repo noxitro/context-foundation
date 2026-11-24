@@ -91,7 +91,8 @@ def cmd_init(args) -> int:
     """作業フォルダに .cf/config.toml を作る(対話なし。エージェントや .bat から呼ぶ)。"""
     from pathlib import Path
 
-    from .config import CONFIG_DIR_NAME, CONFIG_FILE_NAME, config_template, source_id_for, source_root
+    from .config import (CONFIG_DIR_NAME, CONFIG_FILE_NAME, config_template, linked_sources, source_id_for,
+                         source_root)
 
     # フォルダのリンク・ジャンクションは解決しない(external\Engine のようなジャンクションを、そのパスで書く)
     ws = Path(os.path.abspath(args.workspace or os.getcwd()))
@@ -100,6 +101,7 @@ def cmd_init(args) -> int:
         sys.stderr.write(f"設定がすでにあります: {cfg_path}\n(作り直すなら --force。索引を作るなら `{command_hint('index')}`)\n")
         return EXIT_USAGE
     sources: list[tuple[str, str]] = []
+    folders: list[Path] = []
     used: set[str] = set()
     for raw in args.folders:
         p = Path(raw)
@@ -110,6 +112,10 @@ def cmd_init(args) -> int:
         sid = source_id_for(p, used)        # リンクなら、リンクの名前から
         used.add(sid)
         sources.append((sid, source_root(p, ws)))
+        folders.append(p)
+    # 渡したフォルダの中のジャンクション(external\Engine など)は、索引づくりがたどらないので、source に足す
+    links = linked_sources(folders, ws, used)
+    sources += links
     cfg_path.parent.mkdir(parents=True, exist_ok=True)
     ignore = cfg_path.parent / ".gitignore"
     if not ignore.exists():
@@ -123,6 +129,9 @@ def cmd_init(args) -> int:
     print(f"設定を書きました: {cfg_path}")
     for sid, root in sources:
         print(f"  source {sid}: {root}")
+    if links:
+        print(f"  (フォルダのリンク・ジャンクションは、索引づくりがたどらないので、{len(links)} 個を、"
+              "それを root にした source として足しました。要らないものは設定から消してください)")
     print(f"次は `{command_hint('index')}` で索引を作ります(大きなコードでは時間がかかります)。")
     print("Perforce を使うなら、.cf を .p4ignore に足してください(索引には、ソースの本文の写しが入ります)。")
     return 0

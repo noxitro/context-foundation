@@ -9,7 +9,7 @@
       "name": "context-foundation",
       "source": "./",
       "description": "Find where something is implemented or documented without knowing its name: an MCP search tool over a local index of the code and design docs, by meaning and keywords.",
-      "version": "0.4.14"
+      "version": "0.4.15"
     }
   ]
 }

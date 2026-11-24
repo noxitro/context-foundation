@@ -78,6 +78,22 @@ def test_index_wizard_keeps_a_linked_folder_as_typed(answers, tmp_path):
     assert f"root = '{Path('external') / 'Engine'}'" in (ws / ".cf" / "config.toml").read_text(encoding="utf-8")
 
 
+def test_index_wizard_adds_linked_folders_inside_the_entered_ones(answers, tmp_path, capsys):
+    """入れたフォルダの中のジャンクション(ここではシンボリックリンクで代える)は、source に足す。"""
+    ws = tmp_path / "work"
+    (ws / "external").mkdir(parents=True)
+    shutil.copytree(CORPUS / "engine", tmp_path / "engine-repo")
+    try:
+        (ws / "external" / "Engine").symlink_to(tmp_path / "engine-repo", target_is_directory=True)
+    except (OSError, NotImplementedError) as e:
+        pytest.skip(f"ここではフォルダのリンクを作れない: {e}")
+    answers += [str(ws), str(ws), "", ""]   # 作業フォルダ、検索したいフォルダ(作業フォルダ全体)、呼び名、終わり
+    assert wizard_main(Namespace(action="index")) == 0
+    cfg = load_config(ws / ".cf" / "config.toml")
+    assert [(s.id, s.root) for s in cfg.sources] == [("work", ws), ("Engine", ws / "external" / "Engine")]
+    assert "source Engine として足しました" in capsys.readouterr().out
+
+
 def test_search_wizard_loops_until_an_empty_line(answers, indexed_workspace, capsys, monkeypatch):
     monkeypatch.setenv("CF_TEST_EMBEDDER", "hash")
     answers += [str(indexed_workspace), ":keyword", "job scheduler steal", ""]

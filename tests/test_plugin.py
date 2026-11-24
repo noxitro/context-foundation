@@ -285,6 +285,62 @@ def test_init_keeps_a_linked_folder_under_the_workspace_as_written(tmp_path, cor
     assert ("Engine", "Render/BufferPool.cpp") in rows                 # リンクの先は Engine の側だけに入る
 
 
+def _indexed(cfg) -> set[tuple[str, str]]:
+    import sqlite3
+    from contextlib import closing
+
+    from context_foundation.indexer import build_index
+    cfg.embedding.enabled = False
+    build_index(cfg, progress=False, log=lambda s: None)
+    with closing(sqlite3.connect(str(cfg.index_path))) as db:
+        return set(db.execute("SELECT source_id, path FROM files"))
+
+
+@pytest.mark.parametrize("given", [".", "external"])
+def test_init_adds_a_source_for_each_linked_folder_inside_the_given_ones(tmp_path, corpus_copy, monkeypatch,
+                                                                        capsys, given):
+    """/context-index で作業フォルダ全体や external を選んでも、中のジャンクションの先が入る(0.4.15 から)。"""
+    ws = tmp_path / "ws"
+    (ws / "src").mkdir(parents=True)
+    (ws / "src" / "Main.cpp").write_text("int app_main_entry();\n", encoding="utf-8")
+    (ws / "external").mkdir()
+    _dir_link(corpus_copy / "engine", ws / "external" / "Engine")
+    _dir_link(corpus_copy / "docs", ws / "external" / "Docs")
+    monkeypatch.chdir(ws)
+    assert cli_main(["init", given]) == 0
+    out = capsys.readouterr().out
+    cfg = load_config(ws / ".cf" / "config.toml")
+    assert [s.id for s in cfg.sources] == [ws.name if given == "." else "external", "Docs", "Engine"]
+    assert cfg.sources[2].root == ws / "external" / "Engine"
+    assert f"  source Engine: {Path('external') / 'Engine'}\n" in out and "2 個を" in out
+    rows = _indexed(cfg)
+    assert ("Engine", "Render/BufferPool.cpp") in rows and ("Docs", "jobs.md") in rows
+    assert not [p for sid, p in rows if sid not in ("Docs", "Engine") and "BufferPool" in p]
+
+
+def test_init_adds_only_linked_folders_that_point_somewhere_new(tmp_path, corpus_copy, monkeypatch):
+    """中を指すもの・上のフォルダを指すもの・同じ先を指す 2 本目・足すリンクの先の中を指すもの・除く名前の
+    フォルダの中と、その名前のリンク・3 段より下・壊れたリンクは足さない。"""
+    ws = tmp_path / "ws"
+    for d in ("src", "build", "a/b", "external"):
+        (ws / d).mkdir(parents=True)
+    _dir_link(corpus_copy / "engine", ws / "external" / "Engine")
+    _dir_link(corpus_copy / "engine", ws / "external" / "Engine2")         # 同じ先の 2 本目
+    _dir_link(ws / "src", ws / "external" / "Self")                         # 作業フォルダの中
+    _dir_link(tmp_path, ws / "external" / "Up")                             # 作業フォルダを含む
+    _dir_link(corpus_copy / "docs", ws / "build" / "Docs")                  # 除く名前のフォルダの中
+    _dir_link(corpus_copy / "app", ws / "a" / "b" / "App")                  # 3 段目
+    _dir_link(corpus_copy / "engine" / "Render", ws / "external" / "Render")  # 足すリンクの先の中
+    _dir_link(corpus_copy / "docs", ws / "external" / "packages")           # 除く名前のリンク
+    (tmp_path / "gone").mkdir()
+    _dir_link(tmp_path / "gone", ws / "external" / "Broken")                # 壊れたリンク(先を後で消す)
+    (tmp_path / "gone").rmdir()
+    monkeypatch.chdir(ws)
+    assert cli_main(["init", "."]) == 0
+    cfg = load_config(ws / ".cf" / "config.toml")
+    assert [s.id for s in cfg.sources] == [ws.name, "Engine"]
+
+
 def test_source_root_is_relative_inside_the_workspace_and_absolute_outside(tmp_path):
     from context_foundation.config import source_root
     ws = tmp_path / "ws"
