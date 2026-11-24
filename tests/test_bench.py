@@ -128,6 +128,7 @@ def test_every_method_gets_the_same_tools_and_permissions(bench, tmp_path, metho
     assert allowed[:2] == ["read", "shell(python:*)"] and cmd[cmd.index("--deny-tool") + 1] == "write"
     assert ("COPILOT_SKILLS_DIRS" in env) == (method == "agent_cf")
     assert env["COPILOT_PROVIDERS_CONFIG"].endswith("providers.json")
+    assert env["CF_INDEX_AGE_WARN_DAYS"] == "0"       # 索引の古さの 1 文は足さない(前の回と比べられるように)
     assert "--allow-all-tools" not in cmd and "--allow-all" not in cmd
     # コーパスが作業フォルダの外にあるので、読めるように渡す
     assert [cmd[i + 1] for i, c in enumerate(cmd) if c == "--add-dir"][:3] == [str(r) for r in roots]
