@@ -195,6 +195,7 @@ trial in a `results.jsonl` file.
 | `returned_bytes` | integer or null | If known | Bytes of tool output handed to the model |
 | `offloaded_results` | integer or null | If known | Tool results the host withheld from the model because of their size |
 | `session_id` | string | No | Key for joining with an external session log |
+| `tools_by_name` | object | No | Agent methods: number of calls per tool, by the name the host uses |
 | `notes` | string | No | Free-form remarks |
 
 Each `retrieved_evidence` item records `rank`, `source_id`, `path`,
@@ -212,10 +213,14 @@ the file changed after the index was built).
     file is recorded as line 1 to the last line;
   - each passage a search tool returned to the agent
     (`origin: "search_result"`);
+  - the body range of each symbol a code-intelligence tool (Serena, a
+    language server) returned to the agent (`origin: "symbol_result"`);
   - each place the final answer names as evidence (`origin: "cited"`).
 
-  Drop exact duplicates and number what remains from 1. Matches that the
-  agent only saw inside grep output are not recorded.
+  Drop exact duplicates (the same range with the same `origin`) and number
+  what remains from 1. Keep a range again when it appears with another
+  origin, so that the evidence the answer cited can be counted on its own.
+  Matches that the agent only saw inside grep output are not recorded.
 
 A whole-file read overlaps every expected line in that file, so it counts as
 a passage match however much the agent had to read. Read the passage-level

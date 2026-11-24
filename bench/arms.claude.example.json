@@ -1,0 +1,88 @@
+{
+ "agent_grep": {
+  "runner": "claude_run",
+  "python": "D:/context-foundation/.venv/Scripts/python.exe",
+  "config": "D:/bench/godot-ws",
+  "method": "agent_grep",
+  "out": "D:/bench/runs/godot-01/agent_grep",
+  "run_id": "godot-01-agent_grep",
+  "args": [
+   "--model",
+   "haiku",
+   "--yes"
+  ]
+ },
+ "agent_cf_mcp": {
+  "runner": "claude_run",
+  "python": "D:/context-foundation/.venv/Scripts/python.exe",
+  "config": "D:/bench/godot-ws",
+  "method": "agent_cf_mcp",
+  "out": "D:/bench/runs/godot-01/agent_cf_mcp",
+  "run_id": "godot-01-agent_cf_mcp",
+  "args": [
+   "--model",
+   "haiku",
+   "--yes"
+  ]
+ },
+ "agent_lsp": {
+  "runner": "claude_run",
+  "python": "D:/context-foundation/.venv/Scripts/python.exe",
+  "config": "D:/bench/godot-ws",
+  "method": "agent_lsp",
+  "out": "D:/bench/runs/godot-01/agent_lsp",
+  "run_id": "godot-01-agent_lsp",
+  "args": [
+   "--model",
+   "haiku",
+   "--lsp-command",
+   "clangd --background-index",
+   "--yes"
+  ]
+ },
+ "agent_cf_mcp_lsp": {
+  "runner": "claude_run",
+  "python": "D:/context-foundation/.venv/Scripts/python.exe",
+  "config": "D:/bench/godot-ws",
+  "method": "agent_cf_mcp_lsp",
+  "out": "D:/bench/runs/godot-01/agent_cf_mcp_lsp",
+  "run_id": "godot-01-agent_cf_mcp_lsp",
+  "args": [
+   "--model",
+   "haiku",
+   "--lsp-command",
+   "clangd --background-index",
+   "--yes"
+  ]
+ },
+ "agent_serena": {
+  "runner": "claude_run",
+  "python": "D:/context-foundation/.venv/Scripts/python.exe",
+  "config": "D:/bench/godot-ws",
+  "method": "agent_serena",
+  "out": "D:/bench/runs/godot-01/agent_serena",
+  "run_id": "godot-01-agent_serena",
+  "args": [
+   "--model",
+   "haiku",
+   "--serena-project",
+   "D:/src/godot",
+   "--yes"
+  ]
+ },
+ "agent_cf_mcp_serena": {
+  "runner": "claude_run",
+  "python": "D:/context-foundation/.venv/Scripts/python.exe",
+  "config": "D:/bench/godot-ws",
+  "method": "agent_cf_mcp_serena",
+  "out": "D:/bench/runs/godot-01/agent_cf_mcp_serena",
+  "run_id": "godot-01-agent_cf_mcp_serena",
+  "args": [
+   "--model",
+   "haiku",
+   "--serena-project",
+   "D:/src/godot",
+   "--yes"
+  ]
+ }
+}

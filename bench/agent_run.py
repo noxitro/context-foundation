@@ -2,11 +2,15 @@
 
   python bench/agent_run.py --config <作業フォルダ> --cases cases.jsonl --method agent_grep --out <フォルダ> --yes
 
-手法(同じエージェント・同じモデル・同じ質問文・同じ道具の一式で、検索の道具だけを変える)
-  agent_grep          既存の手順。view・grep・glob で探す
-  agent_grep_cxxref   agent_grep に、記号参照の索引 cxxref の skill と hook を足す(--cxxref に、その置き場所)
-  agent_cf            agent_grep に、この道具の skill(context-search)と、セッションの始めの 1 文(hook)を足す
-  agent_cf_mcp        agent_grep に、この道具の MCP サーバー(search・status)を足す
+手法(同じエージェント・同じモデル・同じ質問文・同じ道具の一式で、検索の道具だけを変える。bench/methods.py)
+  agent_grep           既存の手順。view・grep・glob で探す
+  agent_grep_cxxref    agent_grep に、記号参照の索引 cxxref の skill と hook を足す(--cxxref に、その置き場所)
+  agent_cf             agent_grep に、この道具の skill(context-search)と、セッションの始めの 1 文(hook)を足す
+  agent_cf_mcp         agent_grep に、この道具の MCP サーバー(search・status)を足す
+  agent_lsp            agent_grep に、言語サーバーの道具 lsp を足す(--lsp-config に、Copilot CLI の lsp-config.json)
+  agent_cf_mcp_lsp     agent_cf_mcp と agent_lsp の両方
+  agent_serena         agent_grep に、Serena の MCP サーバーと、Serena 自身の始めの指示(hook)を足す
+  agent_cf_mcp_serena  agent_cf_mcp と agent_serena の両方
 
 1 回の実行(1 質問 × 1 回)ごとに、空の設定フォルダ(COPILOT_HOME)で新しいセッションを始める。ふだんの設定
 (登録済みの MCP サーバーやプラグイン)を混ぜないため。記録するもの: 回答、開いたファイルと行・検索が返した
@@ -45,7 +49,10 @@ from context_foundation.config import find_config, load_config  # noqa: E402
 from context_foundation.evalkit.data import load_cases, read_jsonl  # noqa: E402
 from context_foundation.sysinfo import host_info  # noqa: E402
 
-METHODS = ("agent_grep", "agent_grep_cxxref", "agent_cf", "agent_cf_mcp")
+sys.path.insert(0, str(BENCH))
+import methods as M  # noqa: E402
+
+METHODS = M.METHODS
 # どの手法にも渡す道具の一式(読むための道具と、skill と shell)
 BASE_TOOLS = ["view", "grep", "glob", "skill", "powershell" if os.name == "nt" else "bash"]
 MCP_NAME = "context-foundation"
@@ -157,10 +164,11 @@ def _result_text(result) -> str:
     return json.dumps(result, ensure_ascii=False)
 
 
-def collect(home: Path, usage_file: Path, mapper: Mapper) -> dict:
-    """COPILOT_HOME の記録から、回答・見た場所・呼び出し・トークンを集める。"""
+def collect(home: Path, usage_file: Path, mapper: Mapper, serena_root: Path | None = None) -> dict:
+    """COPILOT_HOME の記録から、回答・見た場所・呼び出し・トークンを集める。serena_root は、Serena が返す相対パスの
+    もとのフォルダ(Serena の手法のとき)。"""
     rec: dict = {"answer": None, "retrieved": [], "tool_calls": 0, "tools": {}, "returned_bytes": 0,
-                 "offloaded_results": 0, "session_id": ""}
+                 "offloaded_results": 0, "session_id": "", "serena_root": serena_root}
     state = home / "session-state"
     sessions = [d for d in state.iterdir() if d.is_dir() and not d.name.startswith(".")] if state.is_dir() else []
     if len(sessions) == 1:
@@ -193,6 +201,12 @@ def collect(home: Path, usage_file: Path, mapper: Mapper) -> dict:
                                                      "end_line": end, "origin": "opened"})
                 elif kind == "tool.execution_complete":
                     text = _result_text(data.get("result"))
+                    if M.tool_family(names.get(data.get("toolCallId"), "")) == "serena" and rec.get("serena_root"):
+                        for rel, start, end in M.serena_locations(text):
+                            found = mapper.resolve(str(rec["serena_root"] / rel))
+                            if found:
+                                rec["retrieved"].append({"source_id": found[0], "path": found[1], "start_line": start,
+                                                         "end_line": max(start, end), "origin": "symbol_result"})
                     rec["returned_bytes"] += len(text.encode("utf-8"))
                     if OFFLOAD_MARK in text:
                         rec["offloaded_results"] += 1
@@ -307,6 +321,7 @@ def command_for(args, exe: str, prompt: str, usage_file: Path, share: Path, root
     確認できない場面なので、ほかの shell の命令は断られる)。
     """
     tools = list(BASE_TOOLS)
+    f = M.features(args.method)
     cmd = [exe, "-p", prompt, "--model", args.model, "-s", "--log-level", "error",
            "--usage-output-file", str(usage_file), "--share", str(share),
            "--allow-tool", "read", "--allow-tool", "shell(python:*)", "--deny-tool", "write"]
@@ -318,12 +333,22 @@ def command_for(args, exe: str, prompt: str, usage_file: Path, share: Path, root
         if not args.cxxref or not (Path(args.cxxref) / "skills").is_dir():
             raise SystemExit("agent_grep_cxxref には --cxxref <cxxref を置いたフォルダ> が要ります")
         env["COPILOT_SKILLS_DIRS"] = str(Path(args.cxxref) / "skills")
-    elif args.method == "agent_cf_mcp":
-        mcp = {"mcpServers": {MCP_NAME: {"type": "local", "command": sys.executable,
-                                         "args": ["-I", "-m", "context_foundation", "serve"], "tools": ["*"]}}}
-        cmd += ["--additional-mcp-config", json.dumps(mcp), "--allow-tool", MCP_NAME]
-        tools.append(MCP_NAME)
-    if getattr(args, "lsp_config", None):                 # 言語サーバー(clangd など)の道具 lsp も渡す(設定は、この回の設定フォルダに置く)
+    servers: dict = {}
+    if "cf_mcp" in f:
+        servers[MCP_NAME] = {"type": "local", "command": sys.executable,
+                             "args": ["-I", "-m", "context_foundation", "serve"], "tools": ["*"]}
+    if "serena" in f:
+        server = M.serena_server(args.serena["project"], "copilot-cli", args.serena["command"])
+        servers[M.SERENA_NAME] = {"type": "local", "command": server[0], "args": server[1:], "tools": ["*"],
+                                  "env": args.serena["env"]}
+    if servers:
+        cmd += ["--additional-mcp-config", json.dumps({"mcpServers": servers})]
+        for name in servers:
+            cmd += ["--allow-tool", name]
+            tools.append(name)
+    # 言語サーバー(clangd など)の道具 lsp。LSP の手法と、--lsp-config を渡したほかの手法(0.4.10 までの使い方)。
+    # 設定は、この回の設定フォルダに置く
+    if "lsp" in f or getattr(args, "lsp_config", None):
         tools.append("lsp")
     cmd += ["--available-tools", ",".join(tools)]
     for _, d in added_dirs(args, roots):
@@ -346,8 +371,13 @@ def hooks_for(args) -> dict | None:
     フォルダで、skill の使いどころを知らせる)。プラグインの hooks.json は ${PLUGIN_ROOT} からの場所で書かれて
     いて、設定フォルダに置く hook では使えないので、shell を通さずに、入口の場所を直接渡す。
     """
-    if args.method in ("agent_cf", "agent_cf_mcp") and not args.no_hint:
-        hint = ["session-hint"] + (["--mcp"] if args.method == "agent_cf_mcp" else [])
+    f = M.features(args.method)
+    if "serena" in f:                     # Serena 自身の始めの指示(と、この道具の 1 文)。流す前に作ったもの
+        return {"version": 1, "hooks": {"sessionStart": [
+            {"type": "command", "exec": "python", "args": ["-I", str(BENCH / "hint_hook.py"), str(args.hint_file)],
+             "timeoutSec": 10}]}}
+    if args.method in ("agent_cf", "agent_cf_mcp", "agent_cf_mcp_lsp") and not args.no_hint:
+        hint = ["session-hint"] + (["--mcp"] if "cf_mcp" in f else [])
         return {"version": 1, "hooks": {"sessionStart": [
             {"type": "command", "exec": "python", "args": ["-I", str(REPO / "ctxf.py"), *hint],
              "timeoutSec": 10}]}}
@@ -399,14 +429,14 @@ def run_one(args, exe: str, case: dict, trial: int, mapper: Mapper, roots: list[
         code, out, status = "timeout", str(e.stdout or "") + str(e.stderr or ""), "timeout"
     seconds = round(time.time() - t0, 1)
     (logs / f"{name}.out.txt").write_text(out, encoding="utf-8")
-    rec = collect(home, usage_file, mapper)
+    rec = collect(home, usage_file, mapper, args.serena["project"] if getattr(args, "serena", None) else None)
     answer = rec["answer"] or (out.strip() if status == "completed" and code == 0 else None)
     if status == "completed" and (code != 0 or not answer):
         status = "gave_up"
     seen: set[tuple] = set()
     retrieved: list[dict] = []
     for e in rec["retrieved"] + parse_evidence(answer or "", mapper):
-        key = (e["source_id"], e["path"], e["start_line"], e["end_line"])
+        key = (e["source_id"], e["path"], e["start_line"], e["end_line"], e["origin"])
         if key not in seen:
             seen.add(key)
             retrieved.append(dict(rank=len(retrieved) + 1, **e))
@@ -418,7 +448,7 @@ def run_one(args, exe: str, case: dict, trial: int, mapper: Mapper, roots: list[
         "cache_write_tokens": rec.get("cache_write_tokens"), "ai_units": rec.get("ai_units"),
         "cost_usd": cost_usd(rec, prices), "tool_calls": rec["tool_calls"], "model_calls": rec.get("model_calls"),
         "returned_bytes": rec["returned_bytes"], "offloaded_results": rec["offloaded_results"],
-        "session_id": rec["session_id"],
+        "session_id": rec["session_id"], "tools_by_name": rec["tools"],
     }
     if code not in (0, "timeout"):
         row["notes"] = f"copilot exit {code}"
@@ -446,7 +476,13 @@ def main() -> int:
     ap.add_argument("--price", action="append", default=[], metavar="KIND=USD",
                     help="100 万トークンあたりの単価(input / output / cache_read / cache_write)。BYOK の費用の見積もり用")
     ap.add_argument("--cxxref", help="agent_grep_cxxref で使う、cxxref を置いたフォルダ")
-    ap.add_argument("--lsp-config", help="Copilot CLI の lsp-config.json。渡すと、どの手法でも道具 lsp を足す")
+    ap.add_argument("--lsp-config", help="Copilot CLI の lsp-config.json。LSP の手法に要る。ほかの手法に渡すと、"
+                                         "その手法にも道具 lsp を足す(0.4.10 までの使い方)")
+    ap.add_argument("--serena-project", type=Path,
+                    help="Serena の手法: .serena/project.yml のあるフォルダ(省くと、source が 1 つならそのルート、"
+                         "ほかは作業フォルダ)")
+    ap.add_argument("--serena-command", default=M.SERENA_COMMAND, help="Serena を起こすコマンド")
+    ap.add_argument("--serena-home", type=Path, help="Serena の設定の置き場(SERENA_HOME。省くと <out>/serena-home)")
     ap.add_argument("--trust-folder", action="store_true", help="作業フォルダの設定(hooks・MCP)を読ませる")
     ap.add_argument("--no-hint", action="store_true",
                     help="agent_cf で、セッションの始めの 1 文(hook)を置かない(skill の説明文だけにする)")
@@ -481,6 +517,30 @@ def main() -> int:
     args.run_id = args.run_id or time.strftime("agent-%Y%m%d-%H%M%S")
     model = args.model if args.provider == "copilot" else f"{args.provider}/{args.model}"
     args.model = model
+    f = M.features(args.method)
+    if "lsp" in f and not args.lsp_config:
+        raise SystemExit(f"{args.method} には --lsp-config(Copilot CLI の lsp-config.json)が要ります")
+    args.serena = None
+    args.hint_file = None
+    if "serena" in f:
+        project = (args.serena_project or (roots[0] if len(roots) == 1 else args.workspace)).resolve()
+        if not M.serena_project_ok(project):
+            raise SystemExit(M.serena_setup_hint(project, args.serena_command))
+        serena_home = (args.serena_home or args.out / "serena-home").resolve()
+        serena_home.mkdir(parents=True, exist_ok=True)
+        env = {"SERENA_HOME": str(serena_home)}
+        args.serena = {"project": project, "command": args.serena_command, "env": env}
+        parts = []
+        if "cf_mcp" in f and not args.no_hint:
+            p = subprocess.run([sys.executable, "-I", str(REPO / "ctxf.py"), "session-hint", "--mcp"],
+                               input=json.dumps({"cwd": str(args.workspace)}), capture_output=True, text=True,
+                               encoding="utf-8", env=dict(os.environ, CF_PYTHON=sys.executable), timeout=60)
+            if p.stdout.strip():
+                parts.append(json.loads(p.stdout)["additionalContext"])
+        parts.append(M.serena_prompt(project, "copilot-cli", args.serena_command, dict(os.environ, **env),
+                                     args.out / "serena-prompt-copilot.txt"))
+        args.hint_file = args.out / f"hint-{args.method}.txt"
+        args.hint_file.write_text("\n\n".join(parts), encoding="utf-8")
     exe = find_copilot()
 
     results = args.out / "results.jsonl"
@@ -520,14 +580,18 @@ def main() -> int:
                              "agent.provider. The index and embeddings stay local.",
         }
         meta["methods"][args.method] = {
-            "kind": "agent", "tools": BASE_TOOLS + {
-                "agent_grep": [], "agent_cf": ["skill:context-search"], "agent_cf_mcp": [f"mcp:{MCP_NAME}"],
-                "agent_grep_cxxref": ["skill:cxxref"]}[args.method],
+            "kind": "agent", "tools": M.described_tools(args.method, list(BASE_TOOLS), MCP_NAME)
+            + (["lsp"] if args.lsp_config and "lsp" not in M.features(args.method) else []),
             "permissions": "read allowed, write denied, shell limited to python",
-            "session_hint": args.method == "agent_grep_cxxref" or (args.method in ("agent_cf", "agent_cf_mcp") and not args.no_hint),
+            "session_hint": hooks_for(args) is not None,
             "isolated_config": True, "trust_folder": args.trust_folder,
             "custom_instructions": "disabled" if args.no_custom_instructions else "enabled",
             "instruction_files": instructions}
+        if args.serena:
+            meta["methods"][args.method]["serena"] = {"command": args.serena_command, "context": "copilot-cli",
+                                                      "modes": list(M.SERENA_MODES)}
+        if args.lsp_config:
+            meta["methods"][args.method]["lsp_config"] = Path(args.lsp_config).name
         known[args.run_id] = meta
         runs.write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in known.values()), encoding="utf-8")
 

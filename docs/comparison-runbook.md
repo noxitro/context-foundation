@@ -174,6 +174,16 @@ python bench\agent_run.py --config <作業フォルダ> ^
   <cxxref のフォルダ>` を足す(作業フォルダに cxxref の索引が要る)
 - 0.3 からのプラグインの形(MCP サーバーと、検索を先に使うように促す始めの
   1 文)は、`--method agent_cf_mcp`。`agent_cf` は、0.2 までの skill の形
+- 言語サーバー(clangd)や Serena と比べるときは、`agent_lsp`・
+  `agent_serena` と、この道具と組み合わせた `agent_cf_mcp_lsp`・
+  `agent_cf_mcp_serena` を足す。先に、ソースのルートに
+  `compile_commands.json` と Serena のプロジェクトを作っておく(手順は
+  [bench の README](../bench/README.md) の「言語サーバーと Serena を用意
+  する」)。どちらも、道具を渡しても使われないことがあるので、
+  `compare.py tools` で、使った回の割合を確かめてから差を読む
+- Claude Code を代わりのエージェントにするときは `bench\claude_run.py`
+  (費用は Claude Code の利用枠から)。手法の名前と結果の形は同じだが、
+  Copilot CLI の数字とは並べず、同じエージェントの中でだけ比べる
 - 作業フォルダか、その版管理のルートまでに、指示のファイル(`AGENTS.md`・
   `CLAUDE.md`・`.github/copilot-instructions.md` など)があると、Copilot
   CLI は、それを毎回読む。中身は、どの手法の入力にも入る。道具は、見つけた
@@ -185,7 +195,8 @@ python bench\agent_run.py --config <作業フォルダ> ^
   `tool:` と出たら、`--no-custom-instructions` を付けるか、そのファイルを
   外してから流す
 
-回数の見積もり: 質問 25 件 × 3 回 × 手法 2 つで 150 回です。合成の
+回数の見積もり: 質問 25 件 × 3 回 × 手法 2 つで 150 回です。LSP と
+Serena を足した 6 つの手法なら 450 回です。合成の
 コーパスでの試し(Claude Haiku 5.5、1 回あたり入力 4 万トークン前後)では、
 1 回 0.002〜0.004 ドルでした。実コーパスでは、読む量が増えるので、これより
 多くなります。先に数問で測ってから、全体を見積もってください。
