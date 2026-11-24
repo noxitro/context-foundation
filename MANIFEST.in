@@ -10,7 +10,6 @@ include bench/README.md bench/agent_run.py bench/answer-format.txt bench/claude_
 include examples/o3de/README.md examples/o3de/cases.jsonl examples/o3de/config.example.toml
 include skills/context-search/SKILL.md skills/context-search/ctxf.py
 include skills/context-search-setup/SKILL.md skills/context-search-setup/ctxf.py
-include skills/context-search-install/SKILL.md skills/context-search-install/ctxf.py
 include com.github.copilot/hooks/hooks.json
 include com.github.copilot/extensions/context-foundation/extension.mjs com.github.copilot/extensions/context-foundation/lib.mjs
 include com.github.copilot/extensions/context-foundation/lib.test.mjs

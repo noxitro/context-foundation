@@ -70,12 +70,7 @@ remembers it for every workspace instead. A second skill,
 **`context-search-setup`**, walks the user through all of this in the
 session: it asks before installing the packages, asks for the folder of the
 model already on disk and registers it (it never downloads the model), and
-offers to build the index. A third skill, **`context-search-install`**,
-does only the part of the setup that is not the model or the index, as a
-command: typed as `/context-search-install` (`gpu`, `cpu`), it installs the
-Python packages and checks that the `python` on PATH, which the plugin
-starts with, works. It needs no experimental setting (that the slash form
-passes its arguments in Copilot CLI is not verified yet).
+offers to build the index.
 Without the model, search is
 keyword-only. With these, everything from installing
 the plugin (`/plugin install`) to building the index can be done inside a
@@ -138,7 +133,6 @@ This tool does not include:
 | `src/context_foundation` | The tool: ingest, chunking, index, search, evaluation, MCP server |
 | `skills/context-search` | The skill that tells an agent when and how to search |
 | `skills/context-search-setup` | The skill that sets the tool up end to end, asking the user (packages, the folder of a model already on disk, the index) |
-| `skills/context-search-install` | `/context-search-install`: the setup without the model and the index (the Python packages and a check of the `python` on PATH) |
 | `plugin.json`, `.github/plugin`, `com.github.copilot` | The Copilot plugin, its marketplace entry, the session-start hook, and the `/context-index` extension |
 | `ctxf.py` | Launcher (standard library only): finds the Python environment and runs the tool; `setup` prepares it |
 | `bench` | Runs the agent methods with Copilot CLI and records the results |

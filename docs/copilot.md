@@ -251,50 +251,6 @@ python -I "<プラグインのフォルダ>\ctxf.py" model use "<フォルダ>"
 モデルは取得しません(`model download` を動かさないと skill に書いて
 あります)。`/context-setup` と違い、モデルを呼ぶのでトークンを使います。
 
-### `/context-search-install`(モデルと索引のほかの用意をするコマンド)
-
-skill `context-search-install` を、セッションでコマンドとして打ちます。
-モデルの指定と索引のほかの用意をします。
-
-```text
-/context-search-install
-/context-search-install gpu
-/context-search-install cpu
-/context-search-install help
-```
-
-1. `where` で今の状態を見る(何も入れない)
-2. Python のパッケージを入れる(`setup --no-model`。`gpu`・`cpu` は
-   `--gpu`・`--cpu`。どちらも付けなければ、前の setup の選び方を引き継ぐ。
-   初めては CPU)。済んでいれば、確かめるだけで終わる。リポジトリを取得
-   した人の `.venv` で動いているときと、`CF_PYTHON` を指定しているときは、
-   setup を動かさない。その Python がパッケージを読み込めるかを `where` の
-   `model:` の行で見て、読み込めなければ直し方を知らせる(`.venv` は
-   `where` の `setup:` の行のコマンドで、利用者が直す)
-3. プラグインの MCP サーバーと hook が起動に使う、PATH の `python` が
-   動くかを確かめる。無い、または Microsoft Store のショートカット
-   (`WindowsApps\python.exe`)なら、直し方を知らせる(PATH などの設定は
-   変えない。直すのは利用者)
-4. `where` で確かめ、済んだことと、このコマンドがしないこと(モデルの指定
-   は skill `context-search-setup` か `model use`、索引は `/context-index`
-   か `init` と `index`)を知らせる
-
-- 利用者が打ったことを、パッケージの取得(約 200 MB)の同意とみなします。
-  打たずに言葉で頼まれて skill が読まれたときは、1 回尋ねてから入れます
-- モデルの取得・指定・確認と、設定(`.cf\config.toml`)と索引づくりは
-  しません。`init`・`index`・`model …` は、頼まれても、setup の出力が
-  「Next, build an index」と言っても動かしません(利用者がすることとして
-  案内します)
-- 索引づくり(`/context-index` など)が動いている間は、setup を動かしま
-  せん(`gpu`・`cpu` や依存の変わった版では、索引づくりが使っている
-  パッケージを入れ替えるため)。終わってから打ち直すよう知らせます
-- 別の setup が動いている(終了コード 3)ときは、1 分おきに 3 回まで
-  やり直し、それでも続けば、鍵のファイルを利用者に示します
-- `/context-setup` と違い、拡張(実験的機能)が無くても打てます。その代わり、
-  モデルを呼ぶのでトークンを使います
-- Copilot CLI で skill をスラッシュコマンドとして打ち、後ろの語(`gpu`
-  など)を skill に渡せることは、まだ確かめていません【未確認】
-
 ### `/context-setup`(用意をするスラッシュコマンド)
 
 `/context-index` と同じ拡張が足すコマンドです。Copilot CLI のセッションで
@@ -633,7 +589,6 @@ copilot plugin install context-foundation@context-foundation
 | MCP サーバーと hook(既定) | ツールは `search` と `status` だけ。読み取り専用。hook は、索引のある作業フォルダでだけ、検索を grep より先に使うように 1 文で知らせる | プラグイン(`mcp.json` と `hooks.json`) |
 | skill(控え) | `skills/context-search`。MCP の道具が使えない場面で、検索の CLI を 1 回呼ぶ。最初の用意(setup)のしかたも、ここに書いてある | プラグイン |
 | skill(用意) | `skills/context-search-setup`。用意を、利用者に尋ねながら進める(パッケージ、手元に置いたモデルのフォルダ) | プラグイン |
-| skill(用意のコマンド) | `skills/context-search-install`。`/context-search-install` と打つと、モデルの指定と索引のほかの用意をする(パッケージ、PATH の `python` の確認) | プラグイン |
 | 拡張(`/context-setup`・`/context-index`) | 利用者が打つ、用意をするコマンドと、索引を作る・作り直すコマンド。モデルを呼ばない。Copilot CLI の実験的機能を有効にすると読み込まれる(上の「`/context-index`」) | プラグイン(`com.github.copilot\extensions`) |
 
 0.2 までは、skill と hook が既定で、MCP サーバーは追加でした。0.3 で入れ
@@ -1115,7 +1070,7 @@ Haiku 5.5、合成のコーパス、毎回空の設定フォルダ)。
   "name": "context-foundation",
   "source": { "source": "github", "repo": "noxitro/context-foundation" },
   "description": "Find code and design docs by meaning and keywords, locally.",
-  "version": "0.4.12"
+  "version": "0.4.11"
 }
 ```
 
