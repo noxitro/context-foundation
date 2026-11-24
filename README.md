@@ -138,6 +138,7 @@ This tool does not include:
 | `bench` | Runs the agent methods with Copilot CLI and records the results |
 | `tests` | Tests and a small synthetic corpus (C++, C#, Markdown) |
 | `examples/o3de` | Worked evaluation example on a public C++ game engine: questions, answer locations, measured results |
+| `examples/godot` | A second worked example on another public C++ engine (Godot 4.7.2): 32 questions and answer locations, with the steps for comparing the language-server (clangd) and Serena methods |
 | `docs` | Evaluation specification, design notes, Copilot setup, comparison runbook |
 | `CHANGELOG.md` | Changes per version and what to do after updating |
 | `*.bat` | Double-click entry points for Windows |

@@ -619,6 +619,7 @@ GitHub Actions では、次の 4 つを回します(`.github/workflows`)。
 | `bench` | エージェントを使う手法を Copilot CLI で回して記録する道具 |
 | `tests` | テストと、合成のコーパス |
 | `examples/o3de` | 公開のゲームエンジンを題材にした評価の実例(質問・正解の場所・測った結果) |
+| `examples/godot` | もう 1 つの公開のゲームエンジン(Godot 4.7.2)の評価の実例(質問 32 件・正解の場所と、言語サーバー・Serena と比べる手順) |
 | `docs` | 評価の仕様、設計、Copilot の手順、比較の手順書、計測の一覧 |
 | `CHANGELOG.md` | 版ごとの変更と、更新のあとにすること |
 
