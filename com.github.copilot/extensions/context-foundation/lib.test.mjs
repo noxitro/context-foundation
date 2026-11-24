@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  chooseFallback, dataHome, escapeMarkdown, failureMessage, findConfig, folderChoices, folderSchema, hasLocalVenv, indexFile, MAX_FOLDER_CHOICES, pickedFolders, WHOLE_WORKSPACE, initSources, joinOptions, keywordOnly, lastCwd, loadSdk, logTail,
+  chooseFallback, commandHandler, dataHome, escapeMarkdown, failureMessage, findConfig, folderChoices, folderSchema, hasLocalVenv, indexFile, MAX_FOLDER_CHOICES, pickedFolders, WHOLE_WORKSPACE, initSources, joinOptions, keywordOnly, lastCwd, loadSdk, logTail,
   makeNotifier, modelFolderPrompt, modelFolderSchema, modelMissing, modelUseResult, parseIndexArgs, pickedModelFolder, parseProgress, parseSetupArgs, parseSetupProgress, planIndex, pluginRoot, progressNote, repairCommand,
   SDK_NAMES, SETUP_HELP, setupFailureMessage, setupProgressNote, setupRuntimeFolder, splitArgs, wantDialog, workspaceOf,
 } from "./lib.mjs";
@@ -360,6 +360,64 @@ test("makeNotifier: exclusive のダイアログを出している間の知ら�
   await n.tell("次");
   await new Promise((r) => setTimeout(r, 10));
   assert.equal(order.at(-1), "open 次");
+});
+
+// アプリは、どのコマンドも待っていないダイアログが開くと、スピナーを回し続ける。ダイアログを出すときは、
+// 仕事が終わり、ダイアログがすべて閉じるまでコマンドを終えない
+test("commandHandler: アプリでは、仕事と結果のダイアログを閉じるまで終えない", async () => {
+  const closers = [];
+  const session = {
+    capabilities: { ui: { elicitation: true } },
+    log: async () => { },
+    ui: { elicitation: (o) => new Promise((r) => closers.push([o.message, r])) },
+  };
+  const n = makeNotifier(() => session, {});
+  assert.equal(n.waits, true);
+  let finishWork;
+  const h = commandHandler(async () => {
+    await n.tell("始めました");
+    await new Promise((r) => { finishWork = r; });
+    await n.tell("できました");
+  }, n, () => { });
+  let ended = false;
+  const run = h({ args: "" }).then(() => { ended = true; });
+  const tick = () => new Promise((r) => setTimeout(r, 10));
+  await tick();
+  assert.deepEqual(closers.map((c) => c[0]), ["始めました"]);
+  closers[0][1]({ action: "accept" });  // 始めのダイアログを閉じても、仕事が続く間は終えない
+  await tick();
+  assert.equal(ended, false);
+  finishWork();
+  await tick();
+  assert.deepEqual(closers.map((c) => c[0]), ["始めました", "できました"]);
+  assert.equal(ended, false);  // 結果のダイアログが開いている
+  closers[1][1]({ action: "accept" });
+  await run;
+  assert.equal(ended, true);
+});
+
+test("commandHandler: CLI(ダイアログを出さない)では待たずに戻り、失敗は onError に渡す", async () => {
+  const session = { capabilities: { ui: { elicitation: true } }, log: async () => { }, ui: { elicitation: async () => { } } };
+  const n = makeNotifier(() => session, { CF_DISPLAY: "timeline" });
+  assert.equal(n.waits, false);
+  let release, failed = null;
+  const h = commandHandler(async () => {
+    await new Promise((r) => { release = r; });
+    throw new Error("こわれた");
+  }, n, (err) => { failed = err.message; });
+  await h({ args: "" });  // 仕事が終わる前に戻る
+  assert.equal(failed, null);
+  release();
+  await new Promise((r) => setTimeout(r, 10));
+  assert.equal(failed, "こわれた");
+});
+
+test("commandHandler: アプリで仕事が失敗しても、知らせてから終える", async () => {
+  const session = { capabilities: { ui: { elicitation: true } }, log: async () => { }, ui: { elicitation: async () => { } } };
+  const n = makeNotifier(() => session, {});
+  let failed = null;
+  await commandHandler(async () => { throw new Error("だめ"); }, n, (err) => { failed = err.message; })({});
+  assert.equal(failed, "だめ");
 });
 
 // Copilot CLI 1.0.113 は @microsoft/copilot-sdk だけを、1.0.112 まで と GitHub Copilot app は @github/copilot-sdk だけを
