@@ -25,7 +25,7 @@ import { closeSync, existsSync, mkdirSync, openSync, readFileSync } from "node:f
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  chooseFallback, dataHome, failureMessage, findConfig, folderChoices, folderSchema, hasLocalVenv, indexFile, initSources, joinOptions,
+  chooseFallback, commandHandler, dataHome, failureMessage, findConfig, folderChoices, folderSchema, hasLocalVenv, indexFile, initSources, joinOptions,
   keywordOnly, lastCwd, loadSdk, makeNotifier, modelFolderPrompt, modelFolderSchema, modelMissing, modelUseResult, parseProgress,
   parseSetupArgs, parseSetupProgress, pickedFolders, pickedModelFolder, planIndex, pluginRoot, progressNote, SETUP_HELP, setupFailureMessage, setupProgressNote, setupRuntimeFolder, workspaceOf,
 } from "./lib.mjs";
@@ -95,7 +95,13 @@ function busy() {
 // 利用者に見せる文は tell、進み具合は say で出す。GitHub Copilot app は session.log の info と warning を表示しない
 // (error だけ出る)ので、アプリで動いているときは tell の文をダイアログにも出す(lib.mjs の makeNotifier。
 // CF_DISPLAY で切り替えられる)。session は下の joinSession で決まり、コマンドが呼ばれるのはその後
-const { tell, say, exclusive } = makeNotifier(() => session, process.env);
+const notifier = makeNotifier(() => session, process.env);
+const { tell, say, exclusive } = notifier;
+// 走っている間のことの断り。ダイアログを出すとき(GitHub Copilot app)は、コマンドは結果のダイアログを閉じるまで終わらない
+const carryOn = notifier.waits
+  ? "終わったら、結果をダイアログに出します(閉じると、このコマンドが終わります)。"
+  : "裏で動かすので、作業を続けてかまいません。";
+const handle = (fn) => commandHandler(fn, notifier, (err) => tell(`context-foundation: ${err?.message ?? err}`, "error"));
 
 // 初めての索引で、フォルダを並べずに打たれたとき: 作業フォルダの直下のフォルダから、索引に入れるものを選ばせる
 // (複数選べるダイアログ。モデルは呼ばない)。選んだフォルダの一覧か、やめた・出せないときは null。
@@ -228,7 +234,7 @@ async function indexCommand(ctx) {
     const what = first ? "初めての索引" : plan.full ? "作り直し。すべて埋め込み直す" : "作り直し。変わっていない passage の埋め込みは使い回す";
     await tell(`context-foundation: ${made}索引づくりを始めました(${what}、${ws})。` +
       (first ? "大きなコードでは数十分かかります(約 8,000 ファイルで 30 分ほど)。" : "") +
-      `裏で動かすので、作業を続けてかまいません。ログ: ${log}`);
+      `${carryOn}ログ: ${log}`);
     const args = [ctxf, "index", "--config", config, ...(plan.full ? ["--full"] : [])];
     const stop = watchProgress(log, t0);
     const r = await run(args, log).finally(stop);
@@ -274,7 +280,7 @@ async function setupCommand(ctx) {
     const t0 = Date.now();
     await tell("context-foundation: 用意(setup)を始めました。" +
       `Python のパッケージ(PyPI から約 200 MB)を、${home} に入れます(埋め込みモデルは入れません)。` +
-      "初めては数分かかります(済んでいれば、確かめるだけで終わります)。裏で動かすので、作業を続けてかまいません。" +
+      `初めては数分かかります(済んでいれば、確かめるだけで終わります)。${carryOn}` +
       `ログ: ${log}`);
     // setup がモデルの有無を確かめるときに、このセッションの作業フォルダの設定を読むように、設定のファイルを渡す
     // (Copilot は、拡張をプラグインのフォルダで動かすので、そのままでは子は作業フォルダの設定を見つけない。
@@ -339,17 +345,13 @@ const commands = [
   {
     name: "context-setup",
     description: "[no-model] [gpu | cpu] — この PC の検索の用意(context-foundation)。Python のパッケージ約 200 MB を入れる(埋め込みモデルは入れず、有無を知らせる)。初めに 1 回。裏で動かす(モデルは呼ばない)",
-    handler: (ctx) => {
-      setupCommand(ctx).catch((err) => tell(`context-foundation: ${err?.message ?? err}`, "error"));
-    },
+    handler: handle(setupCommand),
   },
   {
     // 拡張のコマンドには引数のヒントを付けられないので、説明文の先頭に引数を書く
     name: "context-index",
     description: "[full] [<フォルダ> ...] — コードと設計文書の検索の索引(context-foundation)を作る・作り直す。初めは検索したいフォルダを並べるか、省いて一覧から選ぶ。full ですべて埋め込み直す。裏で動かす(モデルは呼ばない)",
-    handler: (ctx) => {
-      indexCommand(ctx).catch((err) => tell(`context-foundation: ${err?.message ?? err}`, "error"));
-    },
+    handler: handle(indexCommand),
   },
 ];
 const session = await joinSession(joinOptions(commands));

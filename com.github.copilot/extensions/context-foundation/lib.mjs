@@ -546,7 +546,8 @@ export function wantDialog(env, app = !runsUnderCli(env)) {
 // { tell(文, level), say(文) } を返す。
 // - タイムライン(session.log): level の無い文は Markdown として表示されるので escapeMarkdown を通す。error はそのまま出る
 // - ダイアログ: wantDialog のとき、tell の文のうち error でないものをダイアログにも出す(error はアプリでも表示される)。
-//   say(進み具合)はダイアログにしない。ダイアログは 1 つずつ出す。待たないので、コマンドは先へ進む
+//   say(進み具合)はダイアログにしない。ダイアログは 1 つずつ出す。待たないので、コマンドは先へ進む。
+//   waits はダイアログを出すか、settled() は出したダイアログがすべて閉じるのを待つ(commandHandler が使う)
 // - アプリでダイアログを出せないときは、アプリでも表示される error で出し直す
 export function makeNotifier(getSession, env) {
   const app = !runsUnderCli(env);
@@ -580,5 +581,27 @@ export function makeNotifier(getSession, env) {
       queue = p.catch(() => { });
       return p;
     },
+    waits: useDialog,
+    // 待っている間に足されたダイアログも待つ
+    settled: async () => {
+      for (let q = null; q !== queue;) {
+        q = queue;
+        await q;
+      }
+    },
+  };
+}
+
+// スラッシュコマンドのハンドラー。fn(ctx) は仕事の全体(失敗は onError で知らせる)。
+// GitHub Copilot app は、どのコマンドも待っていないダイアログが開くと、閉じた後も実行中の表示(スピナー)を続け、
+// スラッシュコマンドを使えなくする(m365 の拡張で見つけたこと)。そのため、ダイアログを出すとき(notifier.waits)は、
+// 仕事が終わり、出したダイアログがすべて閉じるまで、コマンドを終えない。
+// ダイアログを出さないとき(Copilot CLI の既定)は、これまでどおり待たずに戻り、仕事は裏で続ける
+export function commandHandler(fn, notifier, onError) {
+  return async (ctx) => {
+    const work = Promise.resolve().then(() => fn(ctx)).catch((err) => onError(err));
+    if (!notifier.waits) return;
+    await work.catch(() => { });
+    await notifier.settled();
   };
 }
