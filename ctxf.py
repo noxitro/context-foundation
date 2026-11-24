@@ -799,7 +799,7 @@ def which_on_path(name):
     return None
 
 
-# PATH の `python` で Python が起動しないときの直し方(where と setup.bat が出す)
+# PATH の `python` で Python が起動しないときの直し方(where が出す。setup.bat は同じことを日本語で書く)
 PATH_PYTHON_FIX = ("The Copilot MCP server and session hook start with `python`, so Copilot gets no search tool. "
                    "Add Python to PATH (the python.org installer has the option \"Add python.exe to PATH\").")
 STORE_ALIAS_NOTE = ("This is the Windows shortcut that offers Python from the Microsoft Store, not Python. "
