@@ -241,13 +241,65 @@ export function initSources(out) {
 
 // できた索引が keyword だけか(埋め込みモデルが無かった)。ctxf.py index のログから見る
 // ctxf.py setup のログ(model_report の行)から、埋め込みモデルがインストールされていないか。されていなければ
-// { command }(利用者が自分で取得するコマンド。[embedding] model_dir のときは "")。されている・使わない・分からない
-// ときは null
+// { command, name, about, ask }。command は利用者が自分で取得するコマンド(フォルダが決まっているときは "")、
+// name はモデルの名前、about は括弧の中(名前・ライセンス・大きさ・置き場)、ask は手元のフォルダを尋ねて
+// `model use` で覚えてよいか(作業フォルダの設定の [embedding] model_dir が置き場を決めているときは、覚えても
+// そちらが先に使われるので尋ねない)。されている・使わない・分からないときは null
 export function modelMissing(out) {
   const text = out ?? "";
-  if (!/^ {2}embedding model: not installed/m.test(text)) return null;
+  const head = text.match(/^ {2}embedding model: not installed \((.*)\)$/m);
+  if (!head) return null;
   const m = text.match(/^ {4}To use it, check the model's source and licence, then run: (.+)$/m);
-  return { command: m ? m[1].trim() : "" };
+  return {
+    command: m ? m[1].trim() : "",
+    name: head[1].split(",")[0].trim(),
+    about: head[1],
+    ask: !/in the folder set by \[embedding\] model_dir:/.test(head[1]),
+  };
+}
+
+// ---- /context-setup の、手元に置いた埋め込みモデルのフォルダを尋ねるダイアログ(取得はしない)
+
+// フォルダを書き込む欄の形。空のまま送るか、取り消すと飛ばす
+export function modelFolderSchema() {
+  return {
+    type: "object",
+    properties: {
+      folder: {
+        type: "string",
+        title: "モデルのフォルダ",
+        description: "onnx\\model.onnx(か model.onnx)と tokenizer.json の入ったフォルダ。Hugging Face のキャッシュのフォルダ" +
+          "(models--<org>--<name>)や、使う .onnx のファイルのパスでも構いません。空のままで飛ばします",
+      },
+    },
+  };
+}
+
+// ダイアログの文。missing は modelMissing の戻り値、retry は前の答えがだめだったわけ(初めは "")
+export function modelFolderPrompt(missing, retry = "") {
+  return "context-foundation: " + (retry ? `${retry}\n` : "") +
+    `埋め込みモデル(${missing.about})がありません。意味での検索(日本語や言葉での質問で、英語のコードを探すなど)に要ります。` +
+    "この PC に置いてあれば、そのフォルダを入れてください。1 回読み込んで確かめてから、この PC のすべての作業フォルダで使うように" +
+    "覚えます(写しも取得もしません)。無ければ空のまま送るか取り消すと、keyword だけの検索で続けます";
+}
+
+// ダイアログの答えから、フォルダのパス(前後の空白と囲みの引用符を外す)。無ければ ""
+export function pickedModelFolder(content) {
+  const v = content?.folder;
+  return typeof v === "string" ? v.trim().replace(/^"(.*)"$/, "$1").trim() : "";
+}
+
+// ctxf.py model use の結果(終了コードと出力)を読む。英語の result: の行と終了コードで決める。
+// { state: "saved" | "warnings" | "error", notes(「注意:」の行), detail(だめだったわけ。ログの最後の行) }
+export function modelUseResult(code, out) {
+  const text = out ?? "";
+  const notes = [...text.matchAll(/^\s*注意: (.+)$/gm)].map((m) => m[1].trim());
+  const result = text.match(/^result: (.+)$/m)?.[1] ?? "";
+  if (code === 0 && result.startsWith("saved")) return { state: "saved", notes, detail: "" };
+  if (code === 4 && result.startsWith("not saved (warnings")) return { state: "warnings", notes, detail: "" };
+  const detail = text.split(/\r?\n/).map((s) => s.trim())
+    .filter((s) => s && !s.startsWith("result: ") && !s.startsWith("モデルを読み込んで確かめます")).slice(-3).join("\n");
+  return { state: "error", notes, detail: detail || `終了コード ${code}` };
 }
 
 export const keywordOnly = (out) => /keyword\(BM25\)だけの索引を作ります|今回は keyword だけの索引になります/.test(out ?? "");
@@ -341,9 +393,10 @@ const usesLocalVenv = (cmd) => /setup\.bat|-m venv --clear \.venv/.test(cmd ?? "
 export const SETUP_HELP = `${SETUP_USAGE}
 検索に要る Python のパッケージ(PyPI から約 200 MB)を、利用者ごとの置き場に入れます。` +
   `1 回だけで済みます(済んでいれば、確かめるだけで終わります)。裏で動かし、モデルは呼びません。
-埋め込みモデル(Hugging Face の OSS)は入れません。インストールされているかと入手先を知らせるだけです。` +
-  `使ってよいかを確かめたうえで、ターミナルで ctxf.py model download を実行すると入ります(無ければ検索は keyword だけ)。
-- no-model: 埋め込みモデルの有無も知らせない
+埋め込みモデル(Hugging Face の OSS)は取得しません。無ければ、この PC に置いたモデルのフォルダをダイアログで尋ね、` +
+  `1 回読み込んで確かめてから覚えます(空のままで飛ばせます。無ければ検索は keyword だけ)。` +
+  `取得するときは、使ってよいかを確かめたうえで、ターミナルで ctxf.py model download を実行します。
+- no-model: 埋め込みモデルの有無を知らせず、フォルダも尋ねない
 - gpu: (Windows)索引づくりの埋め込みを GPU で計算する onnxruntime-directml を入れる。cpu で戻す。選び方は次の用意に引き継ぐ`;
 
 const SETUP_WORDS = { "no-model": "--no-model", gpu: "--gpu", cpu: "--cpu" };

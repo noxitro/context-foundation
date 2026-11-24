@@ -26,8 +26,8 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   chooseFallback, dataHome, failureMessage, findConfig, folderChoices, folderSchema, hasLocalVenv, indexFile, initSources, joinOptions,
-  keywordOnly, lastCwd, loadSdk, makeNotifier, modelMissing, parseProgress, parseSetupArgs, parseSetupProgress, pickedFolders, planIndex,
-  pluginRoot, progressNote, SETUP_HELP, setupFailureMessage, setupProgressNote, setupRuntimeFolder, workspaceOf,
+  keywordOnly, lastCwd, loadSdk, makeNotifier, modelFolderPrompt, modelFolderSchema, modelMissing, modelUseResult, parseProgress,
+  parseSetupArgs, parseSetupProgress, pickedFolders, pickedModelFolder, planIndex, pluginRoot, progressNote, SETUP_HELP, setupFailureMessage, setupProgressNote, setupRuntimeFolder, workspaceOf,
 } from "./lib.mjs";
 
 const { joinSession } = await loadSdk((name) => import(name));
@@ -59,10 +59,10 @@ function run(args, log, env) {
   });
 }
 
-// 出力を受け取る版(init。ctxf.py はパイプにも UTF-8 で出す)
-function runText(args) {
+// 出力を受け取る版(init・model use。ctxf.py はパイプにも UTF-8 で出す)。env を渡せば、子の環境変数をそれにする
+function runText(args, env) {
   return new Promise((done) => {
-    const p = spawn(PYTHON, ["-I", ...args], { stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
+    const p = spawn(PYTHON, ["-I", ...args], { stdio: ["ignore", "pipe", "pipe"], windowsHide: true, ...(env ? { env } : {}) });
     let out = "";
     p.stdout.setEncoding("utf8");
     p.stderr.setEncoding("utf8");
@@ -141,6 +141,47 @@ function watchProgress(log, t0, parse = parseProgress, decide = progressNote) {
 }
 
 const plugin = () => pluginRoot(dirname(fileURLToPath(import.meta.url)));
+
+// /context-setup の後で、手元に置いた埋め込みモデルのフォルダを尋ね、ctxf.py model use で確かめて覚える
+// (取得はしない。モデルは呼ばない)。ダイアログは知らせのダイアログと同じ列に並べる。
+// { state: "saved", folder, notes } か { state: "skipped", why }。ダイアログを出せないホストでは null
+const MODEL_TRIES = 3;
+async function askModelFolder(ctxf, env, missing) {
+  if (!session.capabilities?.ui?.elicitation) return null;
+  let retry = "";
+  for (let i = 0; i < MODEL_TRIES; i++) {
+    let folder;
+    try {
+      const r = await exclusive(() => session.ui.elicitation({
+        message: modelFolderPrompt(missing, retry), requestedSchema: modelFolderSchema(),
+      }));
+      folder = r.action === "accept" ? pickedModelFolder(r.content) : "";
+    } catch (err) {
+      return i ? { state: "skipped", why: `ダイアログを出せませんでした(${err?.message ?? err})` } : null;
+    }
+    if (!folder) return { state: "skipped", why: "" };
+    await say(`context-foundation: モデルを読み込んで確かめています(${folder})`);
+    let r = await runText([ctxf, "model", "use", folder], env);
+    if (r.error) return { state: "skipped", why: cannotStart(r) };
+    let u = modelUseResult(r.code, r.out);
+    if (u.state === "warnings") {
+      // 大きさが控えの値と違う(別の版・別のモデル)など。覚える前に、使うかを尋ねる
+      const ok = await exclusive(() => session.ui.confirm(
+        `context-foundation: ${folder} を確かめると、気になる点がありました。\n${u.notes.map((n) => `- ${n}`).join("\n")}\n` +
+        "このフォルダを使いますか")).catch(() => false);
+      if (!ok) {
+        retry = "前のフォルダは使いませんでした。";
+        continue;
+      }
+      r = await runText([ctxf, "model", "use", "--yes", folder], env);
+      if (r.error) return { state: "skipped", why: cannotStart(r) };
+      u = modelUseResult(r.code, r.out);
+    }
+    if (u.state === "saved") return { state: "saved", folder, notes: u.notes };
+    retry = `${folder} は使えませんでした: ${u.detail}`;
+  }
+  return { state: "skipped", why: `${MODEL_TRIES} 回とも使えませんでした(${retry})` };
+}
 
 async function indexCommand(ctx) {
   if (busy()) return;
@@ -221,6 +262,7 @@ async function setupCommand(ctx) {
   running = "用意(setup)";
   try {
     const root = plugin();
+    const ctxf = join(root, "ctxf.py");
     if (hasLocalVenv(root)) {
       await tell(`context-foundation: このプラグインは、取得したリポジトリの .venv(${join(root, ".venv")})で動いています。` +
         `用意をやり直すときは、ターミナルで次を実行してください: "${join(root, "setup.bat")}"`, "error");
@@ -245,7 +287,7 @@ async function setupCommand(ctx) {
     }
     const env = config && !process.env.CF_CONFIG ? { ...process.env, CF_CONFIG: config } : undefined;
     const stop = watchProgress(log, t0, parseSetupProgress, setupProgressNote);
-    const r = await run([join(root, "ctxf.py"), "setup", ...opts.args], log, env).finally(stop);
+    const r = await run([ctxf, "setup", ...opts.args], log, env).finally(stop);
     const sec = Math.round((Date.now() - t0) / 1000);
     if (r.error) {
       await tell(`context-foundation: ${cannotStart(r)}`, "error");
@@ -263,13 +305,29 @@ async function setupCommand(ctx) {
         ? "次に /context-index を打って、索引を作ってください。できたら、新しいセッションを始めます"
         : "次に /context-index を打ち、索引に入れるフォルダを選んでください(並べて打っても構いません。例: /context-index Engine Docs)。" +
           "できたら、新しいセッションを始めます";
-    // 埋め込みモデル(PyPI の外の OSS)は、利用者の環境で確かめてから入れるものなので、入れずに、無いことを知らせる
-    const missing = modelMissing(out);
+    // 埋め込みモデル(PyPI の外の OSS)は、利用者の環境で確かめてから入れるものなので、取得しない。
+    // 無ければ、手元に置いたフォルダを尋ねて覚える(ダイアログ)。飛ばしたら、無いことと入れ方を知らせる
+    // no-model のときは尋ねない(setup もモデルの有無を出さないが、出ていても尋ねない)
+    const missing = opts.args.includes("--no-model") ? null : modelMissing(out);
+    let picked = null;
+    if (missing?.ask) {
+      running = "埋め込みモデルのフォルダの指定";
+      picked = await askModelFolder(ctxf, env, missing);
+    }
+    const hasIndex = Boolean(config && existsSync(indexFile(config)));
     const modelNote = !missing ? ""
-      : "埋め込みモデルはインストールされていません(Hugging Face の OSS なので、setup では入れません)。" +
-        "意味での検索には要ります。入手先とライセンスを確かめ、この PC で使ってよければ、" +
-        (missing.command ? `ターミナルで次を実行してください: ${missing.command}\n` : "設定の model_dir のフォルダにモデルを置いてください。\n") +
-        "入れるまでは、検索は keyword だけです。\n";
+      : picked?.state === "saved"
+        ? `埋め込みモデルのフォルダを覚えました(${picked.folder}。この PC のすべての作業フォルダで使います)。` +
+          picked.notes.map((n) => `注意: ${n}\n`).join("") +
+          (hasIndex ? "今の索引は keyword だけのことがあります。/context-index を打つと、意味での検索が加わります。\n" : "")
+        : (picked?.why ? `モデルのフォルダは覚えていません(${picked.why})。` : "") +
+          `埋め込みモデル(${missing.name})はインストールされていません(Hugging Face の OSS なので、setup では入れません)。` +
+          "意味での検索には要ります。" +
+          (!missing.ask ? "設定の model_dir のフォルダにモデルを置いてください。\n"
+            : "この PC に置いてあれば、もう一度 /context-setup を打ってフォルダを入れるか、ターミナルで次を実行します: " +
+              `python -I "${ctxf}" model use "<フォルダ>"\n` +
+              (missing.command ? `取得するときは、入手先とライセンスを確かめ、この PC で使ってよければ、ターミナルで次を実行します: ${missing.command}\n` : "\n")) +
+          "入れるまでは、検索は keyword だけです。\n";
     await tell(`context-foundation: 用意ができました(${sec} 秒、置き場: ${setupRuntimeFolder(out) || home})。` +
       modelNote + next);
   } finally {

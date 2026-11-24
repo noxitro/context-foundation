@@ -1,8 +1,8 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "context-foundation",
-  "version": "0.4.11",
-  "description": "Local search over a large codebase and its design docs by meaning and keywords. Adds a read-only MCP search tool for finding where something is implemented or documented (from another engine's term, or a plain-language or Japanese description), a hook that tells the agent to use it before grep only in workspaces with an index, a fallback skill, a setup skill that walks the user through setup and registers an embedding model already on the PC, /context-setup to install the search's Python packages (it reports whether the embedding model is installed), and /context-index to build the index. Retrieval only; the code never leaves the PC.",
+  "version": "0.4.12",
+  "description": "Local search over a large codebase and its design docs by meaning and keywords. Adds a read-only MCP search tool for finding where something is implemented or documented (from another engine's term, or a plain-language or Japanese description), a hook that tells the agent to use it before grep only in workspaces with an index, a fallback skill, a setup skill that walks the user through setup and registers an embedding model already on the PC, /context-setup to install the search's Python packages and register the folder of an embedding model already on the PC in a dialog (it never downloads the model), and /context-index to build the index. Retrieval only; the code never leaves the PC.",
   "author": { "name": "nitro", "url": "https://github.com/noxitro" },
   "homepage": "https://github.com/noxitro/context-foundation",
   "repository": "https://github.com/noxitro/context-foundation",

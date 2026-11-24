@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   chooseFallback, dataHome, escapeMarkdown, failureMessage, findConfig, folderChoices, folderSchema, hasLocalVenv, indexFile, MAX_FOLDER_CHOICES, pickedFolders, WHOLE_WORKSPACE, initSources, joinOptions, keywordOnly, lastCwd, loadSdk, logTail,
-  makeNotifier, modelMissing, parseIndexArgs, parseProgress, parseSetupArgs, parseSetupProgress, planIndex, pluginRoot, progressNote, repairCommand,
+  makeNotifier, modelFolderPrompt, modelFolderSchema, modelMissing, modelUseResult, parseIndexArgs, pickedModelFolder, parseProgress, parseSetupArgs, parseSetupProgress, planIndex, pluginRoot, progressNote, repairCommand,
   SDK_NAMES, SETUP_HELP, setupFailureMessage, setupProgressNote, setupRuntimeFolder, splitArgs, wantDialog, workspaceOf,
 } from "./lib.mjs";
 
@@ -256,10 +256,19 @@ test("parseSetupProgress は setup のログの最後の段階を返す", () => 
 });
 
 test("modelMissing は、setup のログから埋め込みモデルが無いことと、利用者が自分で取得するコマンドを読む", () => {
-  assert.deepEqual(modelMissing(SETUP_LINES.join("\r\n")), { command: 'python -I "C:\\p\\ctxf.py" model download' });
+  const e5 = "intfloat/multilingual-e5-small, license MIT, about 487 MB, from https://huggingface.co/intfloat/multilingual-e5-small";
+  assert.deepEqual(modelMissing(SETUP_LINES.join("\r\n")),
+    { command: 'python -I "C:\\p\\ctxf.py" model download', name: "intfloat/multilingual-e5-small", about: e5, ask: true });
+  // 作業フォルダの設定の model_dir が置き場を決めている: model use で覚えても、そちらが先なので尋ねない
   const ownFolder = "  embedding model: not installed (m, license unknown, in the folder set by [embedding] model_dir: D:\\m)\n" +
     "    Setup does not install it: ...\n    To use it, put the model files in that folder.\n";
-  assert.deepEqual(modelMissing(ownFolder), { command: "" });
+  assert.deepEqual(modelMissing(ownFolder),
+    { command: "", name: "m", about: "m, license unknown, in the folder set by [embedding] model_dir: D:\\m", ask: false });
+  // model use で覚えたフォルダからファイルが無くなった: 尋ね直す
+  const moved = "  embedding model: not installed (m, license MIT, in the folder set with `model use`: D:\\old)\n" +
+    "    The model files are no longer in that folder. Check it, then run: python -I \"C:\\p\\ctxf.py\" model use \"<folder>\"\n";
+  assert.equal(modelMissing(moved).ask, true);
+  assert.equal(modelMissing(moved).command, "");
   assert.equal(modelMissing("  embedding model: installed (m, C:\\m)\n"), null);
   assert.equal(modelMissing("  embedding model: not used (embedding is off in C:\\w\\.cf\\config.toml)\n"), null);
   assert.equal(modelMissing(""), null);
@@ -390,4 +399,36 @@ test("joinOptions: コマンドを、新しい SDK の interaction.commands と�
   const o = joinOptions(commands);
   assert.equal(o.commands, commands);
   assert.equal(o.interaction.commands, commands);
+});
+
+test("モデルのフォルダのダイアログ: 形・文・答えの読み方", () => {
+  const schema = modelFolderSchema();
+  assert.equal(schema.properties.folder.type, "string");
+  assert.equal(schema.required, undefined);  // 空のまま送ると飛ばす
+  const missing = modelMissing(SETUP_LINES.join("\n"));
+  const first = modelFolderPrompt(missing);
+  assert.match(first, /^context-foundation: 埋め込みモデル\(intfloat\/multilingual-e5-small, license MIT/);
+  assert.match(first, /写しも取得もしません/);
+  assert.match(modelFolderPrompt(missing, "D:\\x は使えませんでした: 無い"), /^context-foundation: D:\\x は使えませんでした: 無い\n埋め込みモデル/);
+  assert.equal(pickedModelFolder({ folder: '  "D:\\models\\e5"  ' }), "D:\\models\\e5");
+  assert.equal(pickedModelFolder({ folder: "   " }), "");
+  assert.equal(pickedModelFolder({}), "");
+  assert.equal(pickedModelFolder(undefined), "");
+  assert.equal(pickedModelFolder({ folder: 3 }), "");
+});
+
+test("modelUseResult は model use の終了コードと result: の行で決める", () => {
+  assert.deepEqual(modelUseResult(0, "モデルを読み込んで確かめます: D:\\m\nintfloat/multilingual-e5-small のフォルダを覚えました: D:\\m\n" +
+    "  注意: C:\\w\\.cf\\config.toml の [embedding] model_dir(x)が先に使われます\nresult: saved\n"),
+  { state: "saved", notes: ["C:\\w\\.cf\\config.toml の [embedding] model_dir(x)が先に使われます"], detail: "" });
+  const warned = modelUseResult(4, "モデルを読み込んで確かめます: D:\\m\n  注意: model.onnx の大きさが違います\n確かめると…\n" +
+    "result: not saved (warnings; run again with --yes to save)\n");
+  assert.deepEqual(warned, { state: "warnings", notes: ["model.onnx の大きさが違います"], detail: "" });
+  const err = modelUseResult(2, "フォルダがありません: D:\\nope\nresult: not saved (error)\n");
+  assert.equal(err.state, "error");
+  assert.equal(err.detail, "フォルダがありません: D:\\nope");
+  // 終了コードと result: の行が合わないときは、覚えていないものとみなす
+  assert.equal(modelUseResult(0, "").state, "error");
+  assert.equal(modelUseResult(1, "result: saved\n").state, "error");
+  assert.equal(modelUseResult(null, "").detail, "終了コード null");
 });
