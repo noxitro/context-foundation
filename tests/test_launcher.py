@@ -879,6 +879,38 @@ def test_setup_bat_checks_the_venv_before_installing(monkeypatch, tmp_path):
         at = text.index(step, at + 1)                 # この順に並ぶ(見つからなければ ValueError)
 
 
+def test_setup_bat_switches_the_console_to_utf8_before_any_japanese_text():
+    """静的な検査: setup.bat は BOM の無い UTF-8 で、日本語は chcp 65001 の行より下にだけある(cmd は、chcp の後の
+    行を UTF-8 として読み直す)。どの道で終わっても、:done で始めのコード ページに戻す。"""
+    raw = (REPO / "setup.bat").read_bytes()
+    assert not raw.startswith(b"\xef\xbb\xbf")                          # BOM があると、1 行目の @echo off が壊れる
+    text = raw.decode("utf-8")
+    switch = text.index("\nchcp 65001 >nul")
+    assert all(ord(c) < 128 for c in text[:switch]), "chcp 65001 の行より前に ASCII でない文字がある"
+    assert any(ord(c) >= 128 for c in text[switch:])
+    assert "exit /b 1" not in text.split("\n:install", 1)[0]           # 本体は :done から抜ける(コード ページを戻す)
+    done = text.split("\n:done", 1)[1]
+    assert "chcp %CF_CP% >nul" in done and done.rstrip().endswith("exit /b %RC%")
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="cmd で .bat を動かすのは Windows だけ")
+def test_setup_bat_prints_japanese_in_utf8_and_puts_the_code_page_back(tmp_path):
+    """PATH に Python が無いときの setup.bat を cmd で動かす。日本語の文が UTF-8 で出て、終わった後のコード ページが
+    始めのものに戻る。写した .bat は、その場所(cd /d "%~dp0")で動く。"""
+    bat = tmp_path / "setup.bat"
+    bat.write_bytes((REPO / "setup.bat").read_bytes())
+    system32 = os.path.join(os.environ.get("SYSTEMROOT", r"C:\Windows"), "System32")
+    env = {"SYSTEMROOT": os.environ.get("SYSTEMROOT", r"C:\Windows"), "PATH": system32, "PATHEXT": ".COM;.EXE;.BAT"}
+    # 引数の並びで渡すと、引用符が \" の形になり cmd が読めないので、1 本の文字列で渡す(/s: 外側の引用符だけを外す)。
+    # ダブルクリックと同じく、コンソールを持たせる(窓は出さない)。chcp はコンソールのコード ページを変える
+    r = subprocess.run(f'cmd /d /s /c "chcp & call "{bat}" ci & chcp"', capture_output=True, env=env,
+                       cwd=tmp_path, timeout=60, creationflags=subprocess.CREATE_NO_WINDOW)
+    out = r.stdout
+    assert "Python が見つかりません".encode("utf-8") in out, out
+    pages = re.findall(rb":\s*(\d+)", out)
+    assert len(pages) >= 2 and pages[0] == pages[-1], out
+
+
 def test_a_copied_folder_runs_and_registers_its_own_code(tmp_path):
     """写したフォルダの入口は、写した先の src を読む(入れたときのフォルダの src ではなく)。"""
     copy = plugin_copy(tmp_path, with_src=True)
