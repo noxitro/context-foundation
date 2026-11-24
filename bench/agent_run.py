@@ -435,7 +435,7 @@ def run_one(args, exe: str, case: dict, trial: int, mapper: Mapper, roots: list[
     seen: set[tuple] = set()
     retrieved: list[dict] = []
     for e in rec["retrieved"] + parse_evidence(answer or "", mapper):
-        key = (e["source_id"], e["path"], e["start_line"], e["end_line"])
+        key = (e["source_id"], e["path"], e["start_line"], e["end_line"], e["origin"])
         if key not in seen:
             seen.add(key)
             retrieved.append(dict(rank=len(retrieved) + 1, **e))

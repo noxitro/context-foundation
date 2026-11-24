@@ -229,3 +229,20 @@ def test_the_claude_arms_example_names_every_claude_method_with_its_options(M):
         assert ("--lsp-command" in a["args"]) == ("lsp" in f) and ("--serena-project" in a["args"]) == ("serena" in f)
     manifest = (REPO / "MANIFEST.in").read_text(encoding="utf-8")
     assert all(n in manifest for n in ("bench/methods.py", "bench/hint_hook.py", "bench/arms.claude.example.json"))
+
+
+def test_a_cited_range_is_kept_when_the_same_range_was_opened_first(agent_run, tmp_path, monkeypatch):
+    """回答が根拠に挙げた場所(cited)は、同じ範囲を先に開いていても残す(cited だけで数え直せるように)。"""
+    cfg = load_config(write_config(tmp_path))
+    mapper = agent_run.Mapper(cfg)
+    opened = {"source_id": "engine", "path": "Audio/VoiceMixer.cpp", "start_line": 19, "end_line": 46,
+              "origin": "opened"}
+    monkeypatch.setattr(agent_run, "collect", lambda *a, **k: {
+        "answer": "x\n\nEVIDENCE:\n- engine:Audio/VoiceMixer.cpp:19-46\n", "retrieved": [opened, dict(opened)],
+        "tool_calls": 1, "tools": {"view": 1}, "returned_bytes": 0, "offloaded_results": 0, "session_id": "s"})
+    monkeypatch.setattr(agent_run.subprocess, "run", lambda *a, **k: Namespace(returncode=0, stdout="", stderr=""))
+    args = copilot_args(cfg, tmp_path, "agent_grep")
+    args.out, args.run_id, args.dry_run, args.time_limit = tmp_path / "out", "t", False, 10
+    row = agent_run.run_one(args, "copilot", {"case_id": "Q1", "question": "q"}, 1, mapper, [], None)
+    assert [(e["rank"], e["origin"]) for e in row["retrieved_evidence"]] == [(1, "opened"), (2, "cited")]
+    assert row["tools_by_name"] == {"view": 1}

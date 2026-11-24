@@ -311,7 +311,7 @@ def main() -> int:
             evidence: list[dict] = []
             for e in evidence_from_stream(raw, mapper, serena["project"] if serena else None) \
                     + ar.parse_evidence(answer, mapper):
-                key = (e["source_id"], e["path"], e["start_line"], e["end_line"])
+                key = (e["source_id"], e["path"], e["start_line"], e["end_line"], e["origin"])
                 if key not in seen:
                     seen.add(key)
                     evidence.append(dict(rank=len(evidence) + 1, **e))

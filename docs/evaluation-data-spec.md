@@ -217,8 +217,10 @@ the file changed after the index was built).
     language server) returned to the agent (`origin: "symbol_result"`);
   - each place the final answer names as evidence (`origin: "cited"`).
 
-  Drop exact duplicates and number what remains from 1. Matches that the
-  agent only saw inside grep output are not recorded.
+  Drop exact duplicates (the same range with the same `origin`) and number
+  what remains from 1. Keep a range again when it appears with another
+  origin, so that the evidence the answer cited can be counted on its own.
+  Matches that the agent only saw inside grep output are not recorded.
 
 A whole-file read overlaps every expected line in that file, so it counts as
 a passage match however much the agent had to read. Read the passage-level
