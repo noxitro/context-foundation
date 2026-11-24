@@ -272,6 +272,11 @@ python -I "<…>\ctxf.py" model use "D:\models\multilingual-e5-small"
   通しで進めます。パッケージを入れてよいかを尋ね、手元のモデルのフォルダ
   を尋ねて `model use` で覚え、索引を作るかも尋ねます(モデルは取得しま
   せん)
+- モデルの指定と索引のほかだけを済ませるときは、セッションで
+  `/context-search-install` と打ちます(skill `context-search-install`)。
+  Python のパッケージを入れ(`setup --no-model`。`gpu`・`cpu` も付けられ
+  ます)、プラグインが起動に使う PATH の `python` が動くかを確かめます。
+  実験的機能の設定は要りません
 
 モデルが無くても使えます。そのときは、keyword(BM25)だけの
 検索になります。モデルの置き場は `%LOCALAPPDATA%\context-foundation\models`
@@ -505,8 +510,9 @@ top_k = 8
 フォルダでだけ「探すときは、検索を grep より先に」と 1 文で知らせ、モデルが
 検索の道具を呼びます。MCP の道具が使えない場面のために、同じ検索を CLI で
 呼ぶ skill `context-search` と、用意を対話で進める skill
-`context-search-setup`(手元のモデルのフォルダを尋ねて覚え、索引まで進める)も入って
-います。用意をするには `/context-setup`、
+`context-search-setup`(手元のモデルのフォルダを尋ねて覚え、索引まで進める)、
+モデルと索引のほかの用意をコマンドの形でする skill `context-search-install`
+(`/context-search-install`)も入っています。用意をするには `/context-setup`、
 索引を作る・作り直すには `/context-index` と、セッションで打ちます(拡張。
 Copilot CLI の実験的機能で、`/settings experimental on` で読み込まれます)。
 
@@ -615,6 +621,7 @@ GitHub Actions では、次の 4 つを回します(`.github/workflows`)。
 | `mcp.json`、`com.github.copilot` | プラグインの MCP サーバーの定義、セッションの始めの hook、索引を作る拡張(`/context-index`) |
 | `skills/context-search` | MCP の道具が使えないときに、検索の CLI の呼び方を伝える skill |
 | `skills/context-search-setup` | 用意を、利用者に尋ねながら通しで進める skill(パッケージ、手元に置いたモデルのフォルダ、索引) |
+| `skills/context-search-install` | `/context-search-install`。モデルの指定と索引のほかの用意をする skill(パッケージ、PATH の `python` の確認) |
 | `ctxf.py` | MCP サーバー・hook・skill が呼ぶ入口 |
 | `bench` | エージェントを使う手法を Copilot CLI で回して記録する道具 |
 | `tests` | テストと、合成のコーパス |

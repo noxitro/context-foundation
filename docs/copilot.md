@@ -251,6 +251,38 @@ python -I "<プラグインのフォルダ>\ctxf.py" model use "<フォルダ>"
 モデルは取得しません(`model download` を動かさないと skill に書いて
 あります)。`/context-setup` と違い、モデルを呼ぶのでトークンを使います。
 
+### `/context-search-install`(モデルと索引のほかの用意をするコマンド)
+
+skill `context-search-install` を、セッションでコマンドとして打ちます。
+モデルの指定と索引のほかの用意をします。
+
+```text
+/context-search-install
+/context-search-install gpu
+/context-search-install cpu
+/context-search-install help
+```
+
+1. `where` で今の状態を見る(何も入れない)
+2. Python のパッケージを入れる(`setup --no-model`。`gpu`・`cpu` は
+   `--gpu`・`--cpu`)。済んでいれば、確かめるだけで終わる。リポジトリを
+   取得した人の `.venv` で動いているときと、`CF_PYTHON` を指定している
+   ときは、setup を動かさない(`.venv` は `setup.bat` で直す)
+3. プラグインの MCP サーバーと hook が起動に使う、PATH の `python` が
+   動くかを確かめる。無い、または Microsoft Store のショートカット
+   (`WindowsApps\python.exe`)なら、直し方を知らせる(PATH などの設定は
+   変えない。直すのは利用者)
+4. `where` で確かめ、済んだことと、このコマンドがしないこと(モデルの指定
+   は skill `context-search-setup` か `model use`、索引は `/context-index`
+   か `init` と `index`)を知らせる
+
+- 利用者が打ったことを、パッケージの取得(約 200 MB)の同意とみなします。
+  打たずに言葉で頼まれて skill が読まれたときは、1 回尋ねてから入れます
+- モデルの取得・指定・確認と、設定(`.cf\config.toml`)と索引づくりは
+  しません(`model download` は、頼まれても動かしません)
+- `/context-setup` と違い、拡張(実験的機能)が無くても打てます。その代わり、
+  モデルを呼ぶのでトークンを使います
+
 ### `/context-setup`(用意をするスラッシュコマンド)
 
 `/context-index` と同じ拡張が足すコマンドです。Copilot CLI のセッションで
@@ -589,6 +621,7 @@ copilot plugin install context-foundation@context-foundation
 | MCP サーバーと hook(既定) | ツールは `search` と `status` だけ。読み取り専用。hook は、索引のある作業フォルダでだけ、検索を grep より先に使うように 1 文で知らせる | プラグイン(`mcp.json` と `hooks.json`) |
 | skill(控え) | `skills/context-search`。MCP の道具が使えない場面で、検索の CLI を 1 回呼ぶ。最初の用意(setup)のしかたも、ここに書いてある | プラグイン |
 | skill(用意) | `skills/context-search-setup`。用意を、利用者に尋ねながら進める(パッケージ、手元に置いたモデルのフォルダ) | プラグイン |
+| skill(用意のコマンド) | `skills/context-search-install`。`/context-search-install` と打つと、モデルの指定と索引のほかの用意をする(パッケージ、PATH の `python` の確認) | プラグイン |
 | 拡張(`/context-setup`・`/context-index`) | 利用者が打つ、用意をするコマンドと、索引を作る・作り直すコマンド。モデルを呼ばない。Copilot CLI の実験的機能を有効にすると読み込まれる(上の「`/context-index`」) | プラグイン(`com.github.copilot\extensions`) |
 
 0.2 までは、skill と hook が既定で、MCP サーバーは追加でした。0.3 で入れ
@@ -1070,7 +1103,7 @@ Haiku 5.5、合成のコーパス、毎回空の設定フォルダ)。
   "name": "context-foundation",
   "source": { "source": "github", "repo": "noxitro/context-foundation" },
   "description": "Find code and design docs by meaning and keywords, locally.",
-  "version": "0.4.11"
+  "version": "0.4.12"
 }
 ```
 
