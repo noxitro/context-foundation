@@ -459,7 +459,15 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     _utf8_stdio()
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args, extra = parser.parse_known_args(argv)
+    # Python 3.11 の argparse は、オプションの後ろに来た省ける位置引数(`model use --model <名前> <フォルダ>` の
+    # フォルダ)を受け取らずに余りにする(3.12 からは受け取る)。その 1 つだけを、受け取ったものとして扱う
+    if (len(extra) == 1 and not extra[0].startswith("-") and getattr(args, "func", None) is cmd_model
+            and args.folder is None):
+        args.folder, extra = extra[0], []
+    if extra:
+        parser.error("unrecognized arguments: " + " ".join(extra))
     try:
         return int(args.func(args) or 0)
     except ConfigError as e:
