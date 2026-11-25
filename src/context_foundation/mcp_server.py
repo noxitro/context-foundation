@@ -32,11 +32,17 @@ from .config import MODES, ConfigError, find_config, load_config
 from .render import HARD_MAX_BYTES, status_agent, to_agent
 
 PROTOCOL_VERSIONS = ("2025-06-18", "2025-03-26", "2024-11-05")
+# 索引のある作業フォルダでの挨拶。手順は、始めの 1 文(ctxf.py の SESSION_HINT_MCP)・道具の説明・結果の終わりの
+# 文と同じ 2 つの決まりにそろえる: 質問が識別子を名指ししていれば grep が先。答える前に、同じファイルの名前を開き、
+# 足りない分だけ grep する。始めの 1 文を出さないホスト(hook が無い)は、この文だけを読む
 INSTRUCTIONS = (
-    "Call `search` first, before grepping, to find where something is implemented or documented in this workspace. "
-    "Describe what the code does in English and add identifiers you expect. It returns ranked passages with "
-    "source:path:start-end and their text, which point you to the right place; before answering, grep the names "
-    "in the passages you rely on to find related code (the other variant, the caller, the next step).")
+    "If the question already names the exact function, class or macro, grep that name first. Otherwise call "
+    "`search` first, before grepping, to find where something is implemented or documented in this workspace: "
+    "describe what the code does in English, add identifiers you expect, and keep the user's own terms when they "
+    "are not English. It returns ranked passages with source:path:start-end and their text: use them to find the "
+    "right place, not as the whole answer. Before answering, cover related code (the other variant, the caller, "
+    "the next step): each top passage lists the other names in its file ('same file also has'); open the relevant "
+    "ones, and grep only for what they do not cover.")
 # 索引の無い作業フォルダ(プラグインは利用者ごとに入るので、どの作業フォルダでもサーバーが起動する)での挨拶。
 # 検索を grep より先に呼ぶようには促さない(呼んでも、索引が無いという誤りが返るだけ)
 INSTRUCTIONS_NO_INDEX = "No context-foundation index in this workspace; search with grep."
@@ -51,16 +57,20 @@ TOOLS = [
             "Find where something is implemented or documented in this workspace. Searches a local index of the "
             "code and design docs by meaning and by keywords, and returns ranked passages as source:path:start-end "
             "with scope, signature, text and the other names in the same file. Call it before grep, unless the "
-            "question already names the exact identifier; then, before answering, check the related names that "
-            "matter."),
+            "question already names the exact identifier. Before answering, check the related names that matter. "
+            "Passages are the nearest matches, not proof that the thing exists: if none shows it, confirm with "
+            "grep."),
         "inputSchema": {
             "type": "object",
             "properties": {
                 "query": {"type": "string",
                           "description": ("What to find: what the code does, in English, plus identifiers you "
-                                          "expect (function, class or file names).")},
-                "top_k": {"type": "integer", "minimum": 1, "maximum": 20, "description": "Passages to return (8)."},
-                "mode": {"type": "string", "enum": list(MODES), "description": "Default hybrid."},
+                                          "expect (function, class or file names). Keep the user's non-English "
+                                          "terms too.")},
+                "top_k": {"type": "integer", "minimum": 1, "maximum": 20,
+                          "description": "Passages to return (workspace default, usually 8)."},
+                "mode": {"type": "string", "enum": list(MODES),
+                         "description": "Workspace default, usually hybrid."},
                 "source_id": {"type": "string", "description": "Limit to one source (see status)."},
             },
             "required": ["query"],
@@ -70,7 +80,8 @@ TOOLS = [
     },
     {
         "name": "status",
-        "description": "Index version, sources, passage counts and build time.",
+        "description": ("Source names and roots, folders left out of the index, build time. Call it before using "
+                        "source_id or when a source:path does not open."),
         "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
         "annotations": {"readOnlyHint": True, "openWorldHint": False},
     },

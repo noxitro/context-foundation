@@ -199,6 +199,10 @@ beforehand; 80% acceptable answers is the threshold):
   a comparison with grep answers from another day gave 4% and 3% lower, so
   these figures move from day to day.
 - Godot has not been measured again with version 0.4.9.
+- Version 0.4.24 rewrote the texts sent to the agent on every call (the
+  session-start hint, the MCP server instructions and the tool descriptions).
+  Both rows above were measured with the texts before that rewrite; the
+  rewritten texts have not been measured again.
 - On O3DE, a harder set of 40 questions was also written, where a full answer
   must name the lower layer, the callee or the other variant (questions and
   answer points written and checked by AI; not yet reviewed by a person).
