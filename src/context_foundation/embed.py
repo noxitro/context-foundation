@@ -27,6 +27,56 @@ class ModelUnavailable(Exception):
     """モデルが手元に無い・読めない。文面は利用者に見せる。"""
 
 
+class EmbedRunError(RuntimeError):
+    """埋め込みの計算(モデルの実行)が誤りになった。文面は、わけを 1 行にしたもの(利用者に見せる)。"""
+
+
+ERROR_TEXT_LIMIT = 500
+
+
+def error_text(e: BaseException) -> str:
+    """誤りのわけを、1 行の文にして返す。
+
+    onnxruntime は、OS が返した誤りの文を UTF-8 として読む。Windows の文は、その PC の文字コード(日本語の
+    Windows なら cp932)なので、読めずに UnicodeDecodeError になり、もとのわけが見えなくなる(DirectML の実行の
+    誤りで起きた)。そのときは、UnicodeDecodeError が持っている元のバイト列を、その PC の文字コードで読み直す。
+    """
+    raw = getattr(e, "object", None)
+    if isinstance(e, UnicodeDecodeError) and isinstance(raw, (bytes, bytearray)):
+        import locale
+        try:
+            text = bytes(raw).decode("mbcs" if os.name == "nt" else locale.getpreferredencoding(False), "replace")
+        except LookupError:
+            text = bytes(raw).decode("utf-8", "replace")
+    elif isinstance(e, EmbedRunError):
+        text = str(e)                      # すでに、わけを 1 行にしてある(型の名前は足さない)
+    else:
+        text = f"{type(e).__name__}: {e}"
+    text = " ".join(text.split())
+    if len(text) <= ERROR_TEXT_LIMIT:
+        return text
+    # 頭と末尾を残す(DirectML の誤りの文は、頭に場所、末尾に誤りの番号と OS の文が来る)
+    head = ERROR_TEXT_LIMIT // 3
+    return text[:head] + "…" + text[-(ERROR_TEXT_LIMIT - head):]
+
+
+def _why(e: BaseException) -> str:
+    """誤りのわけの 1 行目(知らせに添える短い形)。"""
+    if isinstance(e, EmbedRunError):
+        return str(e)
+    first = (str(e).strip().splitlines() or [""])[0][:200]
+    return f"{type(e).__name__}: {first}"
+
+
+def _join_reasons(reasons: list[str]) -> str:
+    """続けて起きた誤りのわけを、起きた順に並べる(同じ文は 1 度だけ)。始めのわけを、後のわけで消さない。"""
+    seen: list[str] = []
+    for r in reasons:
+        if r and r not in seen:
+            seen.append(r)
+    return " → ".join(seen)
+
+
 @dataclass(frozen=True)
 class ModelPreset:
     repo: str                      # 配布元(Hugging Face)のリポジトリ
@@ -471,8 +521,7 @@ def check_model(spec: ModelSpec) -> tuple[int, list[str]]:
     except ModelUnavailable:
         raise
     except Exception as e:
-        first = (str(e).strip().splitlines() or [""])[0][:200]
-        raise ModelUnavailable(f"モデルを読み込めませんでした({type(e).__name__}: {first})。ファイルが壊れているか、"
+        raise ModelUnavailable(f"モデルを読み込めませんでした({_why(e)})。ファイルが壊れているか、"
                                "ONNX の形ではないようです") from None
     if spec.dim and dim != spec.dim:     # 索引のベクトルの長さが合わなくなるので、--yes でも覚えない
         raise ModelUnavailable(f"埋め込みの次元が {dim} で、{spec.name} の {spec.dim} と違います。別のモデルのよう"
@@ -502,6 +551,10 @@ CPU_PROVIDER = "CPUExecutionProvider"
 # 確かめたのは DirectML だけ(onnxruntime-directml 1.24.4。docs/design.md の「GPU で計算する」)
 GPU_PROVIDERS = ("DmlExecutionProvider", "CUDAExecutionProvider")
 GPU_BATCH_SIZE = 32                # GPU では、束を大きくしたほうが速い(CPU の既定は 8)
+# 実行の誤りで GPU のセッションを作り直す回数の上限(超えたら CPU に替える)。実測の誤りは、GPU が応答しなくなる
+# もの(DXGI の 887A0006)で、OS が GPU をリセットする。画面を使っているほかのプログラムにも響くので、
+# 同じ索引づくりで何度も起こさない
+GPU_REOPEN_LIMIT = 1
 GPU_HOWTO = ("GPU で計算するには、仮想環境の onnxruntime を、GPU の実行先を持つもの(Windows なら onnxruntime-directml)"
              "に入れ替えます。手順は docs/design.md の「GPU で計算する」")
 
@@ -517,8 +570,10 @@ def gpu_provider() -> str | None:
 
 
 class OnnxEmbedder(Embedder):
-    def __init__(self, spec: ModelSpec, threads: int = 0, batch_size: int = 16, provider: str = CPU_PROVIDER):
-        import onnxruntime as ort
+    def __init__(self, spec: ModelSpec, threads: int = 0, batch_size: int = 16, provider: str = CPU_PROVIDER,
+                 cpu_batch_size: int = 0, log=None):
+        """cpu_batch_size は、GPU の実行が途中で誤りになり、やり直しても通らないときに、CPU に替えて続けるための
+        束の大きさ(0 なら、替えずに EmbedRunError で止まる)。log は、そのときの知らせの出し先。"""
         from tokenizers import Tokenizer
 
         onnx_path, tok_path = model_files(spec)
@@ -531,25 +586,45 @@ class OnnxEmbedder(Embedder):
         self.pad_id = pad_id
         tok.no_padding()
         self.tok = tok
+        self._onnx_path, self._threads = str(onnx_path), threads
+        self.cpu_batch_size, self.log = max(0, cpu_batch_size), log
+        self.gpu_reopens = 0               # GPU のセッションを作り直した回数
+        self.gpu_fallback = ""             # 途中で GPU から CPU に替えたときの、わけ(替えていなければ空)
+        self._dead = ""                    # 続けられなくなったときの文面(空でなければ、計算せずに止まる)
+        self.session = self._open_session(provider)
+        self.provider = provider
+        self.input_names = [i.name for i in self.session.get_inputs()]
+        outs = [o.name for o in self.session.get_outputs()]
+        self.output_name = "last_hidden_state" if "last_hidden_state" in outs else outs[0]
+        self._started = False              # 始めの 1 回の誤りは、作れなかったものとして呼び出し側に返す
+        self.dim = spec.dim or len(self._run(["x"])[0])
+        self._started = True
+
+    def _open_session(self, provider: str):
+        import onnxruntime as ort
         opts = ort.SessionOptions()
         opts.log_severity_level = 3
-        if threads > 0:
-            opts.intra_op_num_threads = threads
+        if self._threads > 0:
+            opts.intra_op_num_threads = self._threads
         if provider == "DmlExecutionProvider":
             # DirectML は、メモリの使い回しの最適化と並列の実行に対応していない。切らないと誤りになる(公式文書)
             opts.enable_mem_pattern = False
             opts.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
         providers = [provider] if provider == CPU_PROVIDER else [provider, CPU_PROVIDER]
-        self.session = ort.InferenceSession(str(onnx_path), sess_options=opts, providers=providers)
-        self.provider = self.session.get_providers()[0]       # 実際に使われる実行先
-        if self.provider != provider:
-            raise RuntimeError(f"{provider} を使えませんでした(使われるのは {self.provider})")
-        self.input_names = [i.name for i in self.session.get_inputs()]
-        outs = [o.name for o in self.session.get_outputs()]
-        self.output_name = "last_hidden_state" if "last_hidden_state" in outs else outs[0]
-        self.dim = spec.dim or len(self._run(["x"])[0])
+        session = ort.InferenceSession(self._onnx_path, sess_options=opts, providers=providers)
+        # onnxruntime は、GPU の実行先を始められないと、何も言わずに CPU のセッションを返す。実際の実行先を確かめる
+        used = session.get_providers()[0]
+        if used != provider:
+            raise RuntimeError(f"{provider} を使えませんでした(使われるのは {used})")
+        # onnxruntime は、実行が誤りになると、自分で CPU に替えて計算し直すことがある(誤りの型による)。替わった
+        # ことが外から分からないので、切る。実行の誤りは、下の _infer_on_gpu が受けて、知らせを出して続ける
+        if hasattr(session, "disable_fallback"):
+            session.disable_fallback()
+        return session
 
     def _run(self, texts: list[str]) -> np.ndarray:
+        if self._dead:
+            raise EmbedRunError(self._dead)
         encs = self.tok.encode_batch(texts)
         width = max(len(e.ids) for e in encs)
         ids = np.full((len(encs), width), self.pad_id, dtype=np.int64)
@@ -557,10 +632,81 @@ class OnnxEmbedder(Embedder):
         for i, e in enumerate(encs):
             ids[i, :len(e.ids)] = e.ids
             mask[i, :len(e.ids)] = 1
+        if self.provider == CPU_PROVIDER or not self._started:
+            return self._infer(ids, mask)
+        return self._infer_on_gpu(ids, mask)
+
+    def _say(self, text: str) -> None:
+        if self.log:
+            self.log(text)
+
+    def _infer_on_gpu(self, ids: np.ndarray, mask: np.ndarray) -> np.ndarray:
+        """GPU で 1 つの束を計算する。実行が誤りになったら、次の順で続ける(長い索引づくりを、1 度の誤りで
+        止めないため。実測で、5 万件のうち 4.7 万件を計算したところで、GPU が応答しなくなる誤りで止まった。
+        その後は、同じセッションでは何度やり直しても通らなかった)。
+
+        1. 同じ束を、もう一度計算する(一時的な誤り)
+        2. GPU のセッションを作り直して、もう一度計算する(GPU_REOPEN_LIMIT 回まで)
+        3. CPU に替えて、残りを計算する(cpu_batch_size が 0 なら、替えずに止まる)
+        """
+        gpu = self.provider
+        reasons: list[str] = []            # 起きた順の、誤りのわけ(始めのわけを、後のわけで消さない)
+        try:
+            return self._infer(ids, mask)
+        except EmbedRunError as e:
+            reasons.append(str(e))
+        try:
+            vec = self._infer(ids, mask)
+        except EmbedRunError as e:
+            reasons.append(str(e))
+        else:
+            self._say(f"注意: GPU({gpu})での埋め込みが誤りになりましたが、同じところをやり直して続けます"
+                      f"({_join_reasons(reasons)})")
+            return vec
+        if self.gpu_reopens < GPU_REOPEN_LIMIT:
+            self.gpu_reopens += 1
+            self.session = None                     # 前のセッションを手放してから作る(GPU のメモリを空ける)
+            try:
+                self.session = self._open_session(gpu)
+            except Exception as e:                  # セッションを作り直せない
+                reasons.append("GPU の用意のやり直し: " + error_text(e))
+            else:
+                try:
+                    vec = self._infer(ids, mask)
+                except EmbedRunError as e:
+                    reasons.append(str(e))
+                else:
+                    self._say(f"注意: GPU({gpu})での埋め込みが誤りになったので、GPU の用意をやり直して続けます"
+                              f"({_join_reasons(reasons)})")
+                    return vec
+        reason = _join_reasons(reasons)
+        if not self.cpu_batch_size:
+            raise self._stopped(f"GPU({gpu})での埋め込みが誤りになり、やり直しても通りません({reason})")
+        self.session = None
+        try:
+            self.session = self._open_session(CPU_PROVIDER)
+        except Exception as e:
+            raise self._stopped(f"GPU({gpu})での埋め込みが誤りになり({reason})、CPU にも替えられません"
+                                f"({error_text(e)})") from e
+        self.provider, self.batch_size, self.gpu_fallback = CPU_PROVIDER, self.cpu_batch_size, reason
+        self._say(f"注意: GPU({gpu})での埋め込みが誤りになり、やり直しても通らないので、残りは CPU で計算します"
+                  f"({reason})")
+        return self._infer(ids, mask)
+
+    def _stopped(self, text: str) -> EmbedRunError:
+        """続けられなくなったことを覚える(この後に呼ばれても、同じ文面で止まる。使えないセッションで計算しない)。"""
+        self._dead = text
+        return EmbedRunError(text)
+
+    def _infer(self, ids: np.ndarray, mask: np.ndarray) -> np.ndarray:
+        """1 つの束を、いまのセッションで計算する。モデルの実行の誤りは、わけを 1 行にした EmbedRunError にする。"""
         feeds = {"input_ids": ids, "attention_mask": mask}
         if "token_type_ids" in self.input_names:
             feeds["token_type_ids"] = np.zeros_like(ids)
-        out = self.session.run([self.output_name], {k: v for k, v in feeds.items() if k in self.input_names})[0]
+        try:
+            out = self.session.run([self.output_name], {k: v for k, v in feeds.items() if k in self.input_names})[0]
+        except Exception as e:
+            raise EmbedRunError(error_text(e)) from e
         if out.ndim == 3:
             if self.spec.pooling == "cls":
                 vec = out[:, 0, :]
@@ -579,8 +725,10 @@ class OnnxEmbedder(Embedder):
         order = sorted(range(len(texts)), key=lambda i: len(texts[i]))
         out = np.zeros((len(texts), self.dim), dtype=np.float32)
         done = 0
-        for s in range(0, len(order), self.batch_size):
-            idx = order[s:s + self.batch_size]
+        while done < len(order):
+            # 束の大きさは、毎回読む(GPU から CPU に替えると、計算の途中で小さくなる。始めに刻みを決めて
+            # しまうと、小さくなった後の束が、刻みの一部しか計算しない)
+            idx = order[done:done + self.batch_size]
             out[idx] = self._run([texts[i] for i in idx])
             done += len(idx)
             if progress:
@@ -680,18 +828,20 @@ def make_embedder(cfg: EmbeddingConfig, for_index: bool = False, log=None) -> Em
     try:
         if gpu is not None:
             try:
+                # 途中の誤りで CPU に替えるのは auto のときだけ(gpu と決めた人には、黙って遅くしない)
                 return OnnxEmbedder(spec, threads=cfg.threads, batch_size=max(cfg.batch_size, GPU_BATCH_SIZE),
-                                    provider=gpu)
+                                    provider=gpu, cpu_batch_size=0 if cfg.device == "gpu" else max(1, cfg.batch_size),
+                                    log=log)
             except ModelUnavailable:
                 raise
             except Exception as e:
                 if cfg.device == "gpu":
                     raise
                 if log:
-                    log(f"注意: GPU({gpu})で埋め込みを始められないので、CPU で計算します({type(e).__name__}: "
-                        f"{str(e).splitlines()[0] if str(e) else ''})")
+                    log(f"注意: GPU({gpu})で埋め込みを始められないので、CPU で計算します({_why(e)})")
         return OnnxEmbedder(spec, threads=cfg.threads, batch_size=cfg.batch_size)
     except ModelUnavailable:
         raise
     except Exception as e:   # onnxruntime が入っていない・モデルが壊れている など
-        raise ModelUnavailable(f"埋め込みモデルを読み込めません({type(e).__name__}: {e})") from e
+        raise ModelUnavailable("埋め込みモデルを読み込めません("
+                               + (str(e) if isinstance(e, EmbedRunError) else f"{type(e).__name__}: {e}") + ")") from e

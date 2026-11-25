@@ -397,6 +397,9 @@ export function failureMessage(code, out, log, setup, index = ".cf\\index.db") {
       return "この PC の用意(setup)が済んでいないか、古くなっているので、索引を作りませんでした。" + how +
         `(PyPI から約 200 MB のパッケージを取得し、数分かかります):\n${cmd}`;
     }
+    case 5:
+      return "埋め込みの計算が途中で誤りになり、索引づくりが止まりました。計算した分は残してあるので、もう一度 /context-index を" +
+        `打つと、続きから計算します(「すべて作り直す」を選ぶと、初めから計算します)。前の索引はそのまま使えます。ログ: ${log}${more}`;
     case 130:
       return `索引づくりが止められました。次の /context-index は、計算済みの埋め込みを使い回して続きから計算します。ログ: ${log}`;
     default:
@@ -622,13 +625,15 @@ export function changedText(plan) {
 // ctxf.py index のログから、埋め込みをどこで計算したか(終わりの知らせに添える)。埋め込みの行が無ければ ""
 export function embedNote(out) {
   const text = out ?? "";
-  const m = text.match(/^埋め込み: ([\d,]+) passage を計算、([\d,]+) passage を使い回し.*、(?:GPU\(([^)]+)\)|CPU、\d+ プロセス)\)\s*$/m);
+  const m = text.match(/^埋め込み: ([\d,]+) passage を計算、([\d,]+) passage を使い回し.*、(?:GPU\(([^)]+)\)(、途中から CPU)?|CPU、\d+ プロセス)\)\s*$/m);
   if (!m) return "";
   if (m[1] === "0") return m[2] === "0" ? "" : "埋め込みは、すべて前の索引から使い回しました。";
   // GPU を選んでいても、始められなければ CPU に替えて続ける(indexer の注意の行)
   const fellBack = /^注意: GPU\(.*\)で埋め込みを始められないので、CPU で計算します/m.test(text);
+  // GPU の実行が途中で誤りになり、やり直しても通らなければ、残りを CPU で計算する(埋め込みの行の終わりに出る)
+  const midway = m[4] ? "GPU での計算が途中で誤りになったので、残りは CPU で計算しました(わけはログ)。" : "";
   return `埋め込みは ${computeName(m[3] ?? "")} で計算しました(${m[1]} passage。${m[2]} passage は使い回し)。` +
-    (fellBack ? "GPU では始められなかったので、CPU に替えました(わけはログ)。" : "");
+    (fellBack ? "GPU では始められなかったので、CPU に替えました(わけはログ)。" : "") + midway;
 }
 
 // ---- /context-setup(この PC の用意。引数は取らず、ダイアログで順に尋ねてから ctxf.py setup を動かす)

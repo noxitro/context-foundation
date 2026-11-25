@@ -34,7 +34,8 @@ from . import INDEX_SCHEMA_VERSION, __version__, command_hint
 from .chunking import chunk_file
 from .chunking.base import Chunk, ChunkStats, chunk_lines
 from .config import CONFIG_DIR_NAME, Config, ConfigError
-from .embed import CPU_PROVIDER, EmbedPool, Embedder, HashEmbedder, ModelUnavailable, make_embedder
+from .embed import (CPU_PROVIDER, EmbedPool, Embedder, EmbedRunError, HashEmbedder, ModelUnavailable,
+                    make_embedder)
 from .ingest import IngestStats, SourceFile, iter_source_files, shown_path
 from .store import IndexError_, IndexWriter, load_vectors, open_readonly, read_meta, unpack_text
 from .sysinfo import peak_memory_bytes, pid_alive
@@ -50,6 +51,10 @@ class BuildError(RuntimeError):
 
 class ReplaceError(BuildError):
     """できあがった索引で、前の索引を置き換えられない。できた索引は <索引>.new に残してある。"""
+
+
+class EmbedError(BuildError):
+    """埋め込みの計算が途中で誤りになって、索引を作れない。計算した分は <索引>.partial に残してある。"""
 
 
 _LICENSE_WORDS = re.compile(r"copyright|licen[sc]e|spdx|著作権", re.IGNORECASE)
@@ -726,17 +731,29 @@ def build_index(cfg: Config, *, use_embedding: bool | None = None, embedder: Emb
                         eta = (len(missing) - done) / rate if rate else 0
                         say(f"  埋め込み中: {done:,} / {len(missing):,} passage"
                             f"({rate:.0f} 件/秒、残り 約 {eta:.0f} 秒)")
+            except EmbedRunError as e:
+                # 計算した分は、下の resume.close() が <索引>.partial に書き残す(次の索引づくりが、続きから作る)
+                # 止まったときの実行先を見る(途中で CPU に替わった後の誤りに、CPU での作り方を勧めない)
+                hint = (' GPU で続けて止まるときは、設定の [embedding] device を "cpu" にすると、CPU で計算します。'
+                        if on_gpu and getattr(emb, "provider", provider) != CPU_PROVIDER else "")
+                again = f"もう一度 `{command_hint('index')}` を実行すると、"
+                kept = (f"今回計算した {done:,} passage の埋め込みは残してあるので、{again}続きから計算します。" if done
+                        else f"{again}計算し直します(前に計算した埋め込みが残っていれば、使い回します)。")
+                raise EmbedError(f"埋め込みの計算が途中で止まりました({e})。\n{kept}{hint}") from e
             finally:
                 resume.close()
                 if pool:
                     pool.close()
             del new_keys
+            # GPU の実行が途中で誤りになり、CPU に替えて続けたか(embed.OnnxEmbedder の gpu_fallback)
+            gpu_fallback = bool(on_gpu and getattr(emb, "gpu_fallback", ""))
 
             # 3. id の順に書く
             writer.add_vectors(1, vectors, dtype)
             writer.commit()
             del vectors
             embedding_meta = dict(emb.info(), vector_dtype=dtype, workers=workers, provider=provider,
+                                  **({"provider_fallback": CPU_PROVIDER} if gpu_fallback else {}),
                                   passage_prefix=signature["passage_prefix"],
                                   query_prefix=query_signature(emb)["query_prefix"],
                                   embed_text_version=EMBED_TEXT_VERSION)
@@ -744,7 +761,8 @@ def build_index(cfg: Config, *, use_embedding: bool | None = None, embedder: Emb
             log(f"埋め込み: {len(missing):,} passage を計算、{reused:,} passage を使い回し、"
                 f"中身の無い {unembedded:,} passage は埋め込まず"
                 f"({time.time() - t_embed0:.1f} 秒、モデル {emb.name}、"
-                + (f"GPU({provider})" if on_gpu else f"CPU、{workers} プロセス") + ")")
+                + (f"GPU({provider})" + ("、途中から CPU" if gpu_fallback else "") if on_gpu
+                   else f"CPU、{workers} プロセス") + ")")
         t_embed = time.time()
         if embedding_meta is None and reuse and _had_embeddings(previous):
             if cfg.embedding.enabled and os.path.isfile(_partial_path(dest)):

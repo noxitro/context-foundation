@@ -348,8 +348,8 @@ def main(args) -> int:
     except Exception as e:
         # 索引づくりの、利用者に見せる失敗(モデルを読めない・ファイルが無い・置き換えられない)
         from .embed import ModelUnavailable
-        from .indexer import BuildError, ReplaceError
+        from .indexer import BuildError, EmbedError, ReplaceError
         if not isinstance(e, (ModelUnavailable, BuildError)):
             raise
         print(e)
-        return 1 if isinstance(e, ReplaceError) else 2
+        return 1 if isinstance(e, ReplaceError) else 5 if isinstance(e, EmbedError) else 2   # cli.cmd_index と同じ

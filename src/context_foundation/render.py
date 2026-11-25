@@ -315,6 +315,9 @@ def status_human(st: dict) -> str:
            f"  使える検索: {' / '.join(st.get('modes', []))}",
            "  埋め込みモデル: " + (f"{emb.get('model')}({emb.get('dim')} 次元、{emb.get('vector_dtype')})" if emb
                               else "なし(keyword だけ)")]
+    if emb.get("provider_fallback"):
+        # 索引づくりの途中の知らせは、--quiet では出ない。終わりの要約と status で、後からも分かるようにする
+        out.append(f"  埋め込みの計算: GPU({emb.get('provider')})の実行が途中で誤りになり、残りを CPU で計算しました")
     for s in st.get("sources", []):
         out.append(f"  source {s['id']}: {s['files']:,} ファイル / {s['chunks']:,} passage  ({s.get('root')})"
                    + (f"(索引を作ったときは {s['indexed_root']})" if s.get("indexed_root") else ""))
