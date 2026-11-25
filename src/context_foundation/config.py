@@ -201,14 +201,15 @@ def _index_file(value: str, cf_dir: Path) -> Path:
 def load_config(path: str | os.PathLike) -> Config:
     path = Path(path).resolve()
     try:
+        # 先頭の BOM は読み飛ばす(Windows のメモ帳や PowerShell 5.1 が、UTF-8 で保存すると付ける。TOML は BOM を認めない)
         with open(path, "rb") as f:
-            data = tomllib.load(f)
+            data = tomllib.loads(f.read().decode("utf-8-sig"))
     except FileNotFoundError:
         raise ConfigError(f"設定ファイルがありません: {path}") from None
     except tomllib.TOMLDecodeError as e:
         raise ConfigError(f"設定ファイルを読めません({path}): {e}") from None
     except UnicodeDecodeError:
-        raise ConfigError(f"設定ファイルが UTF-8 ではありません({path})。UTF-8(BOM なし)で保存し直してください") from None
+        raise ConfigError(f"設定ファイルが UTF-8 ではありません({path})。UTF-8 で保存し直してください") from None
     except OSError as e:
         raise ConfigError(f"設定ファイルを開けません({path}): {e.strerror or e}") from None
 

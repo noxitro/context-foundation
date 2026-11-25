@@ -12,7 +12,7 @@ import {
   setupStatus, setupSteps, SDK_NAMES, setupFailureMessage, setupProgressNote, setupRuntimeFolder, splitArgs, wantDialog, workspaceOf,
   askOneOf, CHANGE_YES, changeConfirmText, changedText, computeName, embedNote, embeddingLines, folderDefaults, folderPrompt, INDEX_BUILD, INDEX_CANCEL,
   INDEX_FOLDERS, INDEX_FULL, INDEX_UPDATE, INDEX_YES, indexConfirmText, indexMenuChoices, indexMenuText, indexState, MENU_RETRY, menuSchema, pickedAction,
-  sourcesLine, sourcesPlan,
+  folderArgs, sourcesLine, sourcesPlan,
 } from "./lib.mjs";
 
 const here = fileURLToPath(new URL(".", import.meta.url));
@@ -82,6 +82,7 @@ test("indexFile は [index] path を読む(無ければ index.db)", () => {
   assert.equal(indexFile(cfg, '[[source]]\nid = "e"\nroot = "E"\npath = "x.db"\n'), at("index.db"));  // [index] の外
   assert.equal(indexFile(cfg, '[index]\nmax_line_chars = 9000\npath = "engine.db"  # 名前を変えた\n[search]\n'), at("engine.db"));
   assert.equal(indexFile(cfg, "[ index ]\r\npath='sub/a.db'\r\n"), at(join("sub", "a.db")));
+  assert.equal(indexFile(cfg, "﻿[index]\npath = 'bom.db'\n"), at("bom.db"));   // 先頭に BOM のある設定(ctxf.py も読み飛ばす)
   assert.equal(indexFile(cfg, '[index]\npath = "a\\\\b.db"\n'), at("a\\b.db"));
   const root = tree();
   assert.equal(indexFile(join(root, "nowhere", "config.toml")), join(root, "nowhere", "index.db"));   // 読めない
@@ -145,6 +146,8 @@ test("folderSchema と pickedFolders: 複数選べる形、初めは全部選ん
   assert.deepEqual(pickedFolders({ folders: ["Engine", " \"Engine\" ", "engine\\", "Docs/", "D:\\", "D:\\"] }, names),
     ["Docs", "Engine", "D:\\"]);
   assert.deepEqual(pickedFolders(undefined, names), []);
+  // - で始まる名前は、ctxf.py がオプションと読まないように ./ を付けて渡す
+  assert.deepEqual(folderArgs(["Engine", "-old", "D:\\x", "."]), ["Engine", "./-old", "D:\\x", "."]);
   assert.match(chooseFallback("C:\\w", ["Engine", "My Docs"]), /まだ索引がありません.*ダイアログを出せないので.*\n使い方: \/context-index.*例: \/context-index Engine "My Docs"/s);
   assert.match(chooseFallback("C:\\w", []), /例: \/context-index \./);
 });
@@ -590,8 +593,25 @@ test("initSources と keywordOnly は ctxf.py の出力を読む", () => {
   assert.equal(keywordOnly(LINES.join("\n")), false);
 });
 
-test("escapeMarkdown は記号の前の \\ を二重にする", () => {
-  assert.equal(escapeMarkdown("E:\\src\\Proj\\.cf"), "E:\\src\\Proj\\\\.cf");
+test("escapeMarkdown は、Windows の絶対パスをコードの囲みに入れ、ほかの場所の記号の前の \\ を二重にする", () => {
+  // 絶対パスは、\ を二重にしない(Copilot CLI 1.0.115 は、絶対パスの \ をそのまま出すので、二重にすると 2 つ出る)
+  assert.equal(escapeMarkdown("E:\\src\\Proj\\.cf"), "`E:\\src\\Proj\\.cf`");
+  assert.equal(escapeMarkdown("できました(2 秒、E:\\ws\\.cf\\index.db)。ログ: E:\\ws\\.cf\\x.log"),
+    "できました(2 秒、`E:\\ws\\.cf\\index.db`)。ログ: `E:\\ws\\.cf\\x.log`");
+  assert.equal(escapeMarkdown("設定(E:\\ws\\.cf\\config.toml。source: app)"), "設定(`E:\\ws\\.cf\\config.toml`。source: app)");
+  // "…" で囲んだパス(コマンドの引数)は、引用符ごと囲む(囲みの両側に出る空白が、引用符の内側に入らないように)
+  assert.equal(escapeMarkdown('python -I "D:\\home\\x y\\.copilot\\ctxf.py" setup'), 'python -I `"D:\\home\\x y\\.copilot\\ctxf.py"` setup');
+  assert.equal(escapeMarkdown("\\\\srv\\share\\.cf と D:/a/.cf"), "`\\\\srv\\share\\.cf` と `D:/a/.cf`");
+  // 空白を含むパスは、\ を含む続きまでを 1 つの囲みにする(次の語に \ が無ければ、そこで終わる)
+  assert.equal(escapeMarkdown("置き場: C:\\Program Files\\cf\\.x です"), "置き場: `C:\\Program Files\\cf\\.x` です");
+  assert.equal(escapeMarkdown("E:\\ws と ws\\.cf"), "`E:\\ws` と ws\\\\.cf");
+  // 絶対パスでない場所は、これまでどおり \ を二重にする(そのままだと、\ が消える)
+  assert.equal(escapeMarkdown("相対 ws\\.cf\\index.db"), "相対 ws\\\\.cf\\index.db");
+  assert.equal(escapeMarkdown("NOTE:\\.x"), "NOTE:\\\\.x");                    // 語の途中の「E:\」は、ドライブ名ではない
+  // 元からあるコードの囲みは、そのまま残す(中にパスがあっても、囲みを足さない)
+  assert.equal(escapeMarkdown('次を実行: `python -I "E:\\p\\.x\\ctxf.py" index` と E:\\a\\.cf'),
+    '次を実行: `python -I "E:\\p\\.x\\ctxf.py" index` と `E:\\a\\.cf`');
+  assert.equal(escapeMarkdown("パスの無い文"), "パスの無い文");
 });
 
 test("wantDialog: CF_DISPLAY で切り替える。既定はアプリのときだけ", () => {
@@ -613,8 +633,8 @@ test("makeNotifier: SDK の場所が分からなければアプリとみなし�
   await n.tell("だめでした", "error");
   await n.say("進み具合");
   await new Promise((r) => setTimeout(r, 10));
-  assert.deepEqual(logs, [["できました C:\\w\\\\.cf", ""], ["だめでした", "error"], ["進み具合", ""]]);
-  assert.deepEqual(dialogs, ["できました C:\\w\\\\.cf"]);
+  assert.deepEqual(logs, [["できました `C:\\w\\.cf`", ""], ["だめでした", "error"], ["進み具合", ""]]);
+  assert.deepEqual(dialogs, ["できました `C:\\w\\.cf`"]);
 });
 
 test("makeNotifier: exclusive のダイアログを出している間の知らせのダイアログは、閉じてから出す", async () => {

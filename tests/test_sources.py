@@ -167,6 +167,39 @@ def test_set_names_the_backup_after_the_config_file(ws, capsys):
     assert (ws / ".cf" / "mine.toml.bak").is_file() and other.read_text(encoding="utf-8") == "# 別の控え\n"
 
 
+def test_a_config_saved_with_a_bom_is_read_and_keeps_its_bom(ws, capsys):
+    """Windows のメモ帳や PowerShell 5.1 は、UTF-8 で保存すると先頭に BOM を付ける。読み飛ばして読み、書き直しても残す。"""
+    bom = b"\xef\xbb\xbf"
+    assert cli_main(["init", "docs", "app"]) == 0
+    cfg = ws / ".cf" / "config.toml"
+    cfg.write_bytes(bom + cfg.read_bytes())
+    assert [s.id for s in load_config(cfg).sources] == ["docs", "app"]
+    code, state = _json(capsys, ["sources", "--json"])
+    assert code == 0 and [s["id"] for s in state["sources"]] == ["docs", "app"]
+    code, done = _json(capsys, ["sources", "--set", "docs", "engine", "--json"])
+    assert code == 0 and done["result"] == "changed"
+    assert cfg.read_bytes().startswith(bom) and not cfg.read_bytes()[3:].startswith(bom)
+    assert [s.id for s in load_config(cfg).sources] == ["docs", "engine"]
+    # UTF-8 でない設定(UTF-16 など)は、これまでどおり断る
+    cfg.write_bytes("[[source]]\nid = 'a'\nroot = 'a'\n".encode("utf-16"))
+    with pytest.raises(ConfigError, match="UTF-8 ではありません"):
+        load_config(cfg)
+
+
+def test_folders_whose_names_start_with_a_dash_are_given_with_a_dot_slash(ws, capsys):
+    """- で始まるフォルダは、オプションと読まれないように ./ を付けて渡す(/context-index の拡張は、そうして渡す)。"""
+    (ws / "-old").mkdir()
+    (ws / "-old" / "a.md").write_text("# a\n", encoding="utf-8")
+    assert cli_main(["init", "docs", "./-old"]) == 0
+    cfg = load_config(ws / ".cf" / "config.toml")
+    assert [s.root for s in cfg.sources] == [ws / "docs", ws / "-old"]
+    code, state = _json(capsys, ["sources", "--json"])
+    assert [s["root"] for s in state["sources"]] == ["docs", "-old"]
+    code, plan = _json(capsys, ["sources", "--set", "./-old", "app", "--dry-run", "--json"])
+    assert code == 0 and [s["root"] for s in plan["keep"]] == ["-old"] and [s["root"] for s in plan["remove"]] == ["docs"]
+    assert plan["add"] == [{"id": "app", "root": "app"}]
+
+
 def test_set_keeps_a_source_rooted_at_a_link_when_its_target_is_chosen(ws, tmp_path, capsys):
     """ジャンクションを root にした source を、その先の絶対パスで選んでも、外して足し直さない(exclude を失わない)。"""
     target = tmp_path / "elsewhere" / "Engine"

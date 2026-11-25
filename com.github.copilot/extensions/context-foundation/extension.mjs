@@ -40,7 +40,7 @@ import {
   modelNotUsedReason, REINDEX_AFTER_MODEL, setupStartText, setupSteps, splitArgs, workspaceOf,
   AFTER_SETUP_NO, AFTER_SETUP_YES, askOneOf, CHANGE_YES, changeConfirmText, changedText, computeName, embedNote, folderDefaults, folderPrompt,
   INDEX_BUILD, INDEX_CANCEL, INDEX_FULL, INDEX_NO, INDEX_UPDATE, INDEX_YES, indexConfirmText, indexMenuChoices, indexMenuText, indexState,
-  logTail, MENU_RETRY, menuSchema, pickedAction, sourcesPlan,
+  folderArgs, logTail, MENU_RETRY, menuSchema, pickedAction, sourcesPlan,
 } from "./lib.mjs";
 
 const { joinSession } = await loadSdk((name) => import(name));
@@ -186,7 +186,7 @@ async function askModelFolder(ctxf, env, missing, first = "") {
 // 設定を作る(ctxf.py init)。作れたら、始めの知らせに添える文。作れなければ、わけを知らせて null
 async function makeConfig(ctxf, setup, ws, folders) {
   // 用意ができていなければ、入口が init の前に 4 で終わる(設定は作らない)
-  const r = await runText([ctxf, "init", "--workspace", ws, ...folders]);
+  const r = await runText([ctxf, "init", "--workspace", ws, ...folderArgs(folders)]);
   if (r.code !== 0) {
     await tell(`context-foundation: ${r.error ? cannotStart(r)
       : r.code === 4 ? failureMessage(4, r.out, "", setup)
@@ -295,7 +295,7 @@ async function askExistingIndex(ctxf, config, ws, state, lead) {
     if (r.action !== "accept") return null;
     const folders = pickedFolders(r.content, all);
     if (!folders.length) return null;
-    const dry = await runText([ctxf, "sources", "--config", config, "--set", ...folders, "--dry-run", "--json"]);
+    const dry = await runText([ctxf, "sources", "--config", config, "--set", ...folderArgs(folders), "--dry-run", "--json"]);
     if (dry.error) return { error: cannotStart(dry) };
     const plan = sourcesPlan(dry.out);
     if (!plan) return { error: `検索するフォルダを替えられません: ${logTail(dry.out, 2) || `終了コード ${dry.code}`}` };
@@ -374,7 +374,7 @@ async function indexFlow(args) {
     made = await makeConfig(ctxf, setup, ws, plan.folders);
     if (made === null) return;
   } else if (plan.action === "change") {
-    const r = await runText([ctxf, "sources", "--config", config, "--set", ...plan.folders, "--json"]);
+    const r = await runText([ctxf, "sources", "--config", config, "--set", ...folderArgs(plan.folders), "--json"]);
     const done = r.error ? null : sourcesPlan(r.out);
     if (!done) {
       await tell(`context-foundation: ${r.error ? cannotStart(r)

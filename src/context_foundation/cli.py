@@ -316,10 +316,12 @@ def cmd_sources(args) -> int:
               "backup": str(backup) if changed else ""}
     if changed:
         old_bytes = path.read_bytes()
-        new_text = _rewritten_config(path, old_bytes.decode("utf-8"), keep, add)     # --dry-run でも確かめる
+        # 先頭の BOM(load_config は読み飛ばす)は、付いていれば付けたまま書く
+        bom = b"\xef\xbb\xbf" if old_bytes.startswith(b"\xef\xbb\xbf") else b""
+        new_text = _rewritten_config(path, old_bytes[len(bom):].decode("utf-8"), keep, add)     # --dry-run でも確かめる
         if not args.dry_run:
             backup.write_bytes(old_bytes)
-            path.write_bytes(new_text.encode("utf-8"))
+            path.write_bytes(bom + new_text.encode("utf-8"))
             try:
                 load_config(path)                # 書いたものが読めることを確かめる
             except ConfigError:

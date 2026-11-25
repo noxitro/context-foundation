@@ -216,6 +216,10 @@ export function pickedFolders(content, names) {
   return picked;
 }
 
+// ctxf.py init・sources --set に渡すフォルダの並び。- で始まる名前は、オプションと読まれないように ./ を付ける
+// (相対パスは作業フォルダから数えるので、同じフォルダを指す)
+export const folderArgs = (folders) => folders.map((f) => (f.startsWith("-") ? `./${f}` : f));
+
 // ダイアログを出せないときの文(並べて打つ例に、候補のフォルダを使う)
 export function chooseFallback(ws, names) {
   const example = names.length ? names.slice(0, 3).map((n) => (/\s/.test(n) ? `"${n}"` : n)).join(" ") : ".";
@@ -889,9 +893,33 @@ export async function loadSdk(load, names = SDK_NAMES) {
 // @github/copilot-sdk は commands。どちらの SDK も、知らない方の置き場は読まないので、両方に同じものを置く
 export const joinOptions = (commands) => ({ commands, interaction: { commands } });
 
-// ふつうの(level の無い)session.log は Markdown として表示され、\ の後ろが記号だと \ が消える
-// (E:\src\Proj\.cf が E:\src\Proj.cf と出る)。その \ を二重にする。error の表示はそのまま出るので通さない
-export const escapeMarkdown = (s) => s.replace(/\\(?=[!-/:-@[-`{-~])/g, "\\\\");
+// ふつうの(level の無い)session.log は Markdown として表示され、\ の後ろが記号だと \ が消える(ws\.cf が ws.cf と
+// 出る)。ただし Copilot CLI 1.0.115 は、ドライブ名で始まる絶対パスだけは \ をそのまま出す(そこで \ を二重にすると、
+// E:\ws\\.cf と 2 つ出る)。どちらの読み方でもそのまま出るように、Windows の絶対パスはコードの囲み(`…`)に入れ
+// (囲みの中は、どの版も文字どおりに出す)、ほかの場所の \ は、これまでどおり二重にする。元からある囲みの中は
+// 触らない。error の表示はそのまま出るので通さない
+// パスの並び: ドライブ名か \\ で始まり、空白・引用符・括弧・全角の句読点と括弧の手前まで。空白 1 つの後ろに、
+// \ を含む続きがあれば(C:\Program Files\x のような、空白を含むパス)、そこまでを 1 つの囲みにする
+// "…" で囲んだパス(コマンドの引数)は、引用符ごと囲みに入れる(Copilot CLI は囲みの両側に空白を出すので、引用符の
+// 内側に囲みを置くと、写したコマンドのパスの前後に空白が入る)
+const PATH_CHAR = "[^\\s`\"'<>|*?()、。「」()]";
+const PATH_START = "(?:[A-Za-z]:[\\\\/]|\\\\\\\\(?=[^\\\\\\s]))";
+const PATH_RUN = new RegExp(
+  `"${PATH_START}[^"\`\\n]*"|(?<![A-Za-z0-9\`])${PATH_START}${PATH_CHAR}*(?: (?=${PATH_CHAR}*\\\\)${PATH_CHAR}+)*`, "g");
+const doubleBackslash = (s) => s.replace(/\\(?=[!-/:-@[-`{-~])/g, "\\\\");
+export function escapeMarkdown(s) {
+  const outside = (text) => {
+    let out = "";
+    let last = 0;
+    for (const m of text.matchAll(PATH_RUN)) {
+      out += doubleBackslash(text.slice(last, m.index)) + "`" + m[0] + "`";
+      last = m.index + m[0].length;
+    }
+    return out + doubleBackslash(text.slice(last));
+  };
+  // 元からあるコードの囲み(ctxf.py の文にある `ctxf.py index` など)は、そのまま残す
+  return s.split(/(`[^`\n]*`)/).map((part, i) => (i % 2 ? part : outside(part))).join("");
+}
 
 // パスを比べられる形にする(\\?\ を外す・/ を \ に・末尾の \ を外す・小文字に)。在る場所なら実体に揃える。空なら ""
 export function pathKey(p) {
