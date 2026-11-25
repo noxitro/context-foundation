@@ -532,11 +532,8 @@ def main() -> int:
         args.serena = {"project": project, "command": args.serena_command, "env": env}
         parts = []
         if "cf_mcp" in f and not args.no_hint:
-            p = subprocess.run([sys.executable, "-I", str(REPO / "ctxf.py"), "session-hint", "--mcp"],
-                               input=json.dumps({"cwd": str(args.workspace)}), capture_output=True, text=True,
-                               encoding="utf-8", env=dict(os.environ, CF_PYTHON=sys.executable), timeout=60)
-            if p.stdout.strip():
-                parts.append(json.loads(p.stdout)["additionalContext"])
+            # agent_cf_mcp の hook と同じ 1 文(索引の古さの 1 文は足さない。1 文が出なければ止める)
+            parts.append(M.session_hint(sys.executable, REPO / "ctxf.py", args.workspace))
         parts.append(M.serena_prompt(project, "copilot-cli", args.serena_command, dict(os.environ, **env),
                                      args.out / "serena-prompt-copilot.txt"))
         args.hint_file = args.out / f"hint-{args.method}.txt"

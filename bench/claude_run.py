@@ -13,6 +13,7 @@
   道具 LSP(--lsp-command で渡す言語サーバーを、この回だけのプラグインにして渡す)、Serena の MCP サーバー
 - この道具を足す手法では、Copilot の sessionStart の hook と同じ 1 文(ctxf.py session-hint --mcp)を、
   Serena を足す手法では、Serena 自身の始めの指示(print-system-prompt)を、システムプロンプトに足す
+  (--append-system-prompt-file で、ファイルにして渡す)
 - Claude Code は、クラウドのセッション(claude.ai の Claude Code)の中では、プラグインの言語サーバーを
   起動しない。LSP の手法は、手元の PC で流す
 - 質問の文は標準入力から渡す(Windows の claude.cmd は、改行を含む引数を正しく渡せない)
@@ -27,7 +28,6 @@ import argparse
 import importlib.util
 import json
 import os
-import shlex
 import subprocess
 import sys
 import time
@@ -64,10 +64,11 @@ def mcp_servers(method: str, python: str, workspace: Path, serena: dict | None) 
     return servers
 
 
-def build_command(exe: str, method: str, model: str, roots: list[Path], mcp_file: Path, prompt: str,
+def build_command(exe: str, method: str, model: str, roots: list[Path], mcp_file: Path, prompt_file: Path | None,
                   plugin: Path | None = None) -> list[str]:
-    """claude -p の引数(質問の文は標準入力から渡すので、ここには入れない)。prompt は、システムプロンプトに足す文
-    (この道具の始めの 1 文と、Serena の始めの指示)。"""
+    """claude -p の引数(質問の文は標準入力から渡すので、ここには入れない)。prompt_file は、システムプロンプトに
+    足す文(この道具の始めの 1 文と、Serena の始めの指示)のファイル。文は引数でなくファイルで渡す(Serena の指示は
+    複数行で、Windows の claude.cmd は、改行を含む引数の改行より後ろを、続く引数ごと落とす)。"""
     f = M.features(method)
     tools = list(TOOLS) + (["LSP"] if "lsp" in f else [])
     cmd = [exe, "-p", "--model", model, "--setting-sources", "", "--tools", ",".join(tools),
@@ -78,8 +79,8 @@ def build_command(exe: str, method: str, model: str, roots: list[Path], mcp_file
         allowed += [f"mcp__{MCP_NAME}__search", f"mcp__{MCP_NAME}__status"]
     if "serena" in f:
         allowed.append(f"mcp__{M.SERENA_NAME}")
-    if prompt:
-        cmd += ["--append-system-prompt", prompt]
+    if prompt_file:
+        cmd += ["--append-system-prompt-file", str(prompt_file)]
     if "lsp" in f:
         if plugin is None:
             raise SystemExit(f"{method} には --lsp-command(言語サーバーのコマンド)が要ります")
@@ -242,6 +243,8 @@ def main() -> int:
     if not args.yes and not args.dry_run:
         print(f"{args.method}: {len(cases)} 件 × {args.trials} 回。Claude Code の利用枠を使います。--yes で実行します")
         return 2
+    # claude は作業フォルダで動かすので、MCP の設定やシステムプロンプトのファイルの場所は、絶対パスで渡す
+    args.out = args.out.resolve()
     args.out.mkdir(parents=True, exist_ok=True)
     results = args.out / "results.jsonl"
     done = set()
@@ -252,13 +255,7 @@ def main() -> int:
     f = M.features(args.method)
     hints: list[str] = []
     if "cf_mcp" in f:
-        p = subprocess.run([args.python, "-I", str(REPO / "ctxf.py"), "session-hint", "--mcp"], capture_output=True,
-                           input=json.dumps({"cwd": str(cfg.workspace)}), text=True, encoding="utf-8",
-                           env=dict(os.environ, CF_PYTHON=args.python, CF_INDEX_AGE_WARN_DAYS="0"), timeout=60)
-        hint = json.loads(p.stdout)["additionalContext"] if p.stdout.strip() else ""
-        if not hint:
-            raise SystemExit("始めの 1 文が取れません(索引が見つからない?)")
-        hints.append(" ".join(hint.split()))
+        hints.append(" ".join(M.session_hint(args.python, REPO / "ctxf.py", cfg.workspace).split()))
     serena = None
     if "serena" in f:
         project = (args.serena_project or (roots[0] if len(roots) == 1 else cfg.workspace)).resolve()
@@ -274,15 +271,18 @@ def main() -> int:
     if "lsp" in f:
         if not args.lsp_command:
             raise SystemExit(f"{args.method} には --lsp-command(言語サーバーのコマンド)が要ります")
-        plugin = M.lsp_plugin(args.out / "lsp-plugin", shlex.split(args.lsp_command))
+        plugin = M.lsp_plugin(args.out / "lsp-plugin", M.split_command(args.lsp_command))
     mcp_file = args.out / f"mcp-{args.method}.json"
     mcp_file.write_text(json.dumps({"mcpServers": mcp_servers(args.method, args.python, cfg.workspace, serena)}),
                         encoding="utf-8")
     exe = "claude.cmd" if os.name == "nt" else "claude"
-    cmd = build_command(exe, args.method, args.model, roots, mcp_file, "\n\n".join(hints), plugin)
+    prompt_file = None
+    if hints:
+        prompt_file = args.out / f"system-prompt-{args.method}.txt"
+        prompt_file.write_text("\n\n".join(hints), encoding="utf-8")
+    cmd = build_command(exe, args.method, args.model, roots, mcp_file, prompt_file, plugin)
     if args.dry_run:
-        shown = [c if not (i and cmd[i - 1] == "--append-system-prompt") else f"<{len(c)} 文字>" for i, c in enumerate(cmd)]
-        print(json.dumps({"cwd": str(cfg.workspace), "cmd": shown,
+        print(json.dumps({"cwd": str(cfg.workspace), "cmd": cmd,
                           "mcp": json.loads(mcp_file.read_text(encoding="utf-8"))}, ensure_ascii=False, indent=1))
         return 0
     (args.out / "logs").mkdir(exist_ok=True)

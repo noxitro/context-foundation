@@ -18,6 +18,7 @@ print-system-prompt が出すもの)。書き込みの道具を外すモード p
 from __future__ import annotations
 
 import json
+import os
 import re
 import shlex
 import subprocess
@@ -62,6 +63,30 @@ def described_tools(method: str, base: list[str], cf_name: str = "context-founda
         + ([f"mcp:{SERENA_NAME}"] if "serena" in f else [])
 
 
+# --- コマンドの文字列と、この道具の始めの 1 文 ---
+
+def split_command(command: str, windows: bool | None = None) -> list[str]:
+    r"""--serena-command や --lsp-command の文字列を、引数に分ける。Windows では、shlex の POSIX の規則は
+    \ を消す(C:\tools\clangd.exe が C:toolsclangd.exe になる)ので、\ を残して分け、囲みの引用符だけを外す。"""
+    if not (os.name == "nt" if windows is None else windows):
+        return shlex.split(command)
+    return [w[1:-1] if len(w) >= 2 and w[0] == w[-1] and w[0] in "\"'" else w
+            for w in shlex.split(command, posix=False)]
+
+
+def session_hint(python: str, entry: Path, workspace: Path) -> str:
+    """この道具の始めの 1 文(ctxf.py session-hint --mcp。Copilot の sessionStart の hook と同じもの)。
+    索引の古さの 1 文は足さない(足すと、索引の日付で文面が変わり、手法どうし・回どうしで比べられなくなる)。
+    索引が見つからず 1 文が出ないときは止める(黙って省くと、1 文を足した手法として記録される)。"""
+    p = subprocess.run([python, "-I", str(entry), "session-hint", "--mcp"], input=json.dumps({"cwd": str(workspace)}),
+                       capture_output=True, text=True, encoding="utf-8",
+                       env=dict(os.environ, CF_PYTHON=python, CF_INDEX_AGE_WARN_DAYS="0"), timeout=60)
+    hint = json.loads(p.stdout)["additionalContext"] if p.stdout.strip() else ""
+    if not hint:
+        raise SystemExit("始めの 1 文が取れません(索引が見つからない?)")
+    return hint
+
+
 # --- Serena ---
 
 def serena_project_ok(project: Path) -> bool:
@@ -77,7 +102,7 @@ def serena_setup_hint(project: Path, command: str = SERENA_COMMAND) -> str:
 
 def serena_server(project: Path, context: str, command: str = SERENA_COMMAND) -> list[str]:
     """Serena の MCP サーバー(stdio)を起こすコマンド。"""
-    cmd = shlex.split(command) + ["start-mcp-server", "--project", str(project), "--context", context]
+    cmd = split_command(command) + ["start-mcp-server", "--project", str(project), "--context", context]
     for m in SERENA_MODES:
         cmd += ["--mode", m]
     return cmd + ["--enable-web-dashboard", "False", "--open-web-dashboard", "False", "--log-level", "WARNING"]
@@ -87,7 +112,7 @@ def serena_prompt(project: Path, context: str, command: str, env: dict, cache: P
     """Serena 自身の始めの指示(print-system-prompt)。流しの間は同じものを使うので、cache に置く。"""
     if cache.is_file():
         return cache.read_text(encoding="utf-8")
-    cmd = shlex.split(command) + ["print-system-prompt", str(project), "--context", context]
+    cmd = split_command(command) + ["print-system-prompt", str(project), "--context", context]
     for m in SERENA_MODES:
         cmd += ["--mode", m]
     p = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", env=env, timeout=600)

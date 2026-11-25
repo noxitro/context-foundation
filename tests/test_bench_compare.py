@@ -95,15 +95,15 @@ def test_interleave_rotates_the_order(tmp_path):
 def test_claude_run_command_restricts_tools_and_settings(tmp_path):
     cr = _load("claude_run")
     cmd = cr.build_command("claude", "agent_cf_mcp", "haiku", [Path("D:/src")], tmp_path / "m.json",
-                           "Use the search tool first.")
+                           tmp_path / "system-prompt.txt")
     assert cmd[cmd.index("--setting-sources") + 1] == ""          # 利用者の設定と指示のファイルを読ませない
     assert "--strict-mcp-config" in cmd and "--bare" not in cmd
-    assert cmd[cmd.index("--append-system-prompt") + 1] == "Use the search tool first."
+    assert cmd[cmd.index("--append-system-prompt-file") + 1] == str(tmp_path / "system-prompt.txt")
     allowed = cmd[cmd.index("--allowedTools") + 1].split(",")
     assert "mcp__context-foundation__search" in allowed and "Bash" not in allowed
     # 既存の手順は、MCP サーバーの無い設定(手法ごとのファイル)を渡し、始めの文を足さない
-    grep = cr.build_command("claude", "agent_grep", "haiku", [], tmp_path / "e.json", "")
-    assert "--append-system-prompt" not in grep and grep[grep.index("--mcp-config") + 1].endswith("e.json")
+    grep = cr.build_command("claude", "agent_grep", "haiku", [], tmp_path / "e.json", None)
+    assert "--append-system-prompt-file" not in grep and grep[grep.index("--mcp-config") + 1].endswith("e.json")
     assert cr.mcp_servers("agent_grep", "py", tmp_path, None) == {}
     raw = "\n".join(json.dumps(e) for e in [
         {"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Grep"}]}},
