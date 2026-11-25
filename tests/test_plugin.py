@@ -60,10 +60,10 @@ def test_reporting_sections_ask_to_mask_the_paths_of_the_where_output():
 
 
 def test_documented_index_exit_codes_match_the_code():
-    # 無人で流す index の終了コードの説明に、コードが返す値がすべてある(用意ができていない 4 を含む)
+    # 無人で流す index の終了コードの説明に、コードが返す値がすべてある(用意ができていない 4、埋め込みが止まった 5 を含む)
     from context_foundation import cli
     import re
-    codes = {0, 1, cli.EXIT_USAGE, cli.EXIT_NO_INDEX, 4, 130}
+    codes = {0, 1, cli.EXIT_USAGE, cli.EXIT_NO_INDEX, 4, cli.EXIT_EMBED_FAILED, 130}
     for name, heading in (("readme-ja.md", "コマンド"), ("docs/copilot.md", "索引を更新する")):
         part = _section((REPO / name).read_text(encoding="utf-8"), heading)
         para = part[part.index("終了コードは"):].split("\n\n", 1)[0]

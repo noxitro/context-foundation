@@ -209,6 +209,8 @@ test("failureMessage は終了コードごとに、わけと次にすること�
   assert.match(failureMessage(1, "", log, "S"), /index\.db\.new/);
   assert.match(failureMessage(1, "", log, "S", join("W", ".cf", "engine.db")), /engine\.db\.new に/);
   assert.match(failureMessage(130, "", log, "S"), /続きから/);
+  assert.match(failureMessage(5, "a\n埋め込みの計算が途中で止まりました(887A0005)。\n", log, "S"),
+    /埋め込みの計算が途中で誤りになり.*続きから計算します\(「すべて作り直す」を選ぶと、初めから計算します\)。前の索引はそのまま使えます。.*887A0005/s);
   assert.match(failureMessage(7, "", log, "S"), /終了コード 7/);
   assert.equal(logTail("1\n\n2\n3\n4\n5\n"), "2\n3\n4\n5");
 });
@@ -461,6 +463,10 @@ test("embedNote は、索引づくりのログから、埋め込みをどこで�
   // GPU を選んでいても、始められなければ CPU に替えて続ける。そのことを言う
   assert.match(embedNote("注意: GPU(DmlExecutionProvider)で埋め込みを始められないので、CPU で計算します(RuntimeError: x)\n" + cpu),
     /CPU で計算しました.*GPU では始められなかったので、CPU に替えました\(わけはログ\)。$/);
+  // GPU の実行が途中で誤りになり、残りを CPU で計算したときも、そのことを言う
+  assert.equal(embedNote(gpu.replace("GPU(DmlExecutionProvider))", "GPU(DmlExecutionProvider)、途中から CPU)")),
+    "埋め込みは GPU(DirectML) で計算しました(1,234 passage。70,000 passage は使い回し)。" +
+    "GPU での計算が途中で誤りになったので、残りは CPU で計算しました(わけはログ)。");
   assert.equal(embedNote(gpu.replace("1,234 passage を計算", "0 passage を計算")), "埋め込みは、すべて前の索引から使い回しました。");
   // 計算も使い回しも 0(埋め込む passage が無い)なら、何も言わない
   assert.equal(embedNote(cpu.replace("50 passage を計算", "0 passage を計算")), "");

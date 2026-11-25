@@ -32,7 +32,7 @@ class FakeOnnx:
     made: list[tuple[str, int]] = []
     broken: set[str] = set()
 
-    def __init__(self, spec, threads=0, batch_size=16, provider=embed.CPU_PROVIDER):
+    def __init__(self, spec, threads=0, batch_size=16, provider=embed.CPU_PROVIDER, cpu_batch_size=0, log=None):
         if provider in self.broken:
             raise RuntimeError("the driver is too old\nmore detail")
         self.provider, self.batch_size = provider, batch_size

@@ -23,6 +23,9 @@ from . import __version__, command_hint
 from .config import MODES, ConfigError, find_config, load_config
 
 EXIT_USAGE, EXIT_NO_INDEX = 2, 3
+# index: 埋め込みの計算が途中で誤りになって止まった(計算した分は残してあり、もう一度流すと続きから計算する)。
+# 4 は、入口 ctxf.py が「用意が済んでいない」に使う
+EXIT_EMBED_FAILED = 5
 # serve が、要るパッケージを読めずに終わったとき(入口 ctxf.py の VENV_IMPORT_FAILED と同じ値。入口はこれを見て、
 # 道具を出さないサーバーとして答え直す)
 EXIT_IMPORT_FAILED = 104
@@ -61,7 +64,7 @@ def _load(args):
 
 def cmd_index(args) -> int:
     from .embed import ModelUnavailable, download_model, resolve_model
-    from .indexer import BuildError, ReplaceError, build_index
+    from .indexer import BuildError, EmbedError, ReplaceError, build_index
 
     cfg = _load(args)
     use_embedding = False if args.no_embed else None
@@ -76,6 +79,9 @@ def cmd_index(args) -> int:
     except ReplaceError as e:            # 設定の誤りではない(開いているプログラムを閉じれば通る)
         sys.stderr.write(f"{e}\n")
         return 1
+    except EmbedError as e:              # 設定の誤りではない(もう一度流すと、続きから計算する)
+        sys.stderr.write(f"{e}\n")
+        return EXIT_EMBED_FAILED
     except BuildError as e:
         sys.stderr.write(f"{e}\n")
         return EXIT_USAGE
