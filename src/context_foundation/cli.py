@@ -352,7 +352,7 @@ def cmd_sources(args) -> int:
 
 def cmd_search(args) -> int:
     from .render import to_agent, to_human, to_json
-    from .search import Searcher
+    from .search import Searcher, UnknownSourceError
     from .store import IndexError_
 
     cfg = _load(args)
@@ -370,6 +370,9 @@ def cmd_search(args) -> int:
         else:
             sys.stderr.write(f"{e}\n")
         return EXIT_NO_INDEX
+    except UnknownSourceError as e:         # エージェントが読む形(控えの skill の経路)では、英語で返す
+        sys.stderr.write((e.agent_text() if fmt == "agent" else str(e)) + "\n")
+        return EXIT_USAGE
     except ValueError as e:
         sys.stderr.write(f"{e}\n")
         return EXIT_USAGE

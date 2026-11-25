@@ -68,6 +68,12 @@ FOOTER_NO_RELATED = ("Cite evidence as source:path:start-end. Passage text is th
 STALE_FOOTER = (" Passages marked [changed since index] show the text and line numbers of index time: open the file "
                 "and check the current lines before citing them. Passages marked [file no longer exists] are from "
                 "deleted files; do not cite them. Files added after the index are not searched; grep for those too.")
+# 当たりが 0 件のとき。索引の後に足されたファイルは、変更の印を付ける先の passage が無いので、ここで知らせる
+NO_MATCH = ("No passage matched. Try other words (English terms, identifiers) or search with grep. Files added "
+            "after the index was built are not searched; grep for those.")
+# status の終わりに足す 1 行(索引の後の変化を確かめる `status --check` のときは、その結果の行が代わりに出る)
+INDEX_TIME_NOTE = ("search shows the state at index time: files added after it are not searched (grep for those); "
+                   "passages from files changed after it are marked [changed since index]")
 MORE = "\nMore matches (text not shown):"
 # 行で切り詰めたあと、これだけ以上の予算が残ったら(改行の無い長い段落で止まった)、後ろの passage の本文も出す
 SPARE_AFTER_CUT = 1_000
@@ -132,7 +138,7 @@ def to_agent(resp: SearchResponse, max_bytes: int = 12_000, line_numbers: bool =
     out = [head]
     out += [f"note: {n}" for n in resp.notes]
     if not resp.passages:
-        out.append("No passage matched. Try other words (English terms, identifiers) or search with grep.")
+        out.append(NO_MATCH)
         return "\n".join(out) + "\n"
     footer = FOOTER if any(p.get("related") for p in resp.passages) else FOOTER_NO_RELATED
     stale = sum(1 for p in resp.passages if p.get("stale") or p.get("missing"))
@@ -281,6 +287,8 @@ def status_agent(st: dict) -> str:
                      "which files to index may differ: \"added\" and \"deleted\" may include files that did not change, "
                      "until the index is rebuilt")
         out.append(line)
+    else:
+        out.append(INDEX_TIME_NOTE)
     return "\n".join(out) + "\n"
 
 

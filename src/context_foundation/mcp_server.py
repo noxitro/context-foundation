@@ -197,6 +197,7 @@ def call_tool(state: _State, name: str, args: dict) -> tuple[bool, str]:
 
 
 def _call_tool(state: _State, name: str, args: dict) -> tuple[bool, str]:
+    from .search import UnknownSourceError, short_repr
     from .store import IndexError_
     try:
         cfg, searcher = state.searcher()
@@ -215,8 +216,16 @@ def _call_tool(state: _State, name: str, args: dict) -> tuple[bool, str]:
         if top_k is not None and (isinstance(top_k, bool) or not isinstance(top_k, int)):
             return True, "`top_k` must be an integer."
         mode = args.get("mode")
+        # 道具の定義の enum を確かめないホストもある。エージェントが読む誤りの文は、英語で返す
+        if mode not in (None, "") and mode not in MODES:
+            return True, (f"`mode` must be one of {', '.join(MODES)} (got {short_repr(mode)}). "
+                          "Omit it to use the workspace default.")
         source = args.get("source_id")
-        sources = [source] if isinstance(source, str) and source else None
+        # 文字列でない値(配列など)を黙って捨てると、絞れたつもりで、全部の source の結果を読むことになる
+        if source is not None and not isinstance(source, str):
+            return True, (f"`source_id` must be a string naming one source (got {short_repr(source)}). "
+                          "Omit it to search every source.")
+        sources = [source] if source else None
         resp = searcher.search(query.strip(), mode=mode, top_k=min(top_k or cfg.search.top_k, 20),
                                source_ids=sources)
         return False, to_agent(resp, min(cfg.search.max_output_bytes, HARD_MAX_BYTES))
@@ -225,6 +234,8 @@ def _call_tool(state: _State, name: str, args: dict) -> tuple[bool, str]:
     except IndexError_ as e:
         return True, ("No context-foundation index yet (" + str(e).splitlines()[0] + "). "
                       "Search with grep as usual. Building an index takes minutes; ask the user first.")
+    except UnknownSourceError as e:
+        return True, e.agent_text()
     except (ValueError, ConfigError) as e:
         return True, str(e)
     except Exception as e:   # 1 行の誤りにして返す(サーバーは落とさない)

@@ -215,8 +215,9 @@ SESSION_HINT = (
     "and keywords). When you need to find where something is implemented or documented and do not know its exact "
     "name or file, load the context-search skill before grepping. For a known identifier, grep as usual.")
 # MCP サーバーも入っているとき(プラグインと一緒に入る)の 1 文。検索の道具を、grep より先に呼ぶように促す。
-# 「名前を知っているなら grep」とは書かない: 公開のコードでは、モデルが名前を覚えているつもりで grep から
-# 始め、検索を 1 回も使わなかった(docs/benchmarks.md)。検索は keyword も見るので、識別子でも引ける
+# grep を先にするのは、質問の文が関数・クラス・マクロを名指ししているときだけ、と書く。「名前を知っているなら
+# grep」とは書かない: 公開のコードでは、モデルが名前を覚えているつもりで grep から始め、検索を 1 回も
+# 使わなかった(docs/benchmarks.md)。検索は keyword も見るので、識別子でも引ける
 SESSION_HINT_MCP = (
     "This workspace has a context-foundation index (.cf folder: the code and design docs, searchable by meaning "
     "and keywords). If the question already names the exact function, class or macro, grep that name first. "
