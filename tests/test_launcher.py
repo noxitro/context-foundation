@@ -346,8 +346,10 @@ def test_setup_status_reads_the_state_without_installing_anything(monkeypatch, t
     monkeypatch.setattr(ctxf.subprocess, "call", lambda cmd, *a, **k: started.append(cmd) or 0)
     assert ctxf.setup(["--status"]) == 0
     fresh = json.loads(capsys.readouterr().out)
+    # 仮想環境が無いうちは、モデルの状態は読めない。どのモデルを置けばよいかは、既定の名前で知らせる
+    from context_foundation.embed import DEFAULT_MODEL
     assert fresh == {"ready": False, "gpu": False, "gpu_supported": os.name == "nt", "home": str(tmp_path / "home"),
-                     "model": None}
+                     "model": None, "default_model": DEFAULT_MODEL}
     # 前の setup で GPU 用を選んで、済んでいる
     ctxf._write_stamp(ctxf.dependencies(), gpu=True)
     monkeypatch.setattr(ctxf, "_venv_python", lambda venv: "py")

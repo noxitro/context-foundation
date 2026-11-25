@@ -1,4 +1,4 @@
-// context-foundation の Copilot CLI 拡張。モデルは呼ばない(ctxf.py を裏で動かし、結果をセッションに出すだけ)。
+// context-foundation の Copilot CLI 拡張。モデルは呼ばない(ctxf.py を動かし、結果をセッションに出すだけ)。
 //
 // /context-index [full] [<フォルダ> ...]
 //     作業中のフォルダの索引(.cf\index.db)を作る・作り直す。利用者が打つコマンドなので、打ったことを同意とみなす
@@ -8,7 +8,8 @@
 //     - 無ければ、並べたフォルダで作業フォルダに設定を作り(ctxf.py init)、続けて索引を作る。並べていなければ、
 //       作業フォルダの直下のフォルダから選ばせる(複数選べるダイアログ。出せないホストでは使い方を出す)
 //     - この PC の用意(setup)ができていなければ、何も作らずに、用意の仕方を出す(大きな取得は、利用者が自分で始める)
-//     裏で動かし、走っている間は進み具合をときどき出し、終わったらそう出す。ログは .cf\context-index.log。
+//     走っている間は進み具合をときどき出し、終わったらそう出す。ログは .cf\context-index.log(裏で動かすか、
+//     終わるまで待つかは、/context-setup と同じ)。
 //
 // /context-setup(引数は取らない)
 //     この PC の用意(ctxf.py setup。Python のパッケージ約 200 MB を、利用者ごとの置き場に
@@ -17,7 +18,8 @@
 //     埋め込みモデルのフォルダ、まとめた内容でよいか。尋ねる前に ctxf.py setup --status で今の状態を読み、
 //     前の選び方と今のモデルのフォルダを初めの値にする。ダイアログを出せないホストでは、尋ねずに前の選び方で用意する。
 //     済んでいれば、確かめるだけで終わる。リポジトリを取得して隣に .venv がある人は、setup.bat を案内して何もしない。
-//     裏で動かし、進み具合をときどき出す。ログは利用者ごとの置き場の context-setup.log。
+//     進み具合をときどき出す。ログは利用者ごとの置き場の context-setup.log。Copilot CLI では裏で動かし、
+//     ダイアログを出すとき(GitHub Copilot app)は、終わって結果のダイアログを閉じるまで、コマンドを終えない。
 //     索引づくりと用意は、同時には動かさない(用意は、索引づくりが使う仮想環境を作り直すことがある)。
 //
 // 拡張は Copilot CLI の実験的機能で、実験的機能を有効にしたとき(--experimental か /settings experimental on。
@@ -30,9 +32,9 @@ import { fileURLToPath } from "node:url";
 import {
   chooseFallback, commandHandler, dataHome, failureMessage, findConfig, folderChoices, folderSchema, hasLocalVenv, indexFile, initSources, joinOptions,
   keywordOnly, lastCwd, loadSdk, makeNotifier, modelFolderPrompt, modelFolderSchema, modelMissing, modelUseResult, parseProgress,
-  accelPrompt, accelSchema, choiceSchema, currentModelFolder, pickedYes, SETUP_NO, SETUP_YES, modelChoice, modelStepPrompt, parseSetupProgress, pickedAccel, pickedFolders, pickedModelFolder,
+  accelPrompt, accelSchema, askAccel, choiceSchema, currentModelFolder, pickedYes, SETUP_NO, SETUP_YES, modelChoice, modelStepPrompt, parseSetupProgress, pickedFolders, pickedModelFolder,
   planIndex, pluginRoot, progressNote, setupArgs, setupConfirmText, setupFailureMessage, setupProgressNote, setupRuntimeFolder, setupStatus,
-  modelNotUsedReason, setupSteps, splitArgs, workspaceOf,
+  modelNotUsedReason, REINDEX_AFTER_MODEL, setupStartText, setupSteps, splitArgs, workspaceOf,
 } from "./lib.mjs";
 
 const { joinSession } = await loadSdk((name) => import(name));
@@ -291,11 +293,12 @@ async function askSetupPlan(status, home, lead = "") {
     const head = i === 0 ? lead : "";
     try {
       if (step === "accel") {
-        const r = await exclusive(() => session.ui.elicitation({
-          message: head + accelPrompt(n, steps.length, status), requestedSchema: accelSchema(status),
-        }));
-        if (r.action !== "accept") return null;
-        plan.gpu = pickedAccel(r.content) ?? Boolean(status?.gpu);
+        // 選択肢に無い答え(書き込む欄)を読めなければ、尋ね直す(lib.mjs の askAccel。3 回読めなければ、やめる)
+        const gpu = await askAccel((retry) => exclusive(() => session.ui.elicitation({
+          message: head + accelPrompt(n, steps.length, status, retry), requestedSchema: accelSchema(status),
+        })));
+        if (gpu === null) return null;
+        plan.gpu = gpu;
       } else if (step === "model") {
         const r = await exclusive(() => session.ui.elicitation({
           message: head + modelStepPrompt(n, steps.length, status), requestedSchema: modelFolderSchema(currentModelFolder(status)),
@@ -369,10 +372,7 @@ async function setupCommand(ctx) {
       running = "用意(setup)";
     }
     const t0 = Date.now();
-    await tell(`context-foundation: ${ignored}用意(setup)を始めました。` +
-      `Python のパッケージ(PyPI から約 200 MB)を、${home} に入れます(埋め込みモデルは入れません)。` +
-      `初めては数分かかります(済んでいれば、確かめるだけで終わります)。${carryOn}` +
-      `ログ: ${log}`);
+    await tell(`context-foundation: ${ignored}${setupStartText(plan, status, home)}${carryOn}ログ: ${log}`);
     const stop = watchProgress(log, t0, parseSetupProgress, setupProgressNote);
     const r = await run([ctxf, "setup", ...setupArgs(plan)], log, env).finally(stop);
     const sec = Math.round((Date.now() - t0) / 1000);
@@ -418,8 +418,7 @@ async function setupCommand(ctx) {
     const saved = picked?.state === "saved"
       ? `埋め込みモデルのフォルダを覚えました(${picked.folder}。この PC のすべての作業フォルダで使います)。` +
         picked.notes.map((n) => `注意: ${n}\n`).join("") +
-        (hasIndex ? "今の索引は、前のモデルの埋め込みか keyword だけのことがあります。/context-index full を打つと、" +
-          "このモデルで埋め込み直します。\n" : "")
+        (hasIndex ? REINDEX_AFTER_MODEL : "")
       : "";
     const modelNote = saved || (!missing ? (picked?.why ? `モデルのフォルダは替えていません(${picked.why})。` : "")
       : (picked?.why ? `モデルのフォルダは覚えていません(${picked.why})。` : "") +

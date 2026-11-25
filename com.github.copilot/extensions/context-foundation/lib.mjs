@@ -269,7 +269,7 @@ export function modelFolderSchema(now = "") {
         title: "モデルのフォルダ",
         description: "onnx\\model.onnx(か model.onnx)と tokenizer.json の入ったフォルダ。Hugging Face のキャッシュのフォルダ" +
           "(models--<org>--<name>)や、使う .onnx のファイルのパスでも構いません。" +
-          (now ? "そのまま送ると、今のモデルを使います" : "空のままで飛ばします"),
+          (now ? "そのまま送っても、空にして送っても、今のモデルを使います" : "空のままで飛ばします"),
         ...(now ? { default: now } : {}),
       },
     },
@@ -429,8 +429,9 @@ export function setupSteps(status, platform = process.platform) {
 
 const stepHead = (n, total) => `context-foundation の用意(${n}/${total}): `;
 
-export function accelPrompt(n, total, status) {
-  return stepHead(n, total) + "索引づくりで、埋め込み(意味での検索に使う数値)をどこで計算するかを選んでください。" +
+// retry は、前の答えを読めなかったときに添える文(初めは "")
+export function accelPrompt(n, total, status, retry = "") {
+  return stepHead(n, total) + (retry ? `${retry}\n` : "") + "索引づくりで、埋め込み(意味での検索に使う数値)をどこで計算するかを選んでください。" +
     "GPU を選ぶと、onnxruntime の代わりに onnxruntime-directml を入れます。DirectML を使えない PC では、入れても CPU で" +
     "計算します。" + (status?.ready ? `今は ${status.gpu ? "GPU" : "CPU"} です(変えると、onnxruntime を入れ直します)。` : "") +
     "取り消すと、用意をやめます";
@@ -452,13 +453,37 @@ export function accelSchema(status) {
 }
 
 // ダイアログの答えから、GPU を使うか。選択肢に無い答え(Other に書き込まれたもの)は、GPU・CPU の言葉で読む。
-// 読めなければ null(前の選び方を引き継ぐ)
+// 読めなければ null(呼ぶ側が、尋ね直す)
 export function pickedAccel(content) {
   const v = typeof content?.accel === "string" ? content.accel.trim() : "";
   if (v === GPU_CHOICE) return true;
   if (v === CPU_CHOICE) return false;
   if (/gpu|directml/i.test(v)) return true;
   if (/cpu/i.test(v)) return false;
+  return null;
+}
+
+export const ACCEL_RETRY = "前の答えを読めませんでした。GPU か CPU を選んでください。";
+
+// GPU か CPU かを尋ねる。ask(retry) はダイアログを出して、その答え({ action, content })を返す。読めない答え
+// (選択肢に無い、書き込まれた文)は、黙って前の選び方にせず、わけを添えて尋ね直す(tries 回まで)。
+// 返すのは true(GPU)・false(CPU)か、null(取り消した・尋ね直しても読めなかった・尋ね直しのダイアログを
+// 出せなくなった)。始めのダイアログを出せなければ投げる(呼ぶ側が、尋ねずに用意する)
+export async function askAccel(ask, tries = 3) {
+  let retry = "";
+  for (let i = 0; i < tries; i++) {
+    let r;
+    try {
+      r = await ask(retry);
+    } catch (err) {
+      if (i === 0) throw err;
+      return null;
+    }
+    if (r?.action !== "accept") return null;
+    const gpu = pickedAccel(r.content);
+    if (gpu !== null) return gpu;
+    retry = ACCEL_RETRY;
+  }
   return null;
 }
 
@@ -470,9 +495,14 @@ export function modelStepPrompt(n, total, status) {
   if (m?.state === "installed") {
     return stepHead(n, total) + `埋め込みモデル(${m.name})は入っています(${m.folder})。このまま使うなら、そのまま送って` +
       "ください。別のフォルダのモデルを使うなら、そのフォルダを入れてください(用意のあとで 1 回読み込んで確かめてから" +
-      "覚えます)。取り消すと、用意をやめます";
+      "覚えます)。欄を空にして送っても、今のモデルのままです" +
+      // model forget が外すのは、model use で覚えたフォルダだけ(取得して既定の置き場にあるモデルには効かない)
+      (m.dir_source === "user" ? "(覚えたフォルダを外すときは、ターミナルで ctxf.py model forget を実行します)" : "") +
+      "。取り消すと、用意をやめます";
   }
-  const about = m?.name ? `${m.name}、ライセンス ${m.license || "不明"}${m.size_mb ? `、約 ${m.size_mb} MB` : ""}` : "";
+  // 仮想環境が無いうちは、モデルの状態を読めない(model が無い)。そのときは、既定のモデルの名前を出す
+  const about = m?.name ? `${m.name}、ライセンス ${m.license || "不明"}${m.size_mb ? `、約 ${m.size_mb} MB` : ""}`
+    : status?.default_model ? `既定は ${status.default_model}。入手先 https://huggingface.co/${status.default_model}` : "";
   return stepHead(n, total) + `埋め込みモデル${about ? `(${about})` : ""}のフォルダを入れてください。意味での検索` +
     "(日本語や言葉での質問で、英語のコードを探すなど)に要ります。この PC に置いてあれば、そのフォルダを入れると、" +
     "用意のあとで 1 回読み込んで確かめてから、この PC のすべての作業フォルダで使うように覚えます(写しも取得も" +
@@ -505,14 +535,33 @@ export const SETUP_NO = "やめる";
 // ctxf.py setup に渡す指定。gpu が null(尋ねていない)なら、前の setup の選び方を引き継ぐ
 export const setupArgs = (plan) => (plan?.gpu === true ? ["--gpu"] : plan?.gpu === false ? ["--cpu"] : []);
 
+// 用意で入れるもの。status は尋ねる前に読んだ状態(読めなかった・尋ねなかったときは null)、plan は答え(無ければ null)
+export function setupWhat(plan, status) {
+  const gpu = plan?.gpu ?? Boolean(status?.gpu);
+  const changed = Boolean(status?.ready) && plan?.gpu != null && plan.gpu !== Boolean(status?.gpu);
+  return !status ? "Python のパッケージ(初めは PyPI から約 200 MB。済んでいれば確かめるだけです)"
+    : !status.ready ? "Python のパッケージ(PyPI から約 200 MB。初めは数分かかります)"
+      : changed ? `onnxruntime を${gpu ? " GPU 用(onnxruntime-directml)" : " CPU 用"}に入れ直します(PyPI から取得します)`
+        : "済んでいるので、確かめるだけです";
+}
+
+// 用意を始めたときの知らせ(確かめの段で出した「入れるもの」と同じことを言う)
+export function setupStartText(plan, status, home) {
+  return `用意(setup)を始めました。入れるもの: ${setupWhat(plan, status)}。置き場: ${home}(埋め込みモデルは取得しません)。`;
+}
+
+// 用意の後、モデルのフォルダを覚えたときに、今の索引について添える文。索引づくりは、索引の埋め込みが今のモデルと
+// 違うとき(keyword だけのときも)だけ、すべて埋め込み直す(indexer の _previous_vectors)。ふつうは full は要らない。
+// 違いは、モデルの名前・版・ONNX の大きさなどで見分ける(中身は比べない)ので、名前も大きさも同じ別の重みに
+// 替えたときだけ、full が要る
+export const REINDEX_AFTER_MODEL = "今の索引が keyword だけか、別のモデルの埋め込みなら、/context-index を打つと、このモデルで" +
+  "埋め込み直します(同じモデルの索引なら、変わった分だけです。名前も大きさも同じ別の重みに替えたときだけ、" +
+  "/context-index full が要ります)。\n";
+
 // 最後に、まとめて確かめる文
 export function setupConfirmText(n, total, plan, status, home) {
   const gpu = plan.gpu ?? Boolean(status?.gpu);
-  const changed = Boolean(status?.ready) && plan.gpu !== null && plan.gpu !== Boolean(status?.gpu);
-  const what = !status ? "Python のパッケージ(初めは PyPI から約 200 MB。済んでいれば確かめるだけです)"
-    : !status.ready ? "Python のパッケージ(PyPI から約 200 MB。初めは数分かかります)"
-    : changed ? `onnxruntime を${gpu ? " GPU 用(onnxruntime-directml)" : " CPU 用"}に入れ直します(PyPI から取得します)`
-      : "済んでいるので、確かめるだけです";
+  const what = setupWhat(plan, status);
   const m = plan.model;
   const s = status?.model;
   const model = !m

@@ -238,7 +238,9 @@ python -I "<プラグインのフォルダ>\ctxf.py" where
 
 - 検索の道具が出ない: `python` が PATH に無い、用意が済んでいない、用意の
   後に新しいセッションを始めていない
-- 「Fell back to keyword」: 埋め込みモデルが無い(`/context-setup` で取る)
+- 「Fell back to keyword」: 埋め込みモデルが無い(`/context-setup` は取得
+  しません。この PC に置いたモデルのフォルダを `/context-setup` で入れるか、
+  入手先とライセンスを確かめて `ctxf.py model download` で取得します)
 - 用意(setup)が pip で失敗する: 長いパス(`CF_HOME` を短いフォルダに)、
   プロキシ(`HTTPS_PROXY`)
 

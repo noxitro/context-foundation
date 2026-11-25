@@ -398,19 +398,31 @@ def wants_gpu(argv, stamp):
     return bool(stamp.get("gpu"))
 
 
+def default_model_name():
+    """既定の埋め込みモデルの名前(embed.py の DEFAULT_MODEL)。仮想環境が無いうち(embed.py は numpy を読むので
+    動かせない)でも、どのモデルを置けばよいかを知らせられるよう、ソースの 1 行から読む。読めなければ空。"""
+    try:
+        with open(os.path.join(SRC, "context_foundation", "embed.py"), encoding="utf-8") as f:
+            m = re.search(r'^DEFAULT_MODEL\s*=\s*"([^"]+)"', f.read(), re.M)
+    except OSError:
+        return ""
+    return m.group(1) if m else ""
+
+
 def setup_status():
     """今の用意の状態を 1 行の JSON で書く(何も入れない・取得しない。/context-setup が、尋ねる前に読む)。
     ready: 今の依存の一覧で用意が済んでいるか(覚え書きと仮想環境の python で見る。読み込みまでは確かめない)、
     gpu: 前の setup で GPU 用を選んだか(次の setup が引き継ぐ選び方)、gpu_supported: GPU 用を選べる OS か
     (Windows)、model: 埋め込みモデルの有無(setup の終わりに出すものと同じ形)。仮想環境の python があれば、用意が
     古くても読む(依存の一覧が変わった版への更新の後でも、覚えたモデルと設定の model_dir を尋ねる前に知るため。
-    読めなければ state が unknown)。仮想環境が無ければ null。"""
+    読めなければ state が unknown)。仮想環境が無ければ null。default_model: 既定のモデルの名前(仮想環境が無くても出す)。"""
     stamp = _read_stamp()
     deps = dependencies()
     py = _venv_python(os.path.join(runtime_dir(), "venv"))
     ready = bool(deps and py and stamp.get("deps_hash") == deps_hash(deps))
     out = {"ready": ready, "gpu": bool(stamp.get("gpu")), "gpu_supported": os.name == "nt",
-           "home": data_home(), "model": _setup_model_info(py) if py else None}
+           "home": data_home(), "model": _setup_model_info(py) if py else None,
+           "default_model": default_model_name()}
     sys.stdout.write(json.dumps(out, ensure_ascii=False) + "\n")
     return 0
 
