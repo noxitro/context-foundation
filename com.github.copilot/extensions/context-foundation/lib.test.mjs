@@ -10,6 +10,9 @@ import {
   makeNotifier, modelFolderPrompt, modelFolderSchema, modelMissing, modelUseResult, parseIndexArgs, pickedModelFolder, parseProgress, parseSetupProgress, planIndex, pluginRoot, progressNote, repairCommand,
   ACCEL_RETRY, accelPrompt, accelSchema, askAccel, choiceSchema, modelNotUsedReason, REINDEX_AFTER_MODEL, setupStartText, setupWhat, CPU_CHOICE, pickedYes, SETUP_NO, SETUP_YES, currentModelFolder, GPU_CHOICE, modelChoice, modelStepPrompt, pickedAccel, setupArgs, setupConfirmText,
   setupStatus, setupSteps, SDK_NAMES, setupFailureMessage, setupProgressNote, setupRuntimeFolder, splitArgs, wantDialog, workspaceOf,
+  askOneOf, CHANGE_YES, changeConfirmText, changedText, computeName, embedNote, embeddingLines, folderDefaults, folderPrompt, INDEX_BUILD, INDEX_CANCEL,
+  INDEX_FOLDERS, INDEX_FULL, INDEX_UPDATE, INDEX_YES, indexConfirmText, indexMenuChoices, indexMenuText, indexState, MENU_RETRY, menuSchema, pickedAction,
+  sourcesLine, sourcesPlan,
 } from "./lib.mjs";
 
 const here = fileURLToPath(new URL(".", import.meta.url));
@@ -142,7 +145,7 @@ test("folderSchema と pickedFolders: 複数選べる形、初めは全部選ん
   assert.deepEqual(pickedFolders({ folders: ["Engine", " \"Engine\" ", "engine\\", "Docs/", "D:\\", "D:\\"] }, names),
     ["Docs", "Engine", "D:\\"]);
   assert.deepEqual(pickedFolders(undefined, names), []);
-  assert.match(chooseFallback("C:\\w", ["Engine", "My Docs"]), /まだ索引がありません.*\n使い方: \/context-index.*例: \/context-index Engine "My Docs"/s);
+  assert.match(chooseFallback("C:\\w", ["Engine", "My Docs"]), /まだ索引がありません.*ダイアログを出せないので.*\n使い方: \/context-index.*例: \/context-index Engine "My Docs"/s);
   assert.match(chooseFallback("C:\\w", []), /例: \/context-index \./);
 });
 
@@ -306,9 +309,140 @@ test("始めの知らせは、確かめの段と同じ「入れるもの」を�
   assert.match(setupStartText(null, null, "H"), /済んでいれば確かめるだけです/);   // 尋ねられなかった(ダイアログを出せないホスト)
   assert.equal(setupWhat(null, READY), "済んでいるので、確かめるだけです");
   // 索引づくりは、モデルが違うときだけ自分ですべて埋め込み直す。full を勧めると、同じモデルでも埋め込み直してしまう
-  assert.match(REINDEX_AFTER_MODEL, /\/context-index を打つと、このモデルで埋め込み直します/);
-  // full は、見分けられない入れ替え(名前も大きさも同じ別の重み)のときだけ
-  assert.match(REINDEX_AFTER_MODEL, /名前も大きさも同じ別の重みに替えたときだけ、\/context-index full/);
+  assert.match(REINDEX_AFTER_MODEL, /\/context-index で「更新する」を選ぶと、このモデルで埋め込み直します/);
+  // すべて作り直すのは、見分けられない入れ替え(名前も大きさも同じ別の重み)のときだけ。引数の形(full)は案内しない
+  assert.match(REINDEX_AFTER_MODEL, /名前も大きさも同じ別の重みに替えたときだけ、「すべて作り直す」を選びます/);
+  assert.doesNotMatch(REINDEX_AFTER_MODEL, /context-index full/);
+});
+
+// ---- /context-index(引数は取らず、ダイアログで尋ねる)
+
+const STATE = {
+  config: "C:\\w\\.cf\\config.toml", workspace: "C:\\w",
+  sources: [
+    { id: "Engine", root: "Engine", exists: true, inside: "" },
+    { id: "docs", root: "D:\\shared\\docs", exists: true, inside: "" },
+    { id: "Vendor", root: "Engine\\external\\Vendor", exists: true, inside: "Engine" },
+  ],
+  index: { path: "C:\\w\\.cf\\index.db", created_at: "2026-11-24T10:12:33+0900", files: 8084, passages: 72784, model: "org/model", provider: "DmlExecutionProvider" },
+  embedding: { enabled: true, device: "auto", provider: "DmlExecutionProvider", model: { state: "installed", name: "org/model" } },
+};
+
+test("indexState と sourcesPlan は、最後の行の JSON を読み、読めなければ null", () => {
+  assert.equal(indexState("注意: …\n" + JSON.stringify(STATE) + "\n").workspace, "C:\\w");
+  assert.equal(indexState("context-foundation is not set up"), null);
+  assert.equal(indexState('{"ready":true}'), null);
+  const plan = { result: "would change", config: "c", keep: [], add: [{ id: "a", root: "a" }], remove: [], backup: "" };
+  assert.deepEqual(sourcesPlan(JSON.stringify(plan)), plan);
+  assert.equal(sourcesPlan('{"result":"changed"}'), null);
+  assert.equal(sourcesPlan("フォルダがありません: C:\\w\\x"), null);
+});
+
+test("今の状態の文: フォルダ・索引・検索の種類・計算先を並べ、することを選ばせる", () => {
+  const text = indexMenuText(STATE);
+  assert.match(text, /^context-foundation の索引: この作業フォルダには索引があります\(C:\\w\)。/);
+  // ほかの source の中にある source(ジャンクションなど)は、数だけを言う
+  assert.match(text, /- 検索するフォルダ: Engine、D:\\shared\\docs\(ほかに、その中の 1 個\)/);
+  assert.match(text, /- 索引: 2026-11-24 10:12 に作成、8,084 ファイル、72,784 passage、埋め込みモデル org\/model\n/);
+  assert.match(text, /- 検索: 意味と keyword\(埋め込みモデル org\/model\)\n- 埋め込みの計算: GPU\(DirectML\)\n/);
+  assert.match(text, /何をしますか。取り消すと、何もしません/);
+  assert.deepEqual(indexMenuChoices(STATE), [INDEX_UPDATE, INDEX_FOLDERS, INDEX_FULL, INDEX_CANCEL]);
+  assert.match(indexMenuText(STATE, MENU_RETRY), /^context-foundation の索引: 前の答えを読めませんでした。一覧から選んでください。\n/);
+  // 索引がまだ無い・読めないときは、「索引を作る」
+  const none = { ...STATE, index: null };
+  assert.match(indexMenuText(none), /設定はありますが、索引がまだありません/);
+  assert.deepEqual(indexMenuChoices(none), [INDEX_BUILD, INDEX_FOLDERS, INDEX_CANCEL]);
+  const broken = { ...STATE, index: { path: "p", error: "IndexError_: 古い形" } };
+  assert.match(indexMenuText(broken), /索引を読めません\(C:\\w。IndexError_: 古い形\)。作り直すと直ります/);
+  assert.deepEqual(indexMenuChoices(broken), [INDEX_BUILD, INDEX_FOLDERS, INDEX_CANCEL]);
+  // 索引の埋め込みが今のモデルと違う・無いときは、更新で埋め込み直すことを言う
+  assert.match(indexMenuText({ ...STATE, index: { ...STATE.index, model: "old/model" } }), /今のモデルは org\/model なので、更新すると、すべて埋め込み直します/);
+  assert.match(indexMenuText({ ...STATE, index: { ...STATE.index, model: "" } }), /keyword だけ。更新すると、意味での検索のための埋め込みを計算します/);
+  assert.equal(sourcesLine([{ id: "w", root: ".", exists: true, inside: "" }, { id: "gone", root: "gone", exists: false, inside: "" }]),
+    "作業フォルダ全体、gone(フォルダがありません)");
+});
+
+test("検索の種類と計算先の行: モデルが無ければ keyword だけと、入れ方を言う", () => {
+  const emb = (over) => ({ embedding: { ...STATE.embedding, ...over } });
+  assert.deepEqual(embeddingLines(null), []);
+  assert.deepEqual(embeddingLines(emb({ provider: "" }), "win32"),
+    ["- 検索: 意味と keyword(埋め込みモデル org/model)", "- 埋め込みの計算: CPU(GPU で計算するなら、/context-setup で GPU を選びます)"]);
+  // 設定で CPU に決めているとき・Windows でないときは、GPU を勧めない
+  assert.equal(embeddingLines(emb({ provider: "", device: "cpu" }), "win32")[1], "- 埋め込みの計算: CPU");
+  assert.equal(embeddingLines(emb({ provider: "" }), "linux")[1], "- 埋め込みの計算: CPU");
+  assert.match(embeddingLines(emb({ model: { state: "missing", name: "org/model" } }))[0], /keyword だけ\(埋め込みモデル org\/model がありません。.*\/context-setup/);
+  assert.match(embeddingLines(emb({ enabled: false, model: { state: "off" } }))[0], /keyword だけ\(作業フォルダの設定で、埋め込みを切っています\)/);
+  assert.match(embeddingLines(emb({ model: { state: "unknown", error: "読めない" } }))[0], /分かりません\(読めない\)/);
+  assert.equal(computeName("CUDAExecutionProvider"), "GPU(CUDA)");
+  assert.equal(computeName(""), "CPU");
+});
+
+test("することの選択肢: 選んだものだけを読み、書き込まれた文は読めないとして尋ね直す", async () => {
+  const choices = indexMenuChoices(STATE);
+  assert.deepEqual(menuSchema(choices).properties.action, { type: "string", title: "すること", enum: choices, default: INDEX_UPDATE });
+  assert.equal(pickedAction({ action: ` ${INDEX_FULL} ` }, choices), INDEX_FULL);
+  assert.equal(pickedAction({ action: "full" }, choices), null);
+  assert.equal(pickedAction({ action: INDEX_BUILD }, choices), null);   // この状態の選択肢に無い
+  assert.equal(pickedAction({}, choices), null);
+  const seen = [];
+  const answers = [{ action: "accept", content: { action: "ぜんぶ" } }, { action: "accept", content: { action: INDEX_FOLDERS } }];
+  const got = await askOneOf(async (retry) => {
+    seen.push(retry);
+    return answers[seen.length - 1];
+  }, (c) => pickedAction(c, choices), MENU_RETRY);
+  assert.equal(got, INDEX_FOLDERS);
+  assert.deepEqual(seen, ["", MENU_RETRY]);
+  assert.equal(await askOneOf(async () => ({ action: "cancel" }), (c) => pickedAction(c, choices), MENU_RETRY), null);
+  await assert.rejects(askOneOf(async () => { throw new Error("no dialog"); }, () => null, MENU_RETRY), /no dialog/);
+});
+
+test("フォルダを変えるとき: 今の source にチェックを付け、直下に無い source は候補に足す", () => {
+  const names = ["Docs", "Engine", "Tools"];
+  // 直下の名前は、大文字小文字と区切りの違いを見ない。ほかの source の中にあるものは出さない
+  assert.deepEqual(folderDefaults(names, STATE.sources), { extra: ["D:\\shared\\docs"], checked: ["Engine", "D:\\shared\\docs"] });
+  assert.deepEqual(folderDefaults(names, [{ id: "e", root: "engine/", inside: "" }]), { extra: [], checked: ["Engine"] });
+  // 作業フォルダ全体が source なら、それだけを選んでおく
+  assert.deepEqual(folderDefaults(names, [{ id: "w", root: ".", inside: "" }, { id: "Docs", root: "Docs", inside: "w" }]),
+    { extra: [], checked: [WHOLE_WORKSPACE] });
+  const { extra, checked } = folderDefaults(names, STATE.sources);
+  const f = folderSchema([...names, ...extra], 5, checked, names.length).properties.folders;
+  assert.deepEqual(f.items.enum, ["Docs", "Engine", "Tools", "D:\\shared\\docs", WHOLE_WORKSPACE]);
+  assert.deepEqual(f.default, ["Engine", "D:\\shared\\docs"]);
+  assert.match(f.description, /後から \/context-index で変えられます。名前の順で 3 個まで出しています\(ほかに 5 個/);
+  assert.match(folderPrompt(1, 2, "C:\\w", true), /^context-foundation の索引\(1\/2\): 検索するフォルダを選び直してください\(C:\\w\)。今のフォルダに、チェックが付いています/);
+  assert.match(folderPrompt(1, 2, "C:\\w"), /まだ索引がありません。索引に入れるフォルダを選んでください\(C:\\w\)。一覧に無いフォルダは、Other にパスを書くと足せます/);
+});
+
+test("確かめの文: 初めての索引は入れるフォルダ・置き場・検索の種類を、フォルダの変更は足す・外す・そのままを言う", () => {
+  const first = indexConfirmText(2, 2, "C:\\w", [".", "D:\\x"], { ...STATE, index: null }, "win32");
+  assert.match(first, /^context-foundation の索引\(2\/2\): 次の内容で索引を作ります。よければ「はい、索引を作る」を選んでください。\n/);
+  assert.match(first, /- 検索するフォルダ: 作業フォルダ全体、D:\\x\n- 設定と索引の置き場: /);
+  assert.match(first, /- 埋め込みの計算: GPU\(DirectML\)\n- かかる時間: /);
+  assert.equal(INDEX_YES, "はい、索引を作る");
+  // 直下にフォルダが無いときは、1 段だけ
+  assert.match(indexConfirmText(1, 1, "C:\\w", ["."], null), /^context-foundation の索引: 次の内容で/);
+  const plan = {
+    result: "would change", config: "C:\\w\\.cf\\config.toml", backup: "",
+    keep: [{ id: "Engine", root: "Engine" }], add: [{ id: "Tools", root: "Tools" }], remove: [{ id: "docs", root: "D:\\shared\\docs" }],
+  };
+  const change = changeConfirmText(2, 2, plan);
+  assert.ok(change.includes(`よければ「${CHANGE_YES}」を選んでください。\n- 足す: Tools\n- 外す: D:\\shared\\docs\n- そのまま: Engine\n`));
+  assert.match(change, /\[\[source\]\] だけを書き直し、前の設定は config\.toml\.bak に残します/);
+  assert.doesNotMatch(changeConfirmText(2, 2, { ...plan, remove: [] }), /- 外す/);
+  assert.equal(changedText({ ...plan, result: "changed", backup: "C:\\w\\.cf\\config.toml.bak" }),
+    "検索するフォルダを替えました(足した: Tools、外した: D:\\shared\\docs。前の設定: C:\\w\\.cf\\config.toml.bak)。\n");
+});
+
+test("embedNote は、索引づくりのログから、埋め込みをどこで計算したかを読む", () => {
+  const gpu = "埋め込み: 1,234 passage を計算、70,000 passage を使い回し、中身の無い 12 passage は埋め込まず(12.3 秒、モデル org/model、GPU(DmlExecutionProvider))\n";
+  assert.equal(embedNote("取り込みと分割: …\n" + gpu + "索引ができました: …"), "埋め込みは GPU(DirectML) で計算しました(1,234 passage。70,000 passage は使い回し)。");
+  const cpu = "埋め込み: 50 passage を計算、0 passage を使い回し、中身の無い 0 passage は埋め込まず(3.0 秒、モデル org/model、CPU、4 プロセス)\n";
+  assert.equal(embedNote(cpu), "埋め込みは CPU で計算しました(50 passage。0 passage は使い回し)。");
+  // GPU を選んでいても、始められなければ CPU に替えて続ける。そのことを言う
+  assert.match(embedNote("注意: GPU(DmlExecutionProvider)で埋め込みを始められないので、CPU で計算します(RuntimeError: x)\n" + cpu),
+    /CPU で計算しました.*GPU では始められなかったので、CPU に替えました\(わけはログ\)。$/);
+  assert.equal(embedNote(gpu.replace("1,234 passage を計算", "0 passage を計算")), "埋め込みは、すべて前の索引から使い回しました。");
+  assert.equal(embedNote("keyword(BM25)だけの索引を作ります\n"), "");
 });
 
 test("askAccel: 読めない答えは尋ね直し、3 回読めなければやめる。尋ね直しで出せなくなっても、答えの一部では進めない", async () => {

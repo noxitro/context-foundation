@@ -164,10 +164,11 @@ The search needs an index of the workspace, built once per workspace.
 - Building: the first index of a large codebase takes tens of minutes
   (about 30 minutes for 8,000 files); later updates take a minute or two.
   Ask how to run it. In Copilot CLI with extensions on, the user can type
-  `/context-index` in the session: it runs in the background without the
-  model. Or they run `ctxf.py index` in their own terminal (show them the
-  whole command line). Run `ctxf.py index` here only if they ask you to,
-  with a timeout of at least an hour, or in the background. It ends with
+  `/context-index` in the session (no arguments; it asks which folders to
+  search, or what to do with an existing index): it runs in the background
+  without the model. Or they run `ctxf.py index` in their own terminal
+  (show them the whole command line). Run `ctxf.py index` here only if
+  they ask you to, with a timeout of at least an hour, or in the background. It ends with
   exit code 0; then run `ctxf.py where` and check that the `index:` line
   names the new index
 - If `model use` said the model changed (`--model`), indexes built before

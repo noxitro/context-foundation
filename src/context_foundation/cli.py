@@ -3,6 +3,7 @@
   ctxf index                    設定(.cf/config.toml)に従って索引を作り直す
   ctxf search "<質問>"          検索する(端末なら人が読む形、そうでなければエージェント向けの形)
   ctxf status                   索引の版・件数・作成日時
+  ctxf sources                  検索するフォルダ(設定の [[source]])を見る・替える(--set <フォルダ> ...)
   ctxf eval --cases cases.jsonl 評価(keyword・semantic・hybrid を回して要約を書く。別に取った結果も並べる)
   ctxf serve                    読み取り専用の MCP サーバー(stdio)
   ctxf validate --cases ...     cases.jsonl / results.jsonl の検査
@@ -134,6 +135,193 @@ def cmd_init(args) -> int:
               "それを root にした source として足しました。要らないものは設定から消してください)")
     print(f"次は `{command_hint('index')}` で索引を作ります(大きなコードでは時間がかかります)。")
     print("Perforce を使うなら、.cf を .p4ignore に足してください(索引には、ソースの本文の写しが入ります)。")
+    return 0
+
+
+def _path_key(p) -> str:
+    """フォルダを比べるための形(絶対パス。Windows では大文字小文字を区別しない)。リンクは解決しない。"""
+    return os.path.normcase(os.path.abspath(p))
+
+
+def _is_inside(child: str, parent: str) -> bool:
+    """child が parent の中にあるか(どちらも _path_key の形。同じフォルダは「中」に数えない)。"""
+    try:
+        rel = os.path.relpath(child, parent)
+    except ValueError:                      # ドライブが違う
+        return False
+    return rel not in (os.curdir, os.pardir) and not rel.startswith(os.pardir + os.sep)
+
+
+def _sources_state(cfg, workspace: str) -> dict:
+    """検索するフォルダ・索引・埋め込みの今の状態(/context-index のダイアログが読む)。cfg は設定(無ければ None)。
+    何も作らず、モデルも読み込まない。"""
+    from .config import EmbeddingConfig, source_root
+    from .embed import ModelUnavailable, gpu_provider, model_files, resolve_model
+
+    ecfg = cfg.embedding if cfg else EmbeddingConfig()
+    sources: list[dict] = []
+    index = None
+    if cfg:
+        keys = {s.id: _path_key(s.root) for s in cfg.sources}
+        for s in cfg.sources:
+            # ほかの source の中にある source(external\Engine のジャンクションなど)は、一覧では親に含めて見せる
+            inside = next((o.id for o in cfg.sources if o.id != s.id and _is_inside(keys[s.id], keys[o.id])), "")
+            sources.append({"id": s.id, "root": source_root(s.root, cfg.workspace), "exists": s.root.is_dir(),
+                            "inside": inside})
+        if cfg.index_path.is_file():
+            index = {"path": str(cfg.index_path)}
+            try:
+                from .search import Searcher
+                st = Searcher.from_config(cfg).status()
+                emb = st.get("embedding") or {}
+                index.update(created_at=st.get("created_at") or "", files=st.get("stats", {}).get("files", 0),
+                             passages=st.get("stats", {}).get("chunks", 0), model=emb.get("model") or "",
+                             provider=emb.get("provider") or "")
+            except Exception as e:           # 古い形・壊れた索引など。作り直せば直るので、わけだけを返す
+                index["error"] = f"{type(e).__name__}: {(str(e).splitlines() or [''])[0]}"
+    if not ecfg.enabled:
+        model, provider = {"state": "off"}, ""
+    else:
+        try:
+            spec = resolve_model(ecfg)
+            model = {"state": "installed", "name": spec.name}
+            try:
+                model_files(spec)
+            except ModelUnavailable:
+                model["state"] = "missing"
+        except ModelUnavailable as e:
+            model = {"state": "unknown", "error": (str(e).splitlines() or [""])[0]}
+        provider = (gpu_provider() or "") if ecfg.device != "cpu" else ""
+    return {"config": str(cfg.config_path) if cfg else "", "workspace": str(cfg.workspace) if cfg else workspace,
+            "sources": sources, "index": index,
+            "embedding": {"enabled": ecfg.enabled, "device": ecfg.device, "provider": provider, "model": model}}
+
+
+def _sources_plan(cfg, folders: list[str]) -> tuple[list, list[tuple[str, str]], list] | str:
+    """検索するフォルダを folders に替えるときの、(残す source, 足す (id, root), 外す source)。
+    フォルダが無ければ、そのわけの文。
+
+    - 選んだフォルダと同じ root の source は、中身(exclude など)ごと残す
+    - 選んだフォルダの中にある source(ジャンクションを root にしたもの、手で分けたもの)も残す
+    - 新しく選んだフォルダは足す。その中のフォルダのリンク・ジャンクションも、init と同じく source として足す
+    - ほかは外す"""
+    from pathlib import Path
+
+    from .config import source_id_for, source_root
+    from .ingest import linked_folders
+
+    ws = cfg.workspace
+    picked: list[Path] = []
+    for raw in folders:
+        p = Path(raw)
+        p = Path(os.path.abspath(ws / p if not p.is_absolute() else p))
+        if not p.is_dir():
+            return f"フォルダがありません: {p}"
+        if _path_key(p) not in {_path_key(q) for q in picked}:
+            picked.append(p)
+    picked_keys = [_path_key(p) for p in picked]
+    keep = [s for s in cfg.sources
+            if _path_key(s.root) in picked_keys or any(_is_inside(_path_key(s.root), k) for k in picked_keys)]
+    remove = [s for s in cfg.sources if s not in keep]
+    have = {_path_key(s.root) for s in keep}
+    used = {s.id for s in keep}
+    new = [p for p in picked if _path_key(p) not in have]
+    add: list[tuple[str, str]] = []
+    for p in new + [link for link in linked_folders(new) if _path_key(link) not in have]:
+        if _path_key(p) in have:
+            continue
+        have.add(_path_key(p))
+        sid = source_id_for(p, used)
+        used.add(sid)
+        add.append((sid, source_root(p, ws)))
+    return keep, add, remove
+
+
+def cmd_sources(args) -> int:
+    """検索するフォルダ(設定の [[source]])を見る・替える。/context-index のダイアログが、--json で使う。
+
+    --set <フォルダ> ...: [[source]] だけを替える(ほかの表と、残す source の中身は変えない。前の設定は
+    config.toml.bak に残す)。--dry-run を付けると、書かずに、何が変わるかだけを出す。"""
+    import tomllib
+
+    from .config import CONFIG_FILE_NAME, rewrite_sources, source_root
+
+    as_json = args.json
+    if args.dry_run and not args.set:
+        sys.stderr.write("--dry-run は --set と一緒に使います\n")
+        return EXIT_USAGE
+    path = find_config(args.config, start=args.workspace)
+    if not args.set:
+        cfg = load_config(path) if path else None
+        state = _sources_state(cfg, os.path.abspath(args.workspace or os.getcwd()))
+        if as_json:
+            sys.stdout.write(json.dumps(state, ensure_ascii=False) + "\n")
+            return 0
+        if not cfg:
+            sys.stderr.write("設定(.cf/config.toml)が見つかりません。"
+                             f"`{command_hint('init <フォルダ> [<フォルダ> ...]')}` で作ります\n")
+            return EXIT_NO_INDEX
+        print(f"設定: {cfg.config_path}")
+        for s in state["sources"]:
+            print(f"  source {s['id']}: {s['root']}" + ("" if s["exists"] else "(フォルダがありません)"))
+        return 0
+    if path is None:
+        sys.stderr.write("設定(.cf/config.toml)が見つかりません。"
+                         f"`{command_hint('init <フォルダ> [<フォルダ> ...]')}` で作ります\n")
+        return EXIT_NO_INDEX
+    cfg = load_config(path)
+    plan = _sources_plan(cfg, args.set)
+    if isinstance(plan, str):
+        sys.stderr.write(plan + "\n")
+        return EXIT_USAGE
+    keep, add, remove = plan
+    changed = bool(add or remove)
+    result = {"result": ("unchanged" if not changed else "would change" if args.dry_run else "changed"),
+              "config": str(path),
+              "keep": [{"id": s.id, "root": source_root(s.root, cfg.workspace)} for s in keep],
+              "add": [{"id": sid, "root": root} for sid, root in add],
+              "remove": [{"id": s.id, "root": source_root(s.root, cfg.workspace)} for s in remove],
+              "backup": ""}
+    if changed and not args.dry_run:
+        old_bytes = path.read_bytes()
+        old_text = old_bytes.decode("utf-8")
+        # 行で区切って書き換えたものが、意図どおりか(残す source とほかの表は元のまま、足した source だけが
+        # 増えている)を、書く前に確かめる。違えば、書かずに止まる
+        try:
+            new_text = rewrite_sources(old_text, {s.id for s in keep}, add)
+            before, after = tomllib.loads(old_text), tomllib.loads(new_text)
+            kept = [s for s in before.get("source", []) if s.get("id") in {k.id for k in keep}]
+            want = kept + [{"id": sid, "root": root} for sid, root in add]
+            rest = lambda d: {k: v for k, v in d.items() if k != "source"}     # noqa: E731
+            by_id = lambda items: sorted(items, key=lambda s: str(s.get("id")))  # noqa: E731
+            ok = by_id(after.get("source", [])) == by_id(want) and rest(before) == rest(after)
+        except (ConfigError, tomllib.TOMLDecodeError):
+            ok = False
+        if not ok:
+            raise ConfigError(f"設定を自動で書き換えられませんでした。{path} の [[source]] を手で直してください")
+        backup = path.with_name(CONFIG_FILE_NAME + ".bak")
+        backup.write_bytes(old_bytes)
+        path.write_bytes(new_text.encode("utf-8"))
+        try:
+            load_config(path)                # 書いたものが読めることを確かめる
+        except ConfigError:
+            path.write_bytes(old_bytes)      # 読めなければ、元に戻す
+            raise
+        result["backup"] = str(backup)
+    if as_json:
+        sys.stdout.write(json.dumps(result, ensure_ascii=False) + "\n")
+        return 0
+    head = {"unchanged": "検索するフォルダは、変わりません", "would change": "検索するフォルダを、次のように替えます(まだ書いていません)",
+            "changed": f"設定を書き直しました: {path}"}[result["result"]]
+    print(head)
+    for label, key_ in (("source", "keep"), ("足した source" if not args.dry_run else "足す source", "add"),
+                        ("外した source" if not args.dry_run else "外す source", "remove")):
+        for s in result[key_]:
+            print(f"  {label} {s['id']}: {s['root']}")
+    if result["backup"]:
+        print(f"前の設定を残しました: {result['backup']}")
+        print(f"次は `{command_hint('index')}` で索引を作り直します(変わっていないファイルの埋め込みは使い回します)。")
+    print("result: " + result["result"])
     return 0
 
 
@@ -381,7 +569,16 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--force", action="store_true", help="設定がすでにあっても書き直す")
     p.set_defaults(func=cmd_init)
 
-    p = sub.add_parser("index", help="索引を作る(前の索引の埋め込みは、変わっていない passage の分を使い回す)",
+    p = sub.add_parser("sources", help="検索するフォルダ(設定の [[source]])を見る・替える", allow_abbrev=False)
+    common(p)
+    p.add_argument("--workspace", help="設定を探し始めるフォルダ(省くと今のフォルダ)")
+    p.add_argument("--set", nargs="+", metavar="フォルダ",
+                   help="検索するフォルダを、並べたものに替える([[source]] だけを書き直す。ほかの設定は変えない)")
+    p.add_argument("--dry-run", action="store_true", help="--set で、書かずに、何が変わるかだけを出す")
+    p.add_argument("--json", action="store_true", help="1 行の JSON で出す")
+    p.set_defaults(func=cmd_sources)
+
+    p = sub.add_parser("index",help="索引を作る(前の索引の埋め込みは、変わっていない passage の分を使い回す)",
                        allow_abbrev=False)
     common(p)
     p.add_argument("--full", action="store_true", help="前の索引の分割と埋め込みも、途中までの埋め込み(.partial)も使い回さず、すべて分け直し、埋め込み直す")

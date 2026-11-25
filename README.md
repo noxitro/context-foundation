@@ -59,8 +59,12 @@ arguments and asks in dialogs, in order, whether to compute embeddings on the
 GPU or the CPU (Windows only) and for the folder of an embedding model already
 on the PC, then installs the Python dependencies and registers that model (it
 never downloads the model), and `/context-index` builds or
-updates the index (extensions are experimental in Copilot CLI and load after
-`/settings experimental on`). Python dependencies
+updates the index. It takes no arguments either: the first time it shows a
+checklist of the workspace's folders and a summary to confirm; after that it
+shows the current state and asks whether to update, change the searched
+folders, or rebuild everything. When the workspace has no index yet,
+`/context-setup` ends by offering to build it. (Extensions are experimental in
+Copilot CLI and load after `/settings experimental on`.) Python dependencies
 (about 200 MB) and the embedding model (about 490 MB) live outside the
 plugin, in a per-user folder. `/context-setup` (or `python -I ctxf.py setup`)
 installs the Python dependencies once. It does not install the embedding
@@ -240,7 +244,9 @@ calls. Version 0.4.4 lets the first `/context-index` without folders show a
 checklist of the workspace's folders to pick from. Version 0.4.7 stops the
 MCP server from offering its tools in workspaces without an index. Neither
 command has been tried in the app yet. Version 0.4.9 adds the related-code
-change described above.
+change described above. Versions 0.4.19 and 0.4.21 turn `/context-setup` and
+`/context-index` into dialogs that take no arguments (tried in Copilot CLI
+1.0.115 on Windows).
 
 How to run it in production (setup, configuration, operation, limits) is in
 [docs/production.md](docs/production.md) (in Japanese).

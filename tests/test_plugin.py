@@ -119,6 +119,10 @@ def test_extension_adds_the_index_command_and_its_library_passes_its_tests():
     # 入口は、プラグインのルートの ctxf.py(skill のフォルダの写しは要らない)。/context-index は init と index だけを
     # 動かし、setup は /context-setup だけが動かす(利用者が打つコマンド。大きな取得を、索引のコマンドからは始めない)
     assert ext.count('"ctxf.py")') == 2 and '"init"' in ext and '"index"' in ext
+    # /context-index は、引数を取らずにダイアログで尋ねる。今の状態を読むもの(sources --json。何も書かない)、
+    # フォルダを変えるときの確かめ(--dry-run。書かない)、書き直し(--set)の 3 つだけが sources を動かす
+    assert ext.count('[ctxf, "sources"') == 3 and ext.count('"--dry-run"') == 1
+    assert "引数は取らず" in re.search(r'name: "context-index",\s*description: "([^"]+)"', ext).group(1)
     # setup は、状態を読むもの(--status。何も入れない。尋ねる前と、モデルのフォルダを確かめる前)と、用意そのもの
     assert ext.count('"setup"') == 3 and ext.count('[ctxf, "setup", "--status"]') == 2
     assert ext.count('[ctxf, "setup", ...setupArgs(plan)]') == 1
