@@ -53,10 +53,11 @@ grepping, only in workspaces that have an index. A **skill**
 (`context-search`) that runs the same search through the command line stays
 as a fallback for when the MCP tools are not available. A Copilot CLI
 **extension** adds two slash commands that the user types and that run in
-the background without calling the model: `/context-setup` installs the
-Python dependencies and, if the embedding model is missing, asks in a dialog
-for the folder of a model already on the PC and registers it (it never
-downloads the model), and `/context-index` builds or
+the background without calling the model: `/context-setup` takes no
+arguments and asks in dialogs, in order, whether to compute embeddings on the
+GPU or the CPU (Windows only) and for the folder of an embedding model already
+on the PC, then installs the Python dependencies and registers that model (it
+never downloads the model), and `/context-index` builds or
 updates the index (extensions are experimental in Copilot CLI and load after
 `/settings experimental on`). Python dependencies
 (about 200 MB) and the embedding model (about 490 MB) live outside the

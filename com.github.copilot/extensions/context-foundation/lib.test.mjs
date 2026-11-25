@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import {
   chooseFallback, commandHandler, dataHome, escapeMarkdown, failureMessage, findConfig, folderChoices, folderSchema, hasLocalVenv, indexFile, MAX_FOLDER_CHOICES, pickedFolders, WHOLE_WORKSPACE, initSources, joinOptions, keywordOnly, lastCwd, loadSdk, logTail,
   makeNotifier, modelFolderPrompt, modelFolderSchema, modelMissing, modelUseResult, parseIndexArgs, pickedModelFolder, parseProgress, parseSetupProgress, planIndex, pluginRoot, progressNote, repairCommand,
-  accelPrompt, accelSchema, choiceSchema, modelNotUsedReason, CPU_CHOICE, pickedYes, SETUP_NO, SETUP_YES, currentModelFolder, GPU_CHOICE, modelChoice, modelStepPrompt, pickedAccel, setupArgs, setupConfirmText,
+  accelPrompt, accelSchema, choiceSchema, modelNotUsedReason, REINDEX_AFTER_MODEL, setupStartText, setupWhat, CPU_CHOICE, pickedYes, SETUP_NO, SETUP_YES, currentModelFolder, GPU_CHOICE, modelChoice, modelStepPrompt, pickedAccel, setupArgs, setupConfirmText,
   setupStatus, setupSteps, SDK_NAMES, setupFailureMessage, setupProgressNote, setupRuntimeFolder, splitArgs, wantDialog, workspaceOf,
 } from "./lib.mjs";
 
@@ -246,6 +246,8 @@ test("GPU の段: 前の選び方を初めの値にし、答えを GPU か CPU �
   assert.deepEqual(accelSchema(FRESH).properties.accel.enum, [GPU_CHOICE, CPU_CHOICE]);
   assert.match(accelPrompt(1, 3, READY), /^context-foundation の用意\(1\/3\): .*今は GPU です/);
   assert.doesNotMatch(accelPrompt(1, 3, FRESH), /今は/);
+  // 読めない答えの後の尋ね直しは、段の頭の後ろにわけを添える
+  assert.match(accelPrompt(1, 3, FRESH, "前の答えを読めませんでした。"), /^context-foundation の用意\(1\/3\): 前の答えを読めませんでした。\n索引づくりで/);
   assert.equal(pickedAccel({ accel: GPU_CHOICE }), true);
   assert.equal(pickedAccel({ accel: CPU_CHOICE }), false);
   assert.equal(pickedAccel({ accel: " directml " }), true);   // Other に書き込まれたもの
@@ -265,6 +267,13 @@ test("モデルの段: 今のフォルダを初めの値にし、そのままな
   assert.equal("default" in modelFolderSchema("").properties.folder, false);
   assert.match(modelStepPrompt(2, 3, READY), /^context-foundation の用意\(2\/3\): 埋め込みモデル\(intfloat\/multilingual-e5-small\)は入っています/);
   assert.match(modelStepPrompt(2, 3, FRESH), /空のまま送ると、keyword だけの検索で続けます/);
+  // 入っているモデルは、欄を空にしても外れない(そう書く)
+  assert.match(modelStepPrompt(2, 3, READY), /欄を空にして送っても、今のモデルのままです.*model forget/);
+  assert.match(modelFolderSchema("D:\\m").properties.folder.description, /空にして送っても、今のモデルを使います/);
+  // 仮想環境が無いうち(model が無い)は、既定のモデルの名前と入手先を出す
+  assert.match(modelStepPrompt(2, 3, { ...FRESH, default_model: "org/name" }),
+    /埋め込みモデル\(既定は org\/name。入手先 https:\/\/huggingface\.co\/org\/name\)のフォルダ/);
+  assert.match(modelStepPrompt(2, 3, FRESH), /埋め込みモデルのフォルダを入れてください/);   // 名前を読めなければ、名前なしで尋ねる
   const missing = { ...FRESH, model: { state: "missing", name: "m", license: "MIT", size_mb: 487 } };
   assert.match(modelStepPrompt(2, 3, missing), /埋め込みモデル\(m、ライセンス MIT、約 487 MB\)のフォルダ/);
   assert.deepEqual(modelChoice("D:\\models\\e5\\", READY), { kind: "keep" });   // 末尾の区切りと大文字小文字は見ない
@@ -284,6 +293,17 @@ test("はい・いいえは日本語の選択肢で尋ね、選んだ yes だけ
   assert.equal(pickedYes({ answer: SETUP_NO }, SETUP_YES), false);
   assert.equal(pickedYes({ answer: "はい" }, SETUP_YES), false);   // Other に書き込まれたものは yes にしない
   assert.equal(pickedYes(undefined, SETUP_YES), false);
+});
+
+test("始めの知らせは、確かめの段と同じ「入れるもの」を言い、覚えた後の案内は full を勧めない", () => {
+  assert.match(setupStartText({ gpu: true, model: { kind: "keep" } }, READY, "H"), /^用意\(setup\)を始めました。入れるもの: 済んでいるので、確かめるだけです。置き場: H/);
+  assert.match(setupStartText({ gpu: false, model: null }, READY, "H"), /CPU 用に入れ直します/);
+  assert.match(setupStartText({ gpu: true, model: null }, FRESH, "H"), /PyPI から約 200 MB。初めは数分/);
+  assert.match(setupStartText(null, null, "H"), /済んでいれば確かめるだけです/);   // 尋ねられなかった(ダイアログを出せないホスト)
+  assert.equal(setupWhat(null, READY), "済んでいるので、確かめるだけです");
+  // 索引づくりは、モデルが違うときだけ自分ですべて埋め込み直す。full を勧めると、同じモデルでも埋め込み直してしまう
+  assert.doesNotMatch(REINDEX_AFTER_MODEL, /full/);
+  assert.match(REINDEX_AFTER_MODEL, /\/context-index を打つと/);
 });
 
 test("確かめの段: 入れるもの・置き場・計算・モデルをまとめる", () => {
