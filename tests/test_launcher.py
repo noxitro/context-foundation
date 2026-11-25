@@ -339,6 +339,30 @@ def test_setup_does_not_download_the_model_and_says_it_is_not_installed(monkeypa
     assert 'ctxf.py" model download' in out and "用意ができました" in out
 
 
+def test_setup_status_reads_the_state_without_installing_anything(monkeypatch, tmp_path, capsys):
+    """/context-setup が尋ねる前に読む状態。何も入れず、仮想環境が無ければモデルも見ない。"""
+    ctxf = load_launcher(monkeypatch, tmp_path / "home")
+    started = []
+    monkeypatch.setattr(ctxf.subprocess, "call", lambda cmd, *a, **k: started.append(cmd) or 0)
+    assert ctxf.setup(["--status"]) == 0
+    fresh = json.loads(capsys.readouterr().out)
+    assert fresh == {"ready": False, "gpu": False, "gpu_supported": os.name == "nt", "home": str(tmp_path / "home"),
+                     "model": None}
+    # 前の setup で GPU 用を選んで、済んでいる
+    ctxf._write_stamp(ctxf.dependencies(), gpu=True)
+    monkeypatch.setattr(ctxf, "_venv_python", lambda venv: "py")
+    monkeypatch.setattr(ctxf, "_setup_model_info", lambda py: {"state": "installed", "name": "m", "folder": "/m"})
+    assert ctxf.setup(["--status"]) == 0
+    done = json.loads(capsys.readouterr().out)
+    assert done["ready"] and done["gpu"] and done["model"] == {"state": "installed", "name": "m", "folder": "/m"}
+    # 依存の一覧が変わった(覚え書きが古い)なら、済んでいない。モデルは見ない
+    ctxf._write_stamp(["other==1"], gpu=True)
+    assert ctxf.setup(["--status"]) == 0
+    stale = json.loads(capsys.readouterr().out)
+    assert not stale["ready"] and stale["gpu"] and stale["model"] is None
+    assert not started
+
+
 def test_setup_model_report_for_each_state(monkeypatch, tmp_path):
     ctxf = load_launcher(monkeypatch, tmp_path / "home")
     assert ctxf.model_report({"state": "installed", "name": "m", "folder": "/m"}).strip() == \

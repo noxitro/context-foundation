@@ -10,9 +10,12 @@
 //     - この PC の用意(setup)ができていなければ、何も作らずに、用意の仕方を出す(大きな取得は、利用者が自分で始める)
 //     裏で動かし、走っている間は進み具合をときどき出し、終わったらそう出す。ログは .cf\context-index.log。
 //
-// /context-setup [no-model] [gpu | cpu]
+// /context-setup(引数は取らない)
 //     この PC の用意(ctxf.py setup。Python のパッケージ約 200 MB を、利用者ごとの置き場に
 //     入れる)をする。利用者が打つコマンドなので、打ったことを同意とみなす(エージェントからは呼べない)。
+//     始めに、ダイアログで順に尋ねる: 埋め込みを GPU と CPU のどちらで計算するか(Windows だけ)、手元に置いた
+//     埋め込みモデルのフォルダ、まとめた内容でよいか。尋ねる前に ctxf.py setup --status で今の状態を読み、
+//     前の選び方と今のモデルのフォルダを初めの値にする。ダイアログを出せないホストでは、尋ねずに前の選び方で用意する。
 //     済んでいれば、確かめるだけで終わる。リポジトリを取得して隣に .venv がある人は、setup.bat を案内して何もしない。
 //     裏で動かし、進み具合をときどき出す。ログは利用者ごとの置き場の context-setup.log。
 //     索引づくりと用意は、同時には動かさない(用意は、索引づくりが使う仮想環境を作り直すことがある)。
@@ -27,7 +30,9 @@ import { fileURLToPath } from "node:url";
 import {
   chooseFallback, commandHandler, dataHome, failureMessage, findConfig, folderChoices, folderSchema, hasLocalVenv, indexFile, initSources, joinOptions,
   keywordOnly, lastCwd, loadSdk, makeNotifier, modelFolderPrompt, modelFolderSchema, modelMissing, modelUseResult, parseProgress,
-  parseSetupArgs, parseSetupProgress, pickedFolders, pickedModelFolder, planIndex, pluginRoot, progressNote, SETUP_HELP, setupFailureMessage, setupProgressNote, setupRuntimeFolder, workspaceOf,
+  accelPrompt, accelSchema, choiceSchema, currentModelFolder, pickedYes, SETUP_NO, SETUP_YES, modelChoice, modelStepPrompt, parseSetupProgress, pickedAccel, pickedFolders, pickedModelFolder,
+  planIndex, pluginRoot, progressNote, setupArgs, setupConfirmText, setupFailureMessage, setupProgressNote, setupRuntimeFolder, setupStatus,
+  setupSteps, splitArgs, workspaceOf,
 } from "./lib.mjs";
 
 const { joinSession } = await loadSdk((name) => import(name));
@@ -115,7 +120,11 @@ async function chooseFolders(ws) {
   try {
     const picked = await exclusive(async () => {
       if (!names.length) {
-        return (await session.ui.confirm(`context-foundation: 作業フォルダ全体(${ws})で索引を作りますか`)) ? ["."] : [];
+        const r = await session.ui.elicitation({
+          message: `context-foundation: 作業フォルダ全体(${ws})で索引を作りますか`,
+          requestedSchema: choiceSchema("作業フォルダ全体で作る", "やめる"),
+        });
+        return r.action === "accept" && pickedYes(r.content, "作業フォルダ全体で作る") ? ["."] : [];
       }
       const r = await session.ui.elicitation({
         message: `context-foundation: 索引に入れるフォルダを選んでください(${ws})`,
@@ -148,33 +157,45 @@ function watchProgress(log, t0, parse = parseProgress, decide = progressNote) {
 
 const plugin = () => pluginRoot(dirname(fileURLToPath(import.meta.url)));
 
-// /context-setup の後で、手元に置いた埋め込みモデルのフォルダを尋ね、ctxf.py model use で確かめて覚える
-// (取得はしない。モデルは呼ばない)。ダイアログは知らせのダイアログと同じ列に並べる。
+// はい・いいえを、日本語の選択肢のダイアログで尋ねる(session.ui.confirm は、ホストが英語の Yes・No を出す)。
+// 知らせのダイアログと同じ列に並べる。yes を選んで送ったときだけ true
+async function askYesNo(message, yes, no) {
+  const r = await exclusive(() => session.ui.elicitation({ message, requestedSchema: choiceSchema(yes, no) }));
+  return r.action === "accept" && pickedYes(r.content, yes);
+}
+
+// /context-setup の後で、手元に置いた埋め込みモデルのフォルダを ctxf.py model use で確かめて覚える
+// (取得はしない。モデルは呼ばない)。first は始めの質問で入れられたフォルダ(1 回目は尋ねずにそれを使う)。
+// 使えなければ、わけを添えて尋ね直す。ダイアログは知らせのダイアログと同じ列に並べる。
 // { state: "saved", folder, notes } か { state: "skipped", why }。ダイアログを出せないホストでは null
 const MODEL_TRIES = 3;
-async function askModelFolder(ctxf, env, missing) {
-  if (!session.capabilities?.ui?.elicitation) return null;
+async function askModelFolder(ctxf, env, missing, first = "") {
+  if (!first && !session.capabilities?.ui?.elicitation) return null;
   let retry = "";
   for (let i = 0; i < MODEL_TRIES; i++) {
     let folder;
-    try {
-      const r = await exclusive(() => session.ui.elicitation({
-        message: modelFolderPrompt(missing, retry), requestedSchema: modelFolderSchema(),
-      }));
-      folder = r.action === "accept" ? pickedModelFolder(r.content) : "";
-    } catch (err) {
-      return i ? { state: "skipped", why: `ダイアログを出せませんでした(${err?.message ?? err})` } : null;
+    if (i === 0 && first) {
+      folder = first;
+    } else {
+      try {
+        const r = await exclusive(() => session.ui.elicitation({
+          message: modelFolderPrompt(missing, retry), requestedSchema: modelFolderSchema(),
+        }));
+        folder = r.action === "accept" ? pickedModelFolder(r.content) : "";
+      } catch (err) {
+        return i ? { state: "skipped", why: `ダイアログを出せませんでした(${err?.message ?? err})` } : null;
+      }
     }
-    if (!folder) return { state: "skipped", why: "" };
+    if (!folder) return { state: "skipped", why: retry };   // 尋ね直しを取り消したときは、前のだめだったわけを添える
     await say(`context-foundation: モデルを読み込んで確かめています(${folder})`);
     let r = await runText([ctxf, "model", "use", folder], env);
     if (r.error) return { state: "skipped", why: cannotStart(r) };
     let u = modelUseResult(r.code, r.out);
     if (u.state === "warnings") {
       // 大きさが控えの値と違う(別の版・別のモデル)など。覚える前に、使うかを尋ねる
-      const ok = await exclusive(() => session.ui.confirm(
+      const ok = await askYesNo(
         `context-foundation: ${folder} を確かめると、気になる点がありました。\n${u.notes.map((n) => `- ${n}`).join("\n")}\n` +
-        "このフォルダを使いますか")).catch(() => false);
+        "このフォルダを使いますか", "このフォルダを使う", "使わない(別のフォルダを入れる)").catch(() => false);
       if (!ok) {
         retry = "前のフォルダは使いませんでした。";
         continue;
@@ -258,12 +279,33 @@ async function indexCommand(ctx) {
   }
 }
 
-async function setupCommand(ctx) {
-  const opts = parseSetupArgs(ctx.args);
-  if (opts.help || opts.error) {
-    await tell(`context-foundation: ${opts.help ? SETUP_HELP : opts.error}`, opts.error ? "error" : undefined);
-    return;
+// 始めに、用意の中身を順に尋ねる(lib.mjs の setupSteps)。{ gpu, model }(gpu・model が null の段は尋ねていない)。
+// 取り消されたら null。ダイアログを出せなければ、投げる(呼ぶ側が、尋ねずに用意する)
+async function askSetupPlan(status, home) {
+  const steps = setupSteps(status);
+  const plan = { gpu: null, model: null };
+  for (const [i, step] of steps.entries()) {
+    const n = i + 1;
+    if (step === "accel") {
+      const r = await exclusive(() => session.ui.elicitation({
+        message: accelPrompt(n, steps.length, status), requestedSchema: accelSchema(status),
+      }));
+      if (r.action !== "accept") return null;
+      plan.gpu = pickedAccel(r.content) ?? Boolean(status?.gpu);
+    } else if (step === "model") {
+      const r = await exclusive(() => session.ui.elicitation({
+        message: modelStepPrompt(n, steps.length, status), requestedSchema: modelFolderSchema(currentModelFolder(status)),
+      }));
+      if (r.action !== "accept") return null;
+      plan.model = modelChoice(pickedModelFolder(r.content), status);
+    } else if (!(await askYesNo(setupConfirmText(n, steps.length, plan, status, home), SETUP_YES, SETUP_NO))) {
+      return null;
+    }
   }
+  return plan;
+}
+
+async function setupCommand(ctx) {
   if (busy()) return;
   running = "用意(setup)";
   try {
@@ -277,11 +319,6 @@ async function setupCommand(ctx) {
     const home = dataHome(process.env);
     mkdirSync(home, { recursive: true });
     const log = join(home, "context-setup.log");
-    const t0 = Date.now();
-    await tell("context-foundation: 用意(setup)を始めました。" +
-      `Python のパッケージ(PyPI から約 200 MB)を、${home} に入れます(埋め込みモデルは入れません)。` +
-      `初めては数分かかります(済んでいれば、確かめるだけで終わります)。${carryOn}` +
-      `ログ: ${log}`);
     // setup がモデルの有無を確かめるときに、このセッションの作業フォルダの設定を読むように、設定のファイルを渡す
     // (Copilot は、拡張をプラグインのフォルダで動かすので、そのままでは子は作業フォルダの設定を見つけない。
     // 作業フォルダを今のフォルダとして渡すと、ctxf.py は直下の config.toml を先に探し、ほかの道具の設定を拾いうる)
@@ -292,8 +329,38 @@ async function setupCommand(ctx) {
       // CF_CONFIG の指す先が無い(/context-index が、そのわけを出す)
     }
     const env = config && !process.env.CF_CONFIG ? { ...process.env, CF_CONFIG: config } : undefined;
+    // 引数は取らない(前の版の gpu・cpu・no-model も、尋ねる形に替えた)
+    const ignored = splitArgs(ctx.args ?? "").length ? "引数は使いません(順に尋ねます)。" : "";
+    // 今の状態を読んでから尋ねる(前の選び方と今のモデルのフォルダを、初めの値にする)
+    let plan = null;
+    let asked = false;
+    if (session.capabilities?.ui?.elicitation) {
+      const st = await runText([ctxf, "setup", "--status"], env);
+      if (st.error) {
+        await tell(`context-foundation: ${cannotStart(st)}`, "error");
+        return;
+      }
+      running = "用意(setup)の質問への答え";
+      try {
+        plan = await askSetupPlan(setupStatus(st.out), home);
+        asked = true;
+      } catch (err) {
+        // このホストが選ぶダイアログを描けないなど。尋ねずに、前の選び方で用意する
+        await say(`context-foundation: ダイアログを出せませんでした(${err?.message ?? err})。尋ねずに、前の選び方で用意します`);
+      }
+      if (asked && !plan) {
+        await tell(`context-foundation: ${ignored}用意をやめました(何も入れていません)`);
+        return;
+      }
+      running = "用意(setup)";
+    }
+    const t0 = Date.now();
+    await tell(`context-foundation: ${ignored}用意(setup)を始めました。` +
+      `Python のパッケージ(PyPI から約 200 MB)を、${home} に入れます(埋め込みモデルは入れません)。` +
+      `初めては数分かかります(済んでいれば、確かめるだけで終わります)。${carryOn}` +
+      `ログ: ${log}`);
     const stop = watchProgress(log, t0, parseSetupProgress, setupProgressNote);
-    const r = await run([ctxf, "setup", ...opts.args], log, env).finally(stop);
+    const r = await run([ctxf, "setup", ...setupArgs(plan)], log, env).finally(stop);
     const sec = Math.round((Date.now() - t0) / 1000);
     if (r.error) {
       await tell(`context-foundation: ${cannotStart(r)}`, "error");
@@ -312,39 +379,44 @@ async function setupCommand(ctx) {
         : "次に /context-index を打ち、索引に入れるフォルダを選んでください(並べて打っても構いません。例: /context-index Engine Docs)。" +
           "できたら、新しいセッションを始めます";
     // 埋め込みモデル(PyPI の外の OSS)は、利用者の環境で確かめてから入れるものなので、取得しない。
-    // 無ければ、手元に置いたフォルダを尋ねて覚える(ダイアログ)。飛ばしたら、無いことと入れ方を知らせる
-    // no-model のときは尋ねない(setup もモデルの有無を出さないが、出ていても尋ねない)
-    const missing = opts.args.includes("--no-model") ? null : modelMissing(out);
+    // 始めの質問で入れられたフォルダを、model use で確かめて覚える(使えなければ、わけを添えて尋ね直す)。
+    // 尋ねられなかったとき(ダイアログを出せないホスト)は、無いことと入れ方を知らせる
+    const missing = modelMissing(out);
+    const choice = plan?.model;
     let picked = null;
-    if (missing?.ask) {
+    if (choice?.kind === "use" && (!missing || missing.ask)) {
+      running = "埋め込みモデルのフォルダの確かめ";
+      picked = await askModelFolder(ctxf, env, missing, choice.folder);
+    } else if (!asked && missing?.ask) {
       running = "埋め込みモデルのフォルダの指定";
       picked = await askModelFolder(ctxf, env, missing);
     }
     const hasIndex = Boolean(config && existsSync(indexFile(config)));
-    const modelNote = !missing ? ""
-      : picked?.state === "saved"
-        ? `埋め込みモデルのフォルダを覚えました(${picked.folder}。この PC のすべての作業フォルダで使います)。` +
-          picked.notes.map((n) => `注意: ${n}\n`).join("") +
-          (hasIndex ? "今の索引は keyword だけのことがあります。/context-index を打つと、意味での検索が加わります。\n" : "")
-        : (picked?.why ? `モデルのフォルダは覚えていません(${picked.why})。` : "") +
-          `埋め込みモデル(${missing.name})はインストールされていません(Hugging Face の OSS なので、setup では入れません)。` +
-          "意味での検索には要ります。" +
-          (!missing.ask ? "設定の model_dir のフォルダにモデルを置いてください。\n"
-            : "この PC に置いてあれば、もう一度 /context-setup を打ってフォルダを入れるか、ターミナルで次を実行します: " +
-              `python -I "${ctxf}" model use "<フォルダ>"\n` +
-              (missing.command ? `取得するときは、入手先とライセンスを確かめ、この PC で使ってよければ、ターミナルで次を実行します: ${missing.command}\n` : "\n")) +
-          "入れるまでは、検索は keyword だけです。\n";
+    const saved = picked?.state === "saved"
+      ? `埋め込みモデルのフォルダを覚えました(${picked.folder}。この PC のすべての作業フォルダで使います)。` +
+        picked.notes.map((n) => `注意: ${n}\n`).join("") +
+        (hasIndex ? "今の索引は、前のモデルの埋め込みか keyword だけのことがあります。/context-index full を打つと、" +
+          "このモデルで埋め込み直します。\n" : "")
+      : "";
+    const modelNote = saved || (!missing ? (picked?.why ? `モデルのフォルダは替えていません(${picked.why})。` : "")
+      : (picked?.why ? `モデルのフォルダは覚えていません(${picked.why})。` : "") +
+        `埋め込みモデル(${missing.name})はインストールされていません(Hugging Face の OSS なので、setup では入れません)。` +
+        "意味での検索には要ります。" +
+        (!missing.ask ? "設定の model_dir のフォルダにモデルを置いてください。\n"
+          : "この PC に置いてあれば、もう一度 /context-setup を打ってフォルダを入れるか、ターミナルで次を実行します: " +
+            `python -I "${ctxf}" model use "<フォルダ>"\n` +
+            (missing.command ? `取得するときは、入手先とライセンスを確かめ、この PC で使ってよければ、ターミナルで次を実行します: ${missing.command}\n` : "\n")) +
+        "入れるまでは、検索は keyword だけです。\n");
     await tell(`context-foundation: 用意ができました(${sec} 秒、置き場: ${setupRuntimeFolder(out) || home})。` +
       modelNote + next);
   } finally {
     running = null;
   }
 }
-
 const commands = [
   {
     name: "context-setup",
-    description: "[no-model] [gpu | cpu] — この PC の検索の用意(context-foundation)。Python のパッケージ約 200 MB を入れる(埋め込みモデルは入れず、有無を知らせる)。初めに 1 回(モデルは呼ばない)",
+    description: "この PC の検索の用意(context-foundation)。GPU か CPU か、手元の埋め込みモデルのフォルダを順に尋ねてから、Python のパッケージ約 200 MB を入れる(埋め込みモデルは取得しない)。初めに 1 回(モデルは呼ばない)",
     handler: handle(setupCommand),
   },
   {
