@@ -102,7 +102,7 @@ def test_status_without_new_fields_is_unchanged():
     """0.3 の索引の meta には、新しい項目が無い。そのときは何も足さない。"""
     st = {"stats": {"files": 1, "chunks": 1, "lines": 1, "skipped": {"binary": 1}}, "sources": [], "modes": ["keyword"]}
     assert "folders" not in status_agent(st) and "既定の名前" not in status_human(st)
-    assert status_agent(st).count("\n") == 4
+    assert status_agent(st).count("\n") == 5        # 最後の 1 行は、索引の時点の内容だという注意
 
 
 # --- 重なった source(IDX-7)と、除いたフォルダを source にして戻すこと

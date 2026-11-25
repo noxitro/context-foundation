@@ -606,7 +606,9 @@ GitHub Copilot app は、拡張がセッションに出す知らせのうち、�
 - 索引の後に増えたファイルは、作り直すまで検索に出ません。変わった
   ファイルや消えたファイルを指す結果には印が付きます(`[changed since
   index]`、`[file no longer exists]`)が、増えたファイルは結果に出ない
-  ので、印も付きません
+  ので、印も付きません。0.4.23 からは、当たりが 0 件のときの返事と、道具の
+  `status` の返事に、「索引の後に足されたファイルは検索されないので、grep で
+  探す」という、エージェントへの注意が出ます
 - 索引を作ってから 7 日以上たつと、セッションの始まりに、作ってからの
   日数と、増えたファイルは出ないこと、作り直し方を、エージェントに知らせ
   ます。エージェントは、新しく足したコードは grep でも探し、利用者に 1 度、
@@ -1316,7 +1318,7 @@ Haiku 5.5、合成のコーパス、毎回空の設定フォルダ)。
   "name": "context-foundation",
   "source": { "source": "github", "repo": "noxitro/context-foundation" },
   "description": "Find code and design docs by meaning and keywords, locally.",
-  "version": "0.4.22"
+  "version": "0.4.23"
 }
 ```
 

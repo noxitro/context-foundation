@@ -24,6 +24,15 @@ from .store import IndexError_, fetch_passages, load_vectors, open_readonly, rea
 from .textproc import MAX_QUERY_TOKENS, fts_query, query_tokens, query_tokens_cut
 
 
+class UnknownSourceError(ValueError):
+    """索引に無い source_id を渡された。文は人が読む形(CLI が、そのまま出す)。エージェントに返す英語の文は、
+    MCP サーバーが unknown と known から作る。"""
+
+    def __init__(self, unknown: list[str], known: list[str]):
+        super().__init__(f"知らない source_id です: {', '.join(unknown)}(索引にあるのは {', '.join(known)})")
+        self.unknown, self.known = list(unknown), list(known)
+
+
 @dataclass
 class SearchResponse:
     query: str
@@ -290,7 +299,7 @@ class Searcher:
         sources = [s for s in (source_ids or []) if s]
         unknown = [s for s in sources if s not in known]
         if unknown:
-            raise ValueError(f"知らない source_id です: {', '.join(unknown)}(索引にあるのは {', '.join(known)})")
+            raise UnknownSourceError(unknown, known)
 
         # 用語の対応表で、質問に語を足す(日本語だけの質問で、英語のコードと文書を引くため)
         added = self._glossary.expand(query) if self._glossary else []
