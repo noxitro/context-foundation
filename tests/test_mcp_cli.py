@@ -455,8 +455,8 @@ def test_initialize_instructions_depend_on_index(indexed_workspace, tmp_path, ou
     server = Mcp(indexed_workspace)
     try:
         init = server.call("initialize", {"protocolVersion": "2025-06-18"})["result"]
-        assert init["instructions"] == mcp_server.INSTRUCTIONS               # 索引のある作業フォルダは 0.3 のまま
-        assert init["instructions"].startswith("Call `search` first, before grepping")
+        assert init["instructions"] == mcp_server.INSTRUCTIONS               # 索引のある作業フォルダ
+        assert "call `search` first, before grepping" in init["instructions"]
         tools = server.call("tools/list")["result"]["tools"]
         assert tools == mcp_server.TOOLS
     finally:
@@ -517,7 +517,10 @@ def test_watch_index_notifies_once_per_change(monkeypatch):
 
 # --- 測った構成の出力が 0.3.1 と同じこと(不変条件 1)。正解は tests/fixtures/golden/ に、0.3.1 のコードで作ったもの
 # (フィクスチャのコーパスを写し、source のルートを '.' にした作業フォルダ。埋め込みはテスト用のハッシュ)。
-# 定数どうしでは比べない: 道具の説明・指示・hook の文・出力の形を変えると、ここで落ちる
+# 定数どうしでは比べない: 道具の説明・指示・hook の文・出力の形を変えると、ここで落ちる。
+# 0.4.24 で、道具の説明・挨拶・始めの 1 文を書き直した(mcp_instructions.txt・mcp_tools.json・
+# session_hint_mcp.json)。この 3 つは、エージェントでの合格率を測り直していない文になっている
+# (docs/copilot.md の「検索の限界」)。検索の結果の形(search_*.txt)は、変えていない
 
 GOLDEN = Path(__file__).parent / "fixtures" / "golden"
 # 正解のファイル → search の引数(先頭の行の索引の日時だけ <CREATED_AT> にしてある)
@@ -590,6 +593,29 @@ def test_session_hint_for_a_ready_indexed_workspace_is_the_031_text(root_workspa
                        env=dict(os.environ, CF_PYTHON=sys.executable), timeout=60)
     assert r.returncode == 0
     assert_golden("session_hint_mcp.json", r.stdout)
+
+
+def test_agent_texts_state_the_same_rules():
+    """挨拶・始めの 1 文・道具の説明が、同じ手順を言う。始めの 1 文を出さないホストは挨拶だけを読むので、
+    食い違うと、ホストごとに違う手順で動く。"""
+    from context_foundation import mcp_server
+    hint = json.loads(_golden("session_hint_mcp.json"))["additionalContext"]
+    greeting = mcp_server.INSTRUCTIONS
+    for rule in ("If the question already names the exact function, class or macro, grep that name first.",
+                 "keep the user's own terms when they are not English",
+                 "use them to find the right place, not as the whole answer.",
+                 "open the relevant ones, and grep only for what they do not cover."):
+        assert rule in hint and rule in greeting, rule
+    search = mcp_server.TOOLS[0]
+    # 「答える前に確かめる」は、名指しのときだけの話ではない(1 文に続けると、そう読める)
+    assert "names the exact identifier. Before answering, check the related names" in search["description"]
+    assert "not proof that the thing exists" in search["description"]
+    assert "non-English" in search["inputSchema"]["properties"]["query"]["description"]
+    # 既定の値は、作業フォルダの設定で変わる
+    props = search["inputSchema"]["properties"]
+    assert "workspace default" in props["top_k"]["description"].lower()
+    assert "workspace default" in props["mode"]["description"].lower()
+    assert "source_id" in mcp_server.TOOLS[1]["description"]
 
 
 def test_session_hint_notes_an_index_built_a_week_or_more_ago(tmp_path):

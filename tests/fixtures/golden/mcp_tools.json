@@ -1,19 +1,19 @@
 [
  {
   "name": "search",
-  "description": "Find where something is implemented or documented in this workspace. Searches a local index of the code and design docs by meaning and by keywords, and returns ranked passages as source:path:start-end with scope, signature, text and the other names in the same file. Call it before grep, unless the question already names the exact identifier; then, before answering, check the related names that matter.",
+  "description": "Find where something is implemented or documented in this workspace. Searches a local index of the code and design docs by meaning and by keywords, and returns ranked passages as source:path:start-end with scope, signature, text and the other names in the same file. Call it before grep, unless the question already names the exact identifier. Before answering, check the related names that matter. Passages are the nearest matches, not proof that the thing exists: if none shows it, confirm with grep.",
   "inputSchema": {
    "type": "object",
    "properties": {
     "query": {
      "type": "string",
-     "description": "What to find: what the code does, in English, plus identifiers you expect (function, class or file names)."
+     "description": "What to find: what the code does, in English, plus identifiers you expect (function, class or file names). Keep the user's non-English terms too."
     },
     "top_k": {
      "type": "integer",
      "minimum": 1,
      "maximum": 20,
-     "description": "Passages to return (8)."
+     "description": "Passages to return (workspace default, usually 8)."
     },
     "mode": {
      "type": "string",
@@ -22,7 +22,7 @@
       "keyword",
       "semantic"
      ],
-     "description": "Default hybrid."
+     "description": "Workspace default, usually hybrid. keyword: exact names; semantic: ideas."
     },
     "source_id": {
      "type": "string",
@@ -41,7 +41,7 @@
  },
  {
   "name": "status",
-  "description": "Index version, sources, passage counts and build time.",
+  "description": "Source names and roots, folders left out of the index, build time. Call it before using source_id or when a source:path does not open.",
   "inputSchema": {
    "type": "object",
    "properties": {},

@@ -69,8 +69,8 @@ STALE_FOOTER = (" Passages marked [changed since index] show the text and line n
                 "and check the current lines before citing them. Passages marked [file no longer exists] are from "
                 "deleted files; do not cite them. Files added after the index are not searched; grep for those too.")
 # 当たりが 0 件のとき。索引の後に足されたファイルは、変更の印を付ける先の passage が無いので、ここで知らせる
-NO_MATCH = ("No passage matched. Try other words (English terms, identifiers) or search with grep. Files added "
-            "after the index was built are not searched; grep for those.")
+NO_MATCH = ("No passage matched. Try other words (English terms, identifiers, the user's own terms) or search with "
+            "grep. Files added after the index was built are not searched; grep for those.")
 # status の終わりに足す 1 行(索引の後の変化を確かめる `status --check` のときは、その結果の行が代わりに出る)
 INDEX_TIME_NOTE = ("search shows the state at index time: files added after it are not searched (grep for those); "
                    "passages from files changed after it are marked [changed since index]")
