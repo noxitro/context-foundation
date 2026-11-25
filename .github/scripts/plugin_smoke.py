@@ -35,10 +35,22 @@ HIT5_FLOOR = 0.7
 # SDK の名前とコマンドの置き場は版で違う(Copilot CLI 1.0.113 からは @microsoft/copilot-sdk の interaction.commands、
 # 1.0.112 まで と GitHub Copilot app は @github/copilot-sdk の commands)。偽物も、その版の置き場だけを読む
 SDK_KINDS = {"@github/copilot-sdk": "opts.commands", "@microsoft/copilot-sdk": "opts.interaction?.commands"}
+# FAKE_DIALOGS=1 のときは、ダイアログを出せるホストのふりをして、どの質問にも初めの値(schema の default)で答える。
+# FAKE_ANSWERS(JSON の配列)があれば、出た順に、その答えを初めの値に重ねる({} は初めの値のまま)
 FAKE_SDK = """export async function joinSession(opts) {
   globalThis.__commands = __COMMANDS__;
+  const dialogs = process.env.FAKE_DIALOGS === "1";
+  const answers = JSON.parse(process.env.FAKE_ANSWERS || "[]");
+  const defaults = (schema) => Object.fromEntries(Object.entries(schema?.properties ?? {})
+    .filter(([, p]) => p.default !== undefined).map(([k, p]) => [k, p.default]));
   return {
-    capabilities: {},
+    capabilities: dialogs ? { ui: { elicitation: true } } : {},
+    ui: {
+      elicitation: async ({ message, requestedSchema }) => {
+        console.log(`[dialog] ${message}`);
+        return { action: "accept", content: { ...defaults(requestedSchema), ...(answers.shift() ?? {}) } };
+      },
+    },
     getEvents: async () => [{ type: "session.start", data: { context: { cwd: process.env.FAKE_CWD } } }],
     log: async (m, o) => { console.log(`[${o?.level ?? "info"}] ${m}`); },
   };
@@ -181,6 +193,40 @@ def main() -> int:
         p = run([node, work / "drive.mjs", ext, "context-index", ""], env=ext_env, timeout=600)
         check(p.returncode == 0 and "次の検索からこの索引を使います" in p.stdout,
               "/context-index が、索引を作り直す(@microsoft の SDK)", p.stdout + p.stderr)
+        # ダイアログを出せるホスト: 引数は使わずに尋ねる。偽の SDK は、どの質問にも初めの値で答える
+        dlg_env = dict(ext_env, FAKE_DIALOGS="1")
+        p = run([node, work / "drive.mjs", ext, "context-index", "full"], env=dlg_env, timeout=600)
+        check(p.returncode == 0 and "引数は使いません" in p.stdout and "何をしますか" in p.stdout
+              and "次の検索からこの索引を使います" in p.stdout and "すべて埋め込み直す" not in p.stdout,
+              "/context-index が、引数を使わずに尋ね、初めの値(更新する)で索引を更新する", p.stdout + p.stderr)
+        ws3 = work / "workspace3"
+        ws3.mkdir()
+        shutil.copytree(corpus / "engine", ws3 / "engine")
+        shutil.copytree(corpus / "docs", ws3 / "docs")
+        p = run([node, work / "drive.mjs", ext, "context-index", ""], env=dict(dlg_env, FAKE_CWD=str(ws3)), timeout=600)
+        made = (ws3 / ".cf" / "config.toml").read_text(encoding="utf-8") if (ws3 / ".cf" / "config.toml").is_file() else ""
+        check(p.returncode == 0 and "(1/2)" in p.stdout and "(2/2)" in p.stdout and "索引ができました" in p.stdout
+              and "埋め込みは" in p.stdout and "root = 'docs'" in made and "root = 'engine'" in made
+              and (ws3 / ".cf" / "index.db").is_file(),
+              "/context-index が、フォルダを選ばせ、確かめてから、設定と索引を作る(ダイアログ)", p.stdout + p.stderr)
+        # 検索するフォルダを変える: することを選び、engine だけを選び直し、確かめに「はい」(初めの値)と答える
+        change = json.dumps([{"action": "検索するフォルダを変える"}, {"folders": ["engine"]}, {}], ensure_ascii=False)
+        p = run([node, work / "drive.mjs", ext, "context-index", ""],
+                env=dict(dlg_env, FAKE_CWD=str(ws3), FAKE_ANSWERS=change), timeout=600)
+        made = (ws3 / ".cf" / "config.toml").read_text(encoding="utf-8")
+        check(p.returncode == 0 and "外す: docs" in p.stdout and "検索するフォルダを替えました(外した: docs" in p.stdout
+              and "索引ができました" in p.stdout and "root = 'docs'" not in made and "root = 'engine'" in made
+              and (ws3 / ".cf" / "config.toml.bak").is_file(),
+              "/context-index が、検索するフォルダを選び直させ、設定の source だけを書き直して、索引を作り直す",
+              p.stdout + p.stderr)
+        # 索引の無い作業フォルダで用意をすると、終わりに、続けて索引を作るかを尋ねる(初めの値は「索引を作る」)
+        ws4 = work / "workspace4"
+        ws4.mkdir()
+        shutil.copytree(corpus / "engine", ws4 / "engine")
+        p = run([node, work / "drive.mjs", ext, "context-setup", ""], env=dict(dlg_env, FAKE_CWD=str(ws4)), timeout=600)
+        check(p.returncode == 0 and "用意ができました" in p.stdout and "続けて、この作業フォルダ" in p.stdout
+              and "索引ができました" in p.stdout and (ws4 / ".cf" / "index.db").is_file(),
+              "/context-setup が、終わりに尋ねて、続けて索引を作る(ダイアログ)", p.stdout + p.stderr)
         # 用意はすでに済んでいるので、確かめるだけで終わる(取得はしない)。ログは利用者ごとの置き場に書く
         p = run([node, work / "drive.mjs", ext, "context-setup", ""], env=ext_env, timeout=600)
         log = Path(env["CF_HOME"]) / "context-setup.log"

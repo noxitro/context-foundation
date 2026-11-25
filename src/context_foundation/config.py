@@ -201,14 +201,15 @@ def _index_file(value: str, cf_dir: Path) -> Path:
 def load_config(path: str | os.PathLike) -> Config:
     path = Path(path).resolve()
     try:
+        # 先頭の BOM は読み飛ばす(Windows のメモ帳や PowerShell 5.1 が、UTF-8 で保存すると付ける。TOML は BOM を認めない)
         with open(path, "rb") as f:
-            data = tomllib.load(f)
+            data = tomllib.loads(f.read().decode("utf-8-sig"))
     except FileNotFoundError:
         raise ConfigError(f"設定ファイルがありません: {path}") from None
     except tomllib.TOMLDecodeError as e:
         raise ConfigError(f"設定ファイルを読めません({path}): {e}") from None
     except UnicodeDecodeError:
-        raise ConfigError(f"設定ファイルが UTF-8 ではありません({path})。UTF-8(BOM なし)で保存し直してください") from None
+        raise ConfigError(f"設定ファイルが UTF-8 ではありません({path})。UTF-8 で保存し直してください") from None
     except OSError as e:
         raise ConfigError(f"設定ファイルを開けません({path}): {e.strerror or e}") from None
 
@@ -358,6 +359,86 @@ def toml_string(s: str) -> str:
     return '"' + s.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n").replace("\r", "\\r") + '"'
 
 
+def _source_block(sid: str, root: str) -> list[str]:
+    """設定ファイルの [[source]] 1 つ分の行(終わりに空行)。"""
+    return [
+        "[[source]]",
+        f"id = {toml_string(sid)}          # 検索結果に出る名前(英数字と . _ -)",
+        f"root = {toml_string(root)}",
+        "# include = ['**/*.cpp', '**/*.h']   # 省くと、既定の拡張子(C・C++・C#・Markdown・その他の文字のファイル)",
+        "# exclude = ['**/ThirdParty/**']     # 既定の除外(build・.git など)に足す",
+        "# 実装の場所を探すのが主なら、テスト・サンプルを除くと検索が当たりやすい(docs/production.md):",
+        "# exclude = ['**/Tests/**', '**/Test/**', '**/Mocks/**', '**/Samples/**', '**/Benchmarks/**']",
+        "",
+    ]
+
+
+_TABLE_RE = re.compile(r"^\s*\[\[?\s*[^\[\]]+?\s*\]\]?\s*(#.*)?$")
+_SOURCE_TABLE_RE = re.compile(r"^\s*\[\[\s*source\s*\]\]\s*(#.*)?$")
+
+
+def rewrite_sources(text: str, keep: set[str], add: list[tuple[str, str]]) -> str:
+    """設定ファイルの中身(text)の [[source]] だけを替えたものを返す。keep は残す source の id、add は足す
+    (id, ルートのパス)の並び。ほかの表([embedding] など)と、残す source の中身(exclude やコメント)は、
+    1 文字も変えない。足す source は、残した最後の source の後ろ(1 つも残さなければ、最初の source のあった場所)。
+
+    TOML を全部は読まず、行の頭の表の見出しで区切る。複数行の文字列の中に見出しの形の行があるような設定は
+    区切りを誤るので、呼ぶ側が、書く前に結果を tomllib で読んで確かめる(cli の cmd_sources)。source の 1 つ分を
+    読めなければ ConfigError。
+
+    コメントの分け方: source の終わりで、空行の後ろにコメントだけが続いて次の表(かファイルの終わり)になるなら、
+    そのコメントは次の表のもの(source を外しても残す)。空行を挟まずに続くコメントは、その source のもの
+    (外すと一緒に消える)。外す source の見出しのすぐ上のコメント(上が空行か、前の source の終わり)も、
+    一緒に外す。改行の形が混ざった設定は、CRLF にそろう。"""
+    crlf = "\r\n" in text
+    lines = text.replace("\r\n", "\n").split("\n")
+    heads = [i for i, line in enumerate(lines) if _TABLE_RE.match(line)]
+    comment = lambda i: lines[i].lstrip().startswith("#")     # noqa: E731
+    out: list[str] = []
+    insert_at: int | None = None
+    pos = 0
+    for n, start in enumerate(heads):
+        if not _SOURCE_TABLE_RE.match(lines[start]):
+            continue
+        end = heads[n + 1] if n + 1 < len(heads) else len(lines)
+        # 次の表の前のコメント: 終わりの空行を飛ばし、その上のコメントの塊の前が空行なら、塊から後ろは次の表のもの
+        k = end
+        while k > start + 1 and not lines[k - 1].strip():
+            k -= 1
+        j = k
+        while j > start + 1 and comment(j - 1):
+            j -= 1
+        if start + 1 < j < k and not lines[j - 1].strip():
+            end = j
+        try:
+            sid = tomllib.loads("\n".join(lines[start:end]))["source"][0]["id"]
+        except (tomllib.TOMLDecodeError, KeyError, IndexError, TypeError):
+            raise ConfigError(f"{start + 1} 行目からの [[source]] を読めません") from None
+        # この source の見出しのすぐ上のコメント(外すときは、一緒に外す。ファイルの始めのコメントは残す)
+        lead = start
+        while lead > pos and comment(lead - 1):
+            lead -= 1
+        if lead == 0 or not (lead == pos or not lines[lead - 1].strip()):
+            lead = start
+        out += lines[pos:(start if sid in keep else lead)]
+        if insert_at is None:
+            insert_at = len(out)
+        if sid in keep:
+            out += lines[start:end]
+            insert_at = len(out)
+        pos = end
+    out += lines[pos:]
+    if insert_at is None:                   # [[source]] が 1 つも無い(読める設定には、必ずある)
+        raise ConfigError("設定に [[source]] がありません")
+    new: list[str] = []
+    for sid, root in add:
+        new += _source_block(sid, root)
+    if new and insert_at > 0 and out[insert_at - 1].strip():
+        new.insert(0, "")
+    out[insert_at:insert_at] = new
+    return ("\r\n" if crlf else "\n").join(out)
+
+
 def config_template(sources: list[tuple[str, str]], embedding_enabled: bool = True) -> str:
     """新しい設定ファイルの中身を作る。sources は (id, ルートのパス) の並び。"""
     out = [
@@ -366,16 +447,7 @@ def config_template(sources: list[tuple[str, str]], embedding_enabled: bool = Tr
         "",
     ]
     for sid, root in sources:
-        out += [
-            "[[source]]",
-            f"id = {toml_string(sid)}          # 検索結果に出る名前(英数字と . _ -)",
-            f"root = {toml_string(root)}",
-            "# include = ['**/*.cpp', '**/*.h']   # 省くと、既定の拡張子(C・C++・C#・Markdown・その他の文字のファイル)",
-            "# exclude = ['**/ThirdParty/**']     # 既定の除外(build・.git など)に足す",
-            "# 実装の場所を探すのが主なら、テスト・サンプルを除くと検索が当たりやすい(docs/production.md):",
-            "# exclude = ['**/Tests/**', '**/Test/**', '**/Mocks/**', '**/Samples/**', '**/Benchmarks/**']",
-            "",
-        ]
+        out += _source_block(sid, root)
     out += [
         "[embedding]",
         f"enabled = {'true' if embedding_enabled else 'false'}        # false にすると keyword(BM25)だけで動く",

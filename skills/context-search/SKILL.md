@@ -77,8 +77,9 @@ before running one, say what it does, and run it only after they agree.
   checking them
 - "No context-foundation index": ask which folders to search (the engine
   source, reference apps, design docs). Then suggest the user type
-  `/context-index "<folder>" "<folder>"` in the session (with no folders,
-  it shows a checklist of the workspace's folders to pick from): it builds
+  `/context-index` in the session (it takes no arguments: it shows a
+  checklist of the workspace's folders to pick from, with a field for
+  folders outside the workspace, then asks to confirm): it builds
   the index in the background without calling the model (it needs
   extensions, an experimental feature of Copilot CLI:
   `/settings experimental on`). Without it, the commands
@@ -86,6 +87,6 @@ before running one, say what it does, and run it only after they agree.
   `python -I "<...>\ctxf.py" index`, in the workspace. The first index of
   a large codebase takes tens of minutes (about 30 minutes for 8,000
   files); suggest the user run them in their own terminal. Later runs
-  (`/context-index` with no folders) reuse the embeddings of unchanged
+  (`/context-index`, then "更新する") reuse the embeddings of unchanged
   passages; when few files changed, they take a minute or two
 - Meanwhile, search with grep as usual

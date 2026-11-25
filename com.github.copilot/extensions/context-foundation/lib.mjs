@@ -4,6 +4,7 @@ import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "n
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve, win32 } from "node:path";
 
+// ダイアログを出せないホストでだけ使う、引数の形(ダイアログを出せるホストでは、引数は取らずに尋ねる)
 export const USAGE = "使い方: /context-index [full] [<フォルダ> ...]";
 
 // プラグインのルート(plugin.json と ctxf.py のあるフォルダ)。start から親へさかのぼる
@@ -161,11 +162,13 @@ export function folderChoices(ws) {
   return { names: all.slice(0, MAX_FOLDER_CHOICES), omitted: Math.max(0, all.length - MAX_FOLDER_CHOICES) };
 }
 
-// フォルダを選ばせるダイアログの形(複数選べる)。初めは、候補のフォルダをすべて選んである。
-// 出せなかったフォルダがあれば(omitted)、そう書く(Other に書き込めば足せる)
-export function folderSchema(names, omitted = 0) {
+// フォルダを選ばせるダイアログの形(複数選べる)。初めは、候補のフォルダをすべて選んである(checked を渡せば、
+// それだけを選んである。フォルダを変えるときの、今の選び方)。
+// 出せなかったフォルダがあれば(omitted)、そう書く(Other に書き込めば足せる)。listed は、直下のフォルダのうち
+// 一覧に出した数(names に、直下に無い今の source を足しているときに渡す)
+export function folderSchema(names, omitted = 0, checked = null, listed = names.length) {
   const more = omitted
-    ? `。名前の順で ${names.length} 個まで出しています(ほかに ${omitted} 個。入れるなら Other に名前を書いてください)`
+    ? `。名前の順で ${listed} 個まで出しています(ほかに ${omitted} 個。入れるなら Other に名前を書いてください)`
     : "";
   return {
     type: "object",
@@ -173,10 +176,10 @@ export function folderSchema(names, omitted = 0) {
       folders: {
         type: "array",
         title: "検索するフォルダ",
-        description: `エンジンのソース・参考にするアプリ・設計文書など。後から .cf\\config.toml の [[source]] で直せます${more}`,
+        description: `エンジンのソース・参考にするアプリ・設計文書など。後から /context-index で変えられます${more}`,
         minItems: 1,
         items: { type: "string", enum: [...names, WHOLE_WORKSPACE] },
-        default: [...names],
+        default: checked ? [...checked] : [...names],
       },
     },
     required: ["folders"],
@@ -191,9 +194,16 @@ export function folderSchema(names, omitted = 0) {
 export function pickedFolders(content, names) {
   const v = content?.folders;
   const got = (Array.isArray(v) ? v : typeof v === "string" ? [v] : []).filter((s) => typeof s === "string");
-  if (got.includes(WHOLE_WORKSPACE)) return ["."];
-  const clean = got.map((s) => s.trim().replace(/^"(.*)"$/, "$1").trim().replace(/(?<=[^:\\/])[\\/]+$/, "")).filter(Boolean);
+  const whole = got.includes(WHOLE_WORKSPACE);
+  const clean = got.filter((s) => s !== WHOLE_WORKSPACE)
+    .map((s) => s.trim().replace(/^"(.*)"$/, "$1").trim().replace(/(?<=[^:\\/])[\\/]+$/, "")).filter(Boolean);
   const key = (s) => s.toLowerCase();
+  if (whole) {
+    // 作業フォルダ全体を選んだら、中のフォルダは要らない。絶対パスか .. で始まるもの(作業フォルダの外を指しうる)は残す
+    const seen = new Set();
+    const outside = clean.filter((s) => /^([A-Za-z]:[\\/]|[\\/]|\.\.([\\/]|$))/.test(s) && !seen.has(key(s)) && seen.add(key(s)));
+    return [".", ...outside];
+  }
   const chosen = new Set(clean.map(key));
   const picked = names.filter((n) => chosen.has(key(n)));
   const seen = new Set(picked.map(key));
@@ -206,11 +216,16 @@ export function pickedFolders(content, names) {
   return picked;
 }
 
+// ctxf.py init・sources --set に渡すフォルダの並び。- で始まる名前は、オプションと読まれないように ./ を付ける
+// (相対パスは作業フォルダから数えるので、同じフォルダを指す)
+export const folderArgs = (folders) => folders.map((f) => (f.startsWith("-") ? `./${f}` : f));
+
 // ダイアログを出せないときの文(並べて打つ例に、候補のフォルダを使う)
 export function chooseFallback(ws, names) {
   const example = names.length ? names.slice(0, 3).map((n) => (/\s/.test(n) ? `"${n}"` : n)).join(" ") : ".";
-  return `まだ索引がありません(${ws} とその親に .cf が無い)。検索したいフォルダ(エンジンのソース、` +
-    "参考にするアプリ、設計文書など)を並べて打ってください。相対パスは作業フォルダから数えます。\n" +
+  return `まだ索引がありません(${ws} とその親に .cf が無い)。このホストでは、フォルダを選ぶダイアログを出せないので、` +
+    "検索したいフォルダ(エンジンのソース、参考にするアプリ、設計文書など)を並べて打ってください。" +
+    "相対パスは作業フォルダから数えます。\n" +
     `${USAGE}(例: /context-index ${example})`;
 }
 
@@ -392,6 +407,230 @@ export function failureMessage(code, out, log, setup, index = ".cf\\index.db") {
 // 直すコマンドが、隣の .venv(リポジトリを取得した人)向けか(ctxf.py の repair_command の形)
 const usesLocalVenv = (cmd) => /setup\.bat|-m venv --clear \.venv/.test(cmd ?? "");
 
+// ---- /context-index(引数は取らず、ダイアログで尋ねてから ctxf.py init・sources・index を動かす)
+
+// 1 行の JSON(出力の最後の行)を読む。読めなければ null
+function lastJson(out) {
+  const line = (out ?? "").trim().split(/\r?\n/).pop() ?? "";
+  try {
+    const v = JSON.parse(line);
+    return v && typeof v === "object" ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+// ctxf.py sources --json の出力(検索するフォルダ・索引・埋め込みの今の状態)を読む。読めなければ null
+export function indexState(out) {
+  const v = lastJson(out);
+  return v && typeof v.workspace === "string" && Array.isArray(v.sources) ? v : null;
+}
+
+// ctxf.py sources --set … --json の出力(残す・足す・外す source)を読む。読めなければ null
+export function sourcesPlan(out) {
+  const v = lastJson(out);
+  return v && typeof v.result === "string" && [v.keep, v.add, v.remove].every(Array.isArray) ? v : null;
+}
+
+// 一覧から 1 つ選ばせる。ask(retry) はダイアログを出して、その答え({ action, content })を返す。pick(content) は
+// 答えを読む(読めなければ null)。読めない答え(選択肢に無い、書き込まれた文)は、黙って初めの値にせず、
+// retryText を添えて尋ね直す(tries 回まで)。返すのは読めた答えか、null(取り消した・尋ね直しても読めなかった・
+// 尋ね直しのダイアログを出せなくなった)。始めのダイアログを出せなければ、投げる(呼ぶ側が、尋ねない形に替える)
+export async function askOneOf(ask, pick, retryText, tries = 3) {
+  let retry = "";
+  for (let i = 0; i < tries; i++) {
+    let r;
+    try {
+      r = await ask(retry);
+    } catch (err) {
+      if (i === 0) throw err;
+      return null;
+    }
+    if (r?.action !== "accept") return null;
+    const v = pick(r.content);
+    if (v !== null) return v;
+    retry = retryText;
+  }
+  return null;
+}
+
+const indexHead = (n, total) => (total > 1 ? `context-foundation の索引(${n}/${total}): ` : "context-foundation の索引: ");
+
+// 埋め込みの計算先の呼び名。provider は onnxruntime の実行先の名前(GPU で計算しないときは "")
+export const computeName = (provider) => (provider === "DmlExecutionProvider" ? "GPU(DirectML)"
+  : provider === "CUDAExecutionProvider" ? "GPU(CUDA)" : provider ? `GPU(${provider})` : "CPU");
+
+// 検索の種類と埋め込みの計算先を言う行(確かめの文と、今の状態の文に入れる)。state は indexState の戻り値
+export function embeddingLines(state, platform = process.platform) {
+  const e = state?.embedding;
+  if (!e) return [];
+  const m = e.model ?? {};
+  if (!e.enabled || m.state === "off") return ["- 検索: keyword だけ(作業フォルダの設定で、埋め込みを切っています)"];
+  if (m.state === "missing") {
+    return [`- 検索: keyword だけ(埋め込みモデル ${m.name} がありません。意味での検索を使うなら、先に /context-setup で` +
+      "モデルのフォルダを入れてください)"];
+  }
+  if (m.state !== "installed") return [`- 埋め込みモデル: 分かりません(${m.error ?? "状態を読めません"})`];
+  const cpuHint = !e.provider && e.device !== "cpu" && platform === "win32" ? "(GPU で計算するなら、/context-setup で GPU を選びます)" : "";
+  return [`- 検索: 意味と keyword(埋め込みモデル ${m.name})`, `- 埋め込みの計算: ${computeName(e.provider)}${cpuHint}`];
+}
+
+// 今の索引でしていること(選択肢。ダイアログの答えは、この文がそのまま返る)
+export const INDEX_UPDATE = "更新する(変わったファイルの分だけ計算する)";
+export const INDEX_BUILD = "索引を作る";
+export const INDEX_FOLDERS = "検索するフォルダを変える";
+export const INDEX_FULL = "すべて作り直す(埋め込みを計算し直す。時間がかかる)";
+export const INDEX_CANCEL = "やめる";
+export const MENU_RETRY = "前の答えを読めませんでした。一覧から選んでください。";
+
+// 設定があるときの選択肢。索引がまだ無い・読めないときは、更新とすべて作り直すの代わりに「索引を作る」
+export const indexMenuChoices = (state) => (state?.index && !state.index.error
+  ? [INDEX_UPDATE, INDEX_FOLDERS, INDEX_FULL, INDEX_CANCEL] : [INDEX_BUILD, INDEX_FOLDERS, INDEX_CANCEL]);
+
+export function menuSchema(choices) {
+  return {
+    type: "object",
+    properties: { action: { type: "string", title: "すること", enum: choices, default: choices[0] } },
+    required: ["action"],
+  };
+}
+
+// 答えが選択肢のどれか。選択肢に無い答え(Other に書き込まれたもの)は null(呼ぶ側が、尋ね直す)
+export function pickedAction(content, choices) {
+  const v = typeof content?.action === "string" ? content.action.trim() : "";
+  return choices.includes(v) ? v : null;
+}
+
+// フォルダの見せ方(. は作業フォルダ全体)
+const showRoot = (root) => (root === "." ? "作業フォルダ全体" : root);
+const listRoots = (items) => items.map((s) => showRoot(s.root)).join("、");
+
+// 今の検索するフォルダを 1 行で。ほかの source の中にある source(ジャンクションなど)は、数だけを言う
+export function sourcesLine(sources) {
+  const top = sources.filter((s) => !s.inside);
+  const nested = sources.length - top.length;
+  return top.map((s) => showRoot(s.root) + (s.exists === false ? "(フォルダがありません)" : "")).join("、") +
+    (nested ? `(ほかに、その中の ${nested} 個)` : "");
+}
+
+const count = (v) => Number(v ?? 0).toLocaleString("en-US");
+
+// 設定があるときの、今の状態と「何をしますか」の文。retry は、前の答えを読めなかったときに添える文
+export function indexMenuText(state, retry = "", platform = process.platform) {
+  const ix = state.index;
+  const now = state.embedding?.model;
+  const usable = now?.state === "installed" && state.embedding?.enabled;
+  // 索引の埋め込みが今のモデルと違うとき(keyword だけのときも)は、更新で、すべての passage を埋め込み直す
+  const reembed = ix && !ix.error && usable && ix.model !== now.name
+    ? (ix.model ? `。今のモデルは ${now.name} なので、更新すると、すべて埋め込み直します` : "。更新すると、意味での検索のための埋め込みを計算します")
+    // モデルが無く、前の索引に埋め込みがあるとき: 索引づくりは、keyword だけの索引に置き換えずに止まる
+    : ix && !ix.error && ix.model && now?.state === "missing"
+      ? "。埋め込みモデルが無いので、更新は止まります(前の索引の埋め込みを捨てないため。先に /context-setup でモデルのフォルダを入れてください)"
+      : "";
+  const lines = [
+    indexHead(1, 1) + (retry ? `${retry}\n` : "") +
+      (!ix ? `設定はありますが、索引がまだありません(${state.workspace})。`
+        : ix.error ? `この作業フォルダの索引を読めません(${state.workspace}。${ix.error})。作り直すと直ります。`
+          : `この作業フォルダには索引があります(${state.workspace})。`),
+    `- 検索するフォルダ: ${sourcesLine(state.sources)}`,
+    ...(ix && !ix.error
+      ? [`- 索引: ${String(ix.created_at ?? "").slice(0, 16).replace("T", " ")} に作成、${count(ix.files)} ファイル、${count(ix.passages)} passage` +
+        (ix.model ? `、埋め込みモデル ${ix.model}` : "、keyword だけ") + reembed]
+      : []),
+    ...embeddingLines(state, platform),
+    "何をしますか。取り消すと、何もしません(モデル(LLM)は呼びません)",
+  ];
+  return lines.join("\n");
+}
+
+// フォルダを選ぶ段の文。change は、今の選び方を変えるとき。missing は、無くなっていて選んでいない今のフォルダ
+export function folderPrompt(n, total, ws, change = false, missing = []) {
+  return indexHead(n, total) + (change
+    ? `検索するフォルダを選び直してください(${ws})。今のフォルダに、チェックが付いています。` +
+      (missing.length ? `無くなったフォルダ(${missing.map(showRoot).join("、")})は、選んでいません(このまま進むと、設定から外します)。` : "")
+    : `まだ索引がありません。索引に入れるフォルダを選んでください(${ws})。`) +
+    "一覧に無いフォルダは、Other にパスを書くと足せます(作業フォルダの外も可)。取り消すと、何もしません";
+}
+
+// フォルダを変えるときの、一覧に足す候補(直下に無い今の source)と、初めに選んでおくもの。
+// names は直下のフォルダ(folderChoices)、sources は今の source(indexState の sources)。{ extra, checked, missing }
+// - ほかの source の中にある source は出さない(親を選べば残り、選ばなければ外れる)
+// - 作業フォルダ全体(.)が source なら、「作業フォルダ全体」を選んでおく。その外の source は、候補に足して選んでおく
+// - フォルダが無くなった source は、選ばない(選ぶと、書き直しが「フォルダがありません」で止まる)。missing に返す
+export function folderDefaults(names, sources) {
+  const key = (s) => String(s).replace(/\//g, "\\").replace(/\\+$/, "").toLowerCase();
+  const byKey = new Map(names.map((n) => [key(n), n]));
+  const extra = [];
+  const checked = [];
+  const missing = [];
+  for (const s of sources) {
+    if (s.inside) continue;
+    if (s.exists === false) {
+      missing.push(s.root);
+      continue;
+    }
+    if (s.root === ".") {
+      checked.push(WHOLE_WORKSPACE);
+      continue;
+    }
+    const name = byKey.get(key(s.root));
+    if (name) checked.push(name);
+    else {
+      extra.push(s.root);
+      checked.push(s.root);
+    }
+  }
+  return { extra, checked, missing };
+}
+
+export const INDEX_YES = "はい、索引を作る";
+export const INDEX_NO = "やめる";
+
+// 初めての索引の、まとめて確かめる文。folders は init に渡すフォルダ(. は作業フォルダ全体)
+export function indexConfirmText(n, total, ws, folders, state, platform = process.platform) {
+  return indexHead(n, total) + "次の内容で索引を作ります。よければ「" + INDEX_YES + "」を選んでください。\n" +
+    `- 検索するフォルダ: ${folders.map(showRoot).join("、")}\n` +
+    `- 設定と索引の置き場: ${join(ws, ".cf")}(索引には、ソースの本文の写しが入ります。git には入りません)\n` +
+    embeddingLines(state, platform).map((l) => `${l}\n`).join("") +
+    "- かかる時間: 大きなコードでは数十分(約 8,000 ファイルで 30 分ほど)\n" +
+    "モデル(LLM)は呼びません";
+}
+
+export const CHANGE_YES = "はい、替えて索引を作り直す";
+
+// フォルダを変えるときの、確かめの文。plan は sourcesPlan の戻り値(書く前の --dry-run のもの)
+export function changeConfirmText(n, total, plan) {
+  return indexHead(n, total) + "検索するフォルダを、次のように替えます。よければ「" + CHANGE_YES + "」を選んでください。\n" +
+    (plan.add.length ? `- 足す: ${listRoots(plan.add)}\n` : "") +
+    (plan.remove.length ? `- 外す: ${listRoots(plan.remove)}\n` : "") +
+    (plan.keep.length ? `- そのまま: ${listRoots(plan.keep)}\n` : "") +
+    `設定(${plan.config})の [[source]] だけを書き直し、前の設定は ${backupName(plan)} に残します(除外などの、ほかの設定は` +
+    "変えません)。続けて索引を作り直します(変わっていないファイルの埋め込みは使い回します)";
+}
+
+// 前の設定の控えの名前(設定ファイルの名前に .bak。パスの区切りは、Windows の形も読む)
+const backupName = (plan) => String(plan.backup || "config.toml.bak").split(/[\\/]/).pop();
+
+// フォルダを替えた後の知らせ。plan は sourcesPlan の戻り値(書いた後のもの)。何も変わっていなければ ""
+export function changedText(plan) {
+  if (!plan.add.length && !plan.remove.length) return "";
+  return "検索するフォルダを替えました(" +
+    [plan.add.length ? `足した: ${listRoots(plan.add)}` : "", plan.remove.length ? `外した: ${listRoots(plan.remove)}` : ""]
+      .filter(Boolean).join("、") + (plan.backup ? `。前の設定: ${plan.backup}` : "") + ")。\n";
+}
+
+// ctxf.py index のログから、埋め込みをどこで計算したか(終わりの知らせに添える)。埋め込みの行が無ければ ""
+export function embedNote(out) {
+  const text = out ?? "";
+  const m = text.match(/^埋め込み: ([\d,]+) passage を計算、([\d,]+) passage を使い回し.*、(?:GPU\(([^)]+)\)|CPU、\d+ プロセス)\)\s*$/m);
+  if (!m) return "";
+  if (m[1] === "0") return m[2] === "0" ? "" : "埋め込みは、すべて前の索引から使い回しました。";
+  // GPU を選んでいても、始められなければ CPU に替えて続ける(indexer の注意の行)
+  const fellBack = /^注意: GPU\(.*\)で埋め込みを始められないので、CPU で計算します/m.test(text);
+  return `埋め込みは ${computeName(m[3] ?? "")} で計算しました(${m[1]} passage。${m[2]} passage は使い回し)。` +
+    (fellBack ? "GPU では始められなかったので、CPU に替えました(わけはログ)。" : "");
+}
+
 // ---- /context-setup(この PC の用意。引数は取らず、ダイアログで順に尋ねてから ctxf.py setup を動かす)
 
 // 埋め込みの計算の選択肢(ダイアログの答えは、この文がそのまま返る)
@@ -465,27 +704,9 @@ export function pickedAccel(content) {
 
 export const ACCEL_RETRY = "前の答えを読めませんでした。GPU か CPU を選んでください。";
 
-// GPU か CPU かを尋ねる。ask(retry) はダイアログを出して、その答え({ action, content })を返す。読めない答え
-// (選択肢に無い、書き込まれた文)は、黙って前の選び方にせず、わけを添えて尋ね直す(tries 回まで)。
-// 返すのは true(GPU)・false(CPU)か、null(取り消した・尋ね直しても読めなかった・尋ね直しのダイアログを
-// 出せなくなった)。始めのダイアログを出せなければ投げる(呼ぶ側が、尋ねずに用意する)
-export async function askAccel(ask, tries = 3) {
-  let retry = "";
-  for (let i = 0; i < tries; i++) {
-    let r;
-    try {
-      r = await ask(retry);
-    } catch (err) {
-      if (i === 0) throw err;
-      return null;
-    }
-    if (r?.action !== "accept") return null;
-    const gpu = pickedAccel(r.content);
-    if (gpu !== null) return gpu;
-    retry = ACCEL_RETRY;
-  }
-  return null;
-}
+// GPU か CPU かを尋ねる(askOneOf)。返すのは true(GPU)・false(CPU)か、null(取り消した・尋ね直しても
+// 読めなかった・尋ね直しのダイアログを出せなくなった)。始めのダイアログを出せなければ投げる(呼ぶ側が、尋ねずに用意する)
+export const askAccel = (ask, tries = 3) => askOneOf(ask, pickedAccel, ACCEL_RETRY, tries);
 
 // 今のモデルのフォルダ(入っているときだけ)。モデルのフォルダの欄の初めの値にする
 export const currentModelFolder = (status) => (status?.model?.state === "installed" ? status.model.folder ?? "" : "");
@@ -531,6 +752,9 @@ export const pickedYes = (content, yes) => typeof content?.answer === "string" &
 
 export const SETUP_YES = "はい、この内容で用意する";
 export const SETUP_NO = "やめる";
+// 用意の終わりに、続けて索引を作るかを尋ねるときの選択肢
+export const AFTER_SETUP_YES = "索引を作る";
+export const AFTER_SETUP_NO = "後でする";
 
 // ctxf.py setup に渡す指定。gpu が null(尋ねていない)なら、前の setup の選び方を引き継ぐ
 export const setupArgs = (plan) => (plan?.gpu === true ? ["--gpu"] : plan?.gpu === false ? ["--cpu"] : []);
@@ -551,12 +775,12 @@ export function setupStartText(plan, status, home) {
 }
 
 // 用意の後、モデルのフォルダを覚えたときに、今の索引について添える文。索引づくりは、索引の埋め込みが今のモデルと
-// 違うとき(keyword だけのときも)だけ、すべて埋め込み直す(indexer の _previous_vectors)。ふつうは full は要らない。
-// 違いは、モデルの名前・版・ONNX の大きさなどで見分ける(中身は比べない)ので、名前も大きさも同じ別の重みに
-// 替えたときだけ、full が要る
-export const REINDEX_AFTER_MODEL = "今の索引が keyword だけか、別のモデルの埋め込みなら、/context-index を打つと、このモデルで" +
-  "埋め込み直します(同じモデルの索引なら、変わった分だけです。名前も大きさも同じ別の重みに替えたときだけ、" +
-  "/context-index full が要ります)。\n";
+// 違うとき(keyword だけのときも)だけ、すべて埋め込み直す(indexer の _previous_vectors)。ふつうは、すべて作り直す
+// (index --full)のは要らない。違いは、モデルの名前・版・ONNX の大きさなどで見分ける(中身は比べない)ので、
+// 名前も大きさも同じ別の重みに替えたときだけ、すべて作り直すのが要る
+export const REINDEX_AFTER_MODEL = "今の索引が keyword だけか、別のモデルの埋め込みなら、/context-index で「更新する」を選ぶと、" +
+  "このモデルで埋め込み直します(同じモデルの索引なら、変わった分だけです。名前も大きさも同じ別の重みに替えたときだけ、" +
+  "「すべて作り直す」を選びます)。\n";
 
 // 最後に、まとめて確かめる文
 export function setupConfirmText(n, total, plan, status, home) {
@@ -669,9 +893,33 @@ export async function loadSdk(load, names = SDK_NAMES) {
 // @github/copilot-sdk は commands。どちらの SDK も、知らない方の置き場は読まないので、両方に同じものを置く
 export const joinOptions = (commands) => ({ commands, interaction: { commands } });
 
-// ふつうの(level の無い)session.log は Markdown として表示され、\ の後ろが記号だと \ が消える
-// (E:\src\Proj\.cf が E:\src\Proj.cf と出る)。その \ を二重にする。error の表示はそのまま出るので通さない
-export const escapeMarkdown = (s) => s.replace(/\\(?=[!-/:-@[-`{-~])/g, "\\\\");
+// ふつうの(level の無い)session.log は Markdown として表示され、\ の後ろが記号だと \ が消える(ws\.cf が ws.cf と
+// 出る)。ただし Copilot CLI 1.0.115 は、ドライブ名で始まる絶対パスだけは \ をそのまま出す(そこで \ を二重にすると、
+// E:\ws\\.cf と 2 つ出る)。どちらの読み方でもそのまま出るように、Windows の絶対パスはコードの囲み(`…`)に入れ
+// (囲みの中は、どの版も文字どおりに出す)、ほかの場所の \ は、これまでどおり二重にする。元からある囲みの中は
+// 触らない。error の表示はそのまま出るので通さない
+// パスの並び: ドライブ名か \\ で始まり、空白・引用符・括弧・全角の句読点と括弧の手前まで。空白 1 つの後ろに、
+// \ を含む続きがあれば(C:\Program Files\x のような、空白を含むパス)、そこまでを 1 つの囲みにする
+// "…" で囲んだパス(コマンドの引数)は、引用符ごと囲みに入れる(Copilot CLI は囲みの両側に空白を出すので、引用符の
+// 内側に囲みを置くと、写したコマンドのパスの前後に空白が入る)
+const PATH_CHAR = "[^\\s`\"'<>|*?()、。「」()]";
+const PATH_START = "(?:[A-Za-z]:[\\\\/]|\\\\\\\\(?=[^\\\\\\s]))";
+const PATH_RUN = new RegExp(
+  `"${PATH_START}[^"\`\\n]*"|(?<![A-Za-z0-9\`])${PATH_START}${PATH_CHAR}*(?: (?=${PATH_CHAR}*\\\\)${PATH_CHAR}+)*`, "g");
+const doubleBackslash = (s) => s.replace(/\\(?=[!-/:-@[-`{-~])/g, "\\\\");
+export function escapeMarkdown(s) {
+  const outside = (text) => {
+    let out = "";
+    let last = 0;
+    for (const m of text.matchAll(PATH_RUN)) {
+      out += doubleBackslash(text.slice(last, m.index)) + "`" + m[0] + "`";
+      last = m.index + m[0].length;
+    }
+    return out + doubleBackslash(text.slice(last));
+  };
+  // 元からあるコードの囲み(ctxf.py の文にある `ctxf.py index` など)は、そのまま残す
+  return s.split(/(`[^`\n]*`)/).map((part, i) => (i % 2 ? part : outside(part))).join("");
+}
 
 // パスを比べられる形にする(\\?\ を外す・/ を \ に・末尾の \ を外す・小文字に)。在る場所なら実体に揃える。空なら ""
 export function pathKey(p) {
