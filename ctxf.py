@@ -309,7 +309,7 @@ def _say(text):
     sys.stdout.flush()
 
 
-SETUP_USAGE = """使い方: python -I ctxf.py setup [--no-model] [--gpu | --cpu]
+SETUP_USAGE = """使い方: python -I ctxf.py setup [--no-model] [--gpu | --cpu] | --status
 
 検索に要る Python のパッケージ(PyPI から約 200 MB)を入れた仮想環境を、利用者ごとの置き場に作ります。
 動かす前に、利用者に確かめてください。
@@ -402,13 +402,15 @@ def setup_status():
     """今の用意の状態を 1 行の JSON で書く(何も入れない・取得しない。/context-setup が、尋ねる前に読む)。
     ready: 今の依存の一覧で用意が済んでいるか(覚え書きと仮想環境の python で見る。読み込みまでは確かめない)、
     gpu: 前の setup で GPU 用を選んだか(次の setup が引き継ぐ選び方)、gpu_supported: GPU 用を選べる OS か
-    (Windows)、model: 埋め込みモデルの有無(仮想環境があるときだけ。setup の終わりに出すものと同じ形。無ければ null)。"""
+    (Windows)、model: 埋め込みモデルの有無(setup の終わりに出すものと同じ形)。仮想環境の python があれば、用意が
+    古くても読む(依存の一覧が変わった版への更新の後でも、覚えたモデルと設定の model_dir を尋ねる前に知るため。
+    読めなければ state が unknown)。仮想環境が無ければ null。"""
     stamp = _read_stamp()
     deps = dependencies()
     py = _venv_python(os.path.join(runtime_dir(), "venv"))
     ready = bool(deps and py and stamp.get("deps_hash") == deps_hash(deps))
     out = {"ready": ready, "gpu": bool(stamp.get("gpu")), "gpu_supported": os.name == "nt",
-           "home": data_home(), "model": _setup_model_info(py) if ready else None}
+           "home": data_home(), "model": _setup_model_info(py) if py else None}
     sys.stdout.write(json.dumps(out, ensure_ascii=False) + "\n")
     return 0
 
@@ -454,7 +456,10 @@ def setup(argv):
     if any(a in ("-h", "--help") for a in argv):
         sys.stdout.write(SETUP_USAGE)
         return 0
-    if argv == ["--status"]:
+    if "--status" in argv:
+        if argv != ["--status"]:
+            sys.stdout.write("--status は、ほかの指定と一緒には使えません\n" + SETUP_USAGE)
+            return 2
         return setup_status()
     unknown = [a for a in argv if a not in SETUP_OPTIONS]
     if unknown:

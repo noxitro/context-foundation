@@ -411,11 +411,20 @@ export function setupStatus(out) {
 
 // モデルのフォルダを尋ねてよいか。作業フォルダの設定の [embedding] model_dir が置き場を決めているとき
 // (覚えても、そちらが先に使われる)と、設定で埋め込みを切っているときは尋ねない
-const modelAskable = (m) => !m || (m.state !== "off" && !(m.own_folder && m.dir_source !== "user"));
+export const modelAskable = (m) => !m || (m.state !== "off" && !(m.own_folder && m.dir_source !== "user"));
 
-// 尋ねる段の並び: accel(GPU か CPU か。Windows だけ)、model(モデルのフォルダ)、confirm(まとめて確かめる)
-export function setupSteps(status) {
-  return [...(status?.gpu_supported ? ["accel"] : []), ...(modelAskable(status?.model) ? ["model"] : []), "confirm"];
+// 入れたモデルのフォルダを使わなかったわけ(設定が置き場を決めている・埋め込みを切っている)。使えるなら ""
+export function modelNotUsedReason(m) {
+  if (modelAskable(m)) return "";
+  return m.state === "off" ? "作業フォルダの設定で、埋め込みを切っているため"
+    : `作業フォルダの設定の [embedding] model_dir${m.folder ? `(${m.folder})` : " "}が置き場を決めていて、そちらが先に使われるため`;
+}
+
+// 尋ねる段の並び: accel(GPU か CPU か。Windows だけ)、model(モデルのフォルダ)、confirm(まとめて確かめる)。
+// 状態を読めなかったとき(null)は、GPU を選べるかを、この OS で決める
+export function setupSteps(status, platform = process.platform) {
+  const gpu = status ? status.gpu_supported : platform === "win32";
+  return [...(gpu ? ["accel"] : []), ...(modelAskable(status?.model) ? ["model"] : []), "confirm"];
 }
 
 const stepHead = (n, total) => `context-foundation の用意(${n}/${total}): `;
@@ -500,7 +509,8 @@ export const setupArgs = (plan) => (plan?.gpu === true ? ["--gpu"] : plan?.gpu =
 export function setupConfirmText(n, total, plan, status, home) {
   const gpu = plan.gpu ?? Boolean(status?.gpu);
   const changed = Boolean(status?.ready) && plan.gpu !== null && plan.gpu !== Boolean(status?.gpu);
-  const what = !status?.ready ? "Python のパッケージ(PyPI から約 200 MB。初めは数分かかります)"
+  const what = !status ? "Python のパッケージ(初めは PyPI から約 200 MB。済んでいれば確かめるだけです)"
+    : !status.ready ? "Python のパッケージ(PyPI から約 200 MB。初めは数分かかります)"
     : changed ? `onnxruntime を${gpu ? " GPU 用(onnxruntime-directml)" : " CPU 用"}に入れ直します(PyPI から取得します)`
       : "済んでいるので、確かめるだけです";
   const m = plan.model;

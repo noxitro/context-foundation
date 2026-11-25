@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import {
   chooseFallback, commandHandler, dataHome, escapeMarkdown, failureMessage, findConfig, folderChoices, folderSchema, hasLocalVenv, indexFile, MAX_FOLDER_CHOICES, pickedFolders, WHOLE_WORKSPACE, initSources, joinOptions, keywordOnly, lastCwd, loadSdk, logTail,
   makeNotifier, modelFolderPrompt, modelFolderSchema, modelMissing, modelUseResult, parseIndexArgs, pickedModelFolder, parseProgress, parseSetupProgress, planIndex, pluginRoot, progressNote, repairCommand,
-  accelPrompt, accelSchema, choiceSchema, CPU_CHOICE, pickedYes, SETUP_NO, SETUP_YES, currentModelFolder, GPU_CHOICE, modelChoice, modelStepPrompt, pickedAccel, setupArgs, setupConfirmText,
+  accelPrompt, accelSchema, choiceSchema, modelNotUsedReason, CPU_CHOICE, pickedYes, SETUP_NO, SETUP_YES, currentModelFolder, GPU_CHOICE, modelChoice, modelStepPrompt, pickedAccel, setupArgs, setupConfirmText,
   setupStatus, setupSteps, SDK_NAMES, setupFailureMessage, setupProgressNote, setupRuntimeFolder, splitArgs, wantDialog, workspaceOf,
 } from "./lib.mjs";
 
@@ -223,11 +223,21 @@ test("setupStatus は setup --status の最後の行の JSON を読み、読め�
 test("setupSteps: GPU は Windows だけ、モデルは設定が置き場を決めていないときだけ尋ね、最後に確かめる", () => {
   assert.deepEqual(setupSteps(FRESH), ["accel", "model", "confirm"]);
   assert.deepEqual(setupSteps({ ...FRESH, gpu_supported: false }), ["model", "confirm"]);
-  assert.deepEqual(setupSteps(null), ["model", "confirm"]);   // 状態を読めなくても、尋ねて進める
+  // 状態を読めなくても、尋ねて進める(GPU を選べるかは、この OS で決める)
+  assert.deepEqual(setupSteps(null, "linux"), ["model", "confirm"]);
+  assert.deepEqual(setupSteps(null, "win32"), ["accel", "model", "confirm"]);
   assert.deepEqual(setupSteps(READY), ["accel", "model", "confirm"]);   // model use で覚えたフォルダは替えられる
   const byConfig = { ...READY, model: { ...READY.model, dir_source: "config" } };
   assert.deepEqual(setupSteps(byConfig), ["accel", "confirm"]);
   assert.deepEqual(setupSteps({ ...READY, model: { state: "off" } }), ["accel", "confirm"]);
+});
+
+test("入れたモデルのフォルダを使わないわけ: 設定の model_dir と、埋め込みを切った設定", () => {
+  assert.equal(modelNotUsedReason(null), "");
+  assert.equal(modelNotUsedReason(READY.model), "");   // model use で覚えたものは替えられる
+  assert.match(modelNotUsedReason({ ...READY.model, dir_source: "config" }), /model_dir\(D:\\models\\e5\)が置き場を決めていて/);
+  assert.match(modelNotUsedReason({ own_folder: true, folder: "" }), /model_dir が置き場を決めていて/);
+  assert.match(modelNotUsedReason({ state: "off" }), /埋め込みを切っているため/);
 });
 
 test("GPU の段: 前の選び方を初めの値にし、答えを GPU か CPU かに読む(読めなければ null で、前の選び方)", () => {
@@ -285,6 +295,7 @@ test("確かめの段: 入れるもの・置き場・計算・モデルをまと
   assert.match(first, /埋め込みモデル: E:\\m\(用意のあとで/);
   assert.match(setupConfirmText(3, 3, { gpu: true, model: { kind: "keep" } }, READY, "H"), /確かめるだけです[\s\S]*今のまま\(D:\\models\\e5\)/);
   assert.match(setupConfirmText(3, 3, { gpu: false, model: { kind: "keep" } }, READY, "H"), /CPU 用に入れ直します/);
+  assert.match(setupConfirmText(2, 2, { gpu: null, model: null }, null, "H"), /済んでいれば確かめるだけです/);   // 状態を読めなかった
   assert.match(setupConfirmText(2, 2, { gpu: null, model: { kind: "none" } }, { ...FRESH, gpu_supported: false }, ""),
     /埋め込みの計算: CPU\n- 埋め込みモデル: 使いません/);
   const byConfig = { ...READY, model: { ...READY.model, dir_source: "config" } };

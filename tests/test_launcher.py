@@ -355,11 +355,12 @@ def test_setup_status_reads_the_state_without_installing_anything(monkeypatch, t
     assert ctxf.setup(["--status"]) == 0
     done = json.loads(capsys.readouterr().out)
     assert done["ready"] and done["gpu"] and done["model"] == {"state": "installed", "name": "m", "folder": "/m"}
-    # 依存の一覧が変わった(覚え書きが古い)なら、済んでいない。モデルは見ない
+    # 依存の一覧が変わった(覚え書きが古い)なら、済んでいない。仮想環境はあるので、覚えたモデルは読む
     ctxf._write_stamp(["other==1"], gpu=True)
     assert ctxf.setup(["--status"]) == 0
     stale = json.loads(capsys.readouterr().out)
-    assert not stale["ready"] and stale["gpu"] and stale["model"] is None
+    assert not stale["ready"] and stale["gpu"] and stale["model"]["state"] == "installed"
+    assert ctxf.setup(["--status", "--cpu"]) == 2 and "一緒には使えません" in capsys.readouterr().out
     assert not started
 
 

@@ -32,7 +32,7 @@ import {
   keywordOnly, lastCwd, loadSdk, makeNotifier, modelFolderPrompt, modelFolderSchema, modelMissing, modelUseResult, parseProgress,
   accelPrompt, accelSchema, choiceSchema, currentModelFolder, pickedYes, SETUP_NO, SETUP_YES, modelChoice, modelStepPrompt, parseSetupProgress, pickedAccel, pickedFolders, pickedModelFolder,
   planIndex, pluginRoot, progressNote, setupArgs, setupConfirmText, setupFailureMessage, setupProgressNote, setupRuntimeFolder, setupStatus,
-  setupSteps, splitArgs, workspaceOf,
+  modelNotUsedReason, setupSteps, splitArgs, workspaceOf,
 } from "./lib.mjs";
 
 const { joinSession } = await loadSdk((name) => import(name));
@@ -280,31 +280,38 @@ async function indexCommand(ctx) {
 }
 
 // 始めに、用意の中身を順に尋ねる(lib.mjs の setupSteps)。{ gpu, model }(gpu・model が null の段は尋ねていない)。
-// 取り消されたら null。ダイアログを出せなければ、投げる(呼ぶ側が、尋ねずに用意する)
-async function askSetupPlan(status, home) {
+// lead は、始めの質問の前に添える文(引数を使わないことなど)。取り消されたら null。
+// 始めのダイアログを出せなければ、投げる(呼ぶ側が、尋ねずに用意する)。途中の段で出せなくなったときは、
+// 答えの一部だけで用意を始めないよう、取り消しとみなす(null)
+async function askSetupPlan(status, home, lead = "") {
   const steps = setupSteps(status);
   const plan = { gpu: null, model: null };
   for (const [i, step] of steps.entries()) {
     const n = i + 1;
-    if (step === "accel") {
-      const r = await exclusive(() => session.ui.elicitation({
-        message: accelPrompt(n, steps.length, status), requestedSchema: accelSchema(status),
-      }));
-      if (r.action !== "accept") return null;
-      plan.gpu = pickedAccel(r.content) ?? Boolean(status?.gpu);
-    } else if (step === "model") {
-      const r = await exclusive(() => session.ui.elicitation({
-        message: modelStepPrompt(n, steps.length, status), requestedSchema: modelFolderSchema(currentModelFolder(status)),
-      }));
-      if (r.action !== "accept") return null;
-      plan.model = modelChoice(pickedModelFolder(r.content), status);
-    } else if (!(await askYesNo(setupConfirmText(n, steps.length, plan, status, home), SETUP_YES, SETUP_NO))) {
+    const head = i === 0 ? lead : "";
+    try {
+      if (step === "accel") {
+        const r = await exclusive(() => session.ui.elicitation({
+          message: head + accelPrompt(n, steps.length, status), requestedSchema: accelSchema(status),
+        }));
+        if (r.action !== "accept") return null;
+        plan.gpu = pickedAccel(r.content) ?? Boolean(status?.gpu);
+      } else if (step === "model") {
+        const r = await exclusive(() => session.ui.elicitation({
+          message: head + modelStepPrompt(n, steps.length, status), requestedSchema: modelFolderSchema(currentModelFolder(status)),
+        }));
+        if (r.action !== "accept") return null;
+        plan.model = modelChoice(pickedModelFolder(r.content), status);
+      } else if (!(await askYesNo(head + setupConfirmText(n, steps.length, plan, status, home), SETUP_YES, SETUP_NO))) {
+        return null;
+      }
+    } catch (err) {
+      if (i === 0) throw err;
       return null;
     }
   }
   return plan;
 }
-
 async function setupCommand(ctx) {
   if (busy()) return;
   running = "用意(setup)";
@@ -329,27 +336,34 @@ async function setupCommand(ctx) {
       // CF_CONFIG の指す先が無い(/context-index が、そのわけを出す)
     }
     const env = config && !process.env.CF_CONFIG ? { ...process.env, CF_CONFIG: config } : undefined;
-    // 引数は取らない(前の版の gpu・cpu・no-model も、尋ねる形に替えた)
-    const ignored = splitArgs(ctx.args ?? "").length ? "引数は使いません(順に尋ねます)。" : "";
+    // 引数は取らない(前の版の gpu・cpu・no-model も、尋ねる形に替えた)。付いていれば、そう断る
+    const hasArgs = splitArgs(ctx.args ?? "").length > 0;
     // 今の状態を読んでから尋ねる(前の選び方と今のモデルのフォルダを、初めの値にする)
     let plan = null;
     let asked = false;
+    let status = null;
+    let ignored = hasArgs ? "引数は使いません(ダイアログを出せないので、前の選び方で用意します)。" : "";
     if (session.capabilities?.ui?.elicitation) {
       const st = await runText([ctxf, "setup", "--status"], env);
       if (st.error) {
         await tell(`context-foundation: ${cannotStart(st)}`, "error");
         return;
       }
+      status = setupStatus(st.out);
+      const lead = (hasArgs ? "引数は使いません。次の質問に答えてください。\n" : "") +
+        (status ? "" : `今の状態を読めませんでした(${st.out.trim().split(/\r?\n/).pop() || `終了コード ${st.code}`})。` +
+          "前の選び方を初めの値にできません。\n");
       running = "用意(setup)の質問への答え";
       try {
-        plan = await askSetupPlan(setupStatus(st.out), home);
+        plan = await askSetupPlan(status, home, lead);
         asked = true;
+        ignored = "";
       } catch (err) {
         // このホストが選ぶダイアログを描けないなど。尋ねずに、前の選び方で用意する
         await say(`context-foundation: ダイアログを出せませんでした(${err?.message ?? err})。尋ねずに、前の選び方で用意します`);
       }
       if (asked && !plan) {
-        await tell(`context-foundation: ${ignored}用意をやめました(何も入れていません)`);
+        await tell("context-foundation: 用意をやめました(何も入れていません)");
         return;
       }
       running = "用意(setup)";
@@ -384,9 +398,18 @@ async function setupCommand(ctx) {
     const missing = modelMissing(out);
     const choice = plan?.model;
     let picked = null;
-    if (choice?.kind === "use" && (!missing || missing.ask)) {
+    // 入れたフォルダを使えない作業フォルダか(設定の model_dir が置き場を決めている・埋め込みを切っている)。
+    // 尋ねる前に仮想環境が無く、設定を読めていなかったときは、用意の後に読み直して確かめる
+    let notUsed = "";
+    if (choice?.kind === "use") {
+      const after = status?.model ? status : setupStatus((await runText([ctxf, "setup", "--status"], env)).out);
+      notUsed = modelNotUsedReason(after?.model) || (missing && !missing.ask ? modelNotUsedReason({ own_folder: true, folder: "" }) : "");
+    }
+    if (choice?.kind === "use" && !notUsed) {
       running = "埋め込みモデルのフォルダの確かめ";
       picked = await askModelFolder(ctxf, env, missing, choice.folder);
+    } else if (choice?.kind === "use") {
+      picked = { state: "skipped", why: `入れたフォルダ ${choice.folder} は使いませんでした。${notUsed}` };
     } else if (!asked && missing?.ask) {
       running = "埋め込みモデルのフォルダの指定";
       picked = await askModelFolder(ctxf, env, missing);
