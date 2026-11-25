@@ -392,7 +392,7 @@ const usesLocalVenv = (cmd) => /setup\.bat|-m venv --clear \.venv/.test(cmd ?? "
 
 export const SETUP_HELP = `${SETUP_USAGE}
 検索に要る Python のパッケージ(PyPI から約 200 MB)を、利用者ごとの置き場に入れます。` +
-  `1 回だけで済みます(済んでいれば、確かめるだけで終わります)。裏で動かし、モデルは呼びません。
+  `1 回だけで済みます(済んでいれば、確かめるだけで終わります)。モデルは呼びません(Copilot CLI では裏で動かします。GitHub Copilot app では、結果のダイアログを閉じるまでコマンドが終わりません)。
 埋め込みモデル(Hugging Face の OSS)は取得しません。無ければ、この PC に置いたモデルのフォルダをダイアログで尋ね、` +
   `1 回読み込んで確かめてから覚えます(空のままで飛ばせます。無ければ検索は keyword だけ)。` +
   `取得するときは、使ってよいかを確かめたうえで、ターミナルで ctxf.py model download を実行します。

@@ -69,7 +69,9 @@ MCP サーバー)も入れられます。結果は
    (Copilot CLI の言語サーバーの設定)を、Claude Code には
    `--lsp-command "clangd --background-index"` を渡します。Claude Code の
    流し手は、その回だけのプラグイン(`.lsp.json`)を作って `--plugin-dir`
-   で渡します。**Claude Code は、クラウドのセッション(claude.ai の Claude
+   で渡します。Windows では、`C:\tools\LLVM\bin\clangd.exe` のような `\`
+   区切りのパスもそのまま書けます(空白を含むパスは `"` で囲みます)。
+   **Claude Code は、クラウドのセッション(claude.ai の Claude
    Code)の中では、プラグインの言語サーバーを起こしません**(道具 `LSP` が
    出ない)。LSP の手法は、手元の PC で流してください
 4. **Serena の手法:** Serena のプロジェクトを、ソースのルートに作ります

@@ -344,13 +344,13 @@ async function setupCommand(ctx) {
 const commands = [
   {
     name: "context-setup",
-    description: "[no-model] [gpu | cpu] — この PC の検索の用意(context-foundation)。Python のパッケージ約 200 MB を入れる(埋め込みモデルは入れず、有無を知らせる)。初めに 1 回。裏で動かす(モデルは呼ばない)",
+    description: "[no-model] [gpu | cpu] — この PC の検索の用意(context-foundation)。Python のパッケージ約 200 MB を入れる(埋め込みモデルは入れず、有無を知らせる)。初めに 1 回(モデルは呼ばない)",
     handler: handle(setupCommand),
   },
   {
     // 拡張のコマンドには引数のヒントを付けられないので、説明文の先頭に引数を書く
     name: "context-index",
-    description: "[full] [<フォルダ> ...] — コードと設計文書の検索の索引(context-foundation)を作る・作り直す。初めは検索したいフォルダを並べるか、省いて一覧から選ぶ。full ですべて埋め込み直す。裏で動かす(モデルは呼ばない)",
+    description: "[full] [<フォルダ> ...] — コードと設計文書の検索の索引(context-foundation)を作る・作り直す。初めは検索したいフォルダを並べるか、省いて一覧から選ぶ。full ですべて埋め込み直す(モデルは呼ばない)",
     handler: handle(indexCommand),
   },
 ];

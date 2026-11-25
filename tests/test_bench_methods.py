@@ -166,23 +166,27 @@ def test_claude_methods_restrict_tools_and_add_only_their_servers(claude_run, M,
     servers = claude_run.mcp_servers(method, "py", tmp_path, serena)
     assert set(servers) == ({"context-foundation"} if "cf_mcp" in f else set()) | ({"serena"} if "serena" in f else set())
     plugin = M.lsp_plugin(tmp_path / "lsp", ["clangd"]) if "lsp" in f else None
-    cmd = claude_run.build_command("claude", method, "haiku", [tmp_path], tmp_path / "mcp.json", "HINT" if f else "",
-                                   plugin)
+    prompt_file = tmp_path / "system-prompt.txt" if f else None
+    cmd = claude_run.build_command("claude", method, "haiku", [tmp_path], tmp_path / "mcp.json", prompt_file, plugin)
     tools = cmd[cmd.index("--tools") + 1].split(",")
     assert tools == ["Read", "Grep", "Glob"] + (["LSP"] if "lsp" in f else [])
     allowed = cmd[cmd.index("--allowedTools") + 1].split(",")
     assert ("mcp__serena" in allowed) == ("serena" in f)
     assert ("mcp__context-foundation__search" in allowed) == ("cf_mcp" in f)
-    assert ("--plugin-dir" in cmd) == ("lsp" in f) and ("--append-system-prompt" in cmd) == bool(f)
+    assert ("--plugin-dir" in cmd) == ("lsp" in f) and ("--append-system-prompt-file" in cmd) == bool(f)
     assert "--strict-mcp-config" in cmd and cmd[cmd.index("--setting-sources") + 1] == ""
     assert not {"Bash", "Edit", "Write"} & set(tools)
+    # システムプロンプトに足す文は、ファイルで渡す(Windows の claude.cmd は、改行を含む引数の後ろを落とす)
+    assert "--append-system-prompt" not in cmd and not any("\n" in c for c in cmd)
+    if f:
+        assert cmd[cmd.index("--append-system-prompt-file") + 1] == str(prompt_file)
     if "serena" in f:
         assert servers["serena"]["args"][servers["serena"]["args"].index("--context") + 1] == "claude-code"
 
 
 def test_claude_lsp_method_needs_a_language_server(claude_run):
     with pytest.raises(SystemExit, match="--lsp-command"):
-        claude_run.build_command("claude", "agent_lsp", "haiku", [], Path("m.json"), "", None)
+        claude_run.build_command("claude", "agent_lsp", "haiku", [], Path("m.json"), None, None)
 
 
 def test_claude_stream_gives_opened_search_and_symbol_evidence(claude_run, agent_run, tmp_path):
@@ -246,3 +250,31 @@ def test_a_cited_range_is_kept_when_the_same_range_was_opened_first(agent_run, t
     row = agent_run.run_one(args, "copilot", {"case_id": "Q1", "question": "q"}, 1, mapper, [], None)
     assert [(e["rank"], e["origin"]) for e in row["retrieved_evidence"]] == [(1, "opened"), (2, "cited")]
     assert row["tools_by_name"] == {"view": 1}
+
+
+def test_commands_keep_windows_paths_and_drop_only_the_quotes(M):
+    # shlex の POSIX の規則では \ が消え、言語サーバーが起きないまま grep だけで流れる
+    assert M.split_command(r"C:\tools\LLVM\bin\clangd.exe --background-index", windows=True) == \
+        [r"C:\tools\LLVM\bin\clangd.exe", "--background-index"]
+    assert M.split_command(r'"C:\Program Files\LLVM\bin\clangd.exe" -j=4', windows=True) == \
+        [r"C:\Program Files\LLVM\bin\clangd.exe", "-j=4"]
+    assert M.split_command("uvx --from 'serena-agent==2.1.0' serena", windows=False) == \
+        ["uvx", "--from", "serena-agent==2.1.0", "serena"]
+    assert M.split_command(M.SERENA_COMMAND, windows=True) == M.split_command(M.SERENA_COMMAND, windows=False)
+
+
+def test_the_session_hint_leaves_out_the_index_age_and_stops_without_an_index(M, tmp_path, monkeypatch):
+    calls = []
+
+    def run(cmd, **kw):
+        calls.append(kw["env"])
+        return Namespace(stdout=out)
+
+    monkeypatch.setattr(M.subprocess, "run", run)
+    out = json.dumps({"additionalContext": "HINT"})
+    assert M.session_hint("py", tmp_path / "ctxf.py", tmp_path) == "HINT"
+    # 索引の日付で文面が変わらないよう、古さの 1 文は足さない(どの手法でも同じ 1 文にする)
+    assert calls[-1]["CF_INDEX_AGE_WARN_DAYS"] == "0" and calls[-1]["CF_PYTHON"] == "py"
+    out = ""
+    with pytest.raises(SystemExit, match="始めの 1 文"):
+        M.session_hint("py", tmp_path / "ctxf.py", tmp_path)
