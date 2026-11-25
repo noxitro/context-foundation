@@ -7,8 +7,9 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   chooseFallback, commandHandler, dataHome, escapeMarkdown, failureMessage, findConfig, folderChoices, folderSchema, hasLocalVenv, indexFile, MAX_FOLDER_CHOICES, pickedFolders, WHOLE_WORKSPACE, initSources, joinOptions, keywordOnly, lastCwd, loadSdk, logTail,
-  makeNotifier, modelFolderPrompt, modelFolderSchema, modelMissing, modelUseResult, parseIndexArgs, pickedModelFolder, parseProgress, parseSetupArgs, parseSetupProgress, planIndex, pluginRoot, progressNote, repairCommand,
-  SDK_NAMES, SETUP_HELP, setupFailureMessage, setupProgressNote, setupRuntimeFolder, splitArgs, wantDialog, workspaceOf,
+  makeNotifier, modelFolderPrompt, modelFolderSchema, modelMissing, modelUseResult, parseIndexArgs, pickedModelFolder, parseProgress, parseSetupProgress, planIndex, pluginRoot, progressNote, repairCommand,
+  accelPrompt, accelSchema, choiceSchema, modelNotUsedReason, CPU_CHOICE, pickedYes, SETUP_NO, SETUP_YES, currentModelFolder, GPU_CHOICE, modelChoice, modelStepPrompt, pickedAccel, setupArgs, setupConfirmText,
+  setupStatus, setupSteps, SDK_NAMES, setupFailureMessage, setupProgressNote, setupRuntimeFolder, splitArgs, wantDialog, workspaceOf,
 } from "./lib.mjs";
 
 const here = fileURLToPath(new URL(".", import.meta.url));
@@ -206,17 +207,100 @@ test("failureMessage は終了コードごとに、わけと次にすること�
   assert.equal(logTail("1\n\n2\n3\n4\n5\n"), "2\n3\n4\n5");
 });
 
-test("parseSetupArgs: no-model・gpu・cpu(-- はあってもなくても)、help、知らない指定", () => {
-  assert.deepEqual(parseSetupArgs(""), { args: [] });
-  assert.deepEqual(parseSetupArgs("No-Model --gpu gpu"), { args: ["--no-model", "--gpu"] });
-  assert.deepEqual(parseSetupArgs("cpu"), { args: ["--cpu"] });
-  assert.deepEqual(parseSetupArgs("--help"), { help: true });
-  assert.match(parseSetupArgs("gpu cpu").error, /一緒に指定できません/);
-  assert.match(parseSetupArgs("full").error, /知らない指定です: full/);
-  assert.match(parseSetupArgs("constructor").error, /知らない指定です/);  // Object の持ち物の名前を指定と取り違えない
-  assert.match(SETUP_HELP, /no-model.*gpu/s);
+const READY = {
+  ready: true, gpu: true, gpu_supported: true, home: "H",
+  model: { state: "installed", name: "intfloat/multilingual-e5-small", folder: "D:\\models\\e5", own_folder: true, dir_source: "user" },
+};
+const FRESH = { ready: false, gpu: false, gpu_supported: true, home: "H", model: null };
+
+test("setupStatus は setup --status の最後の行の JSON を読み、読めなければ null", () => {
+  assert.deepEqual(setupStatus(`warn\n${JSON.stringify(FRESH)}\n`), FRESH);
+  assert.equal(setupStatus("python が見つかりません"), null);
+  assert.equal(setupStatus('{"gpu": true}'), null);   // ready の無いものは使わない
+  assert.equal(setupStatus(""), null);
 });
 
+test("setupSteps: GPU は Windows だけ、モデルは設定が置き場を決めていないときだけ尋ね、最後に確かめる", () => {
+  assert.deepEqual(setupSteps(FRESH), ["accel", "model", "confirm"]);
+  assert.deepEqual(setupSteps({ ...FRESH, gpu_supported: false }), ["model", "confirm"]);
+  // 状態を読めなくても、尋ねて進める(GPU を選べるかは、この OS で決める)
+  assert.deepEqual(setupSteps(null, "linux"), ["model", "confirm"]);
+  assert.deepEqual(setupSteps(null, "win32"), ["accel", "model", "confirm"]);
+  assert.deepEqual(setupSteps(READY), ["accel", "model", "confirm"]);   // model use で覚えたフォルダは替えられる
+  const byConfig = { ...READY, model: { ...READY.model, dir_source: "config" } };
+  assert.deepEqual(setupSteps(byConfig), ["accel", "confirm"]);
+  assert.deepEqual(setupSteps({ ...READY, model: { state: "off" } }), ["accel", "confirm"]);
+});
+
+test("入れたモデルのフォルダを使わないわけ: 設定の model_dir と、埋め込みを切った設定", () => {
+  assert.equal(modelNotUsedReason(null), "");
+  assert.equal(modelNotUsedReason(READY.model), "");   // model use で覚えたものは替えられる
+  assert.match(modelNotUsedReason({ ...READY.model, dir_source: "config" }), /model_dir\(D:\\models\\e5\)が置き場を決めていて/);
+  assert.match(modelNotUsedReason({ own_folder: true, folder: "" }), /model_dir が置き場を決めていて/);
+  assert.match(modelNotUsedReason({ state: "off" }), /埋め込みを切っているため/);
+});
+
+test("GPU の段: 前の選び方を初めの値にし、答えを GPU か CPU かに読む(読めなければ null で、前の選び方)", () => {
+  assert.equal(accelSchema(READY).properties.accel.default, GPU_CHOICE);
+  assert.equal(accelSchema(FRESH).properties.accel.default, CPU_CHOICE);
+  assert.deepEqual(accelSchema(FRESH).properties.accel.enum, [GPU_CHOICE, CPU_CHOICE]);
+  assert.match(accelPrompt(1, 3, READY), /^context-foundation の用意\(1\/3\): .*今は GPU です/);
+  assert.doesNotMatch(accelPrompt(1, 3, FRESH), /今は/);
+  assert.equal(pickedAccel({ accel: GPU_CHOICE }), true);
+  assert.equal(pickedAccel({ accel: CPU_CHOICE }), false);
+  assert.equal(pickedAccel({ accel: " directml " }), true);   // Other に書き込まれたもの
+  assert.equal(pickedAccel({ accel: "cpu で" }), false);
+  assert.equal(pickedAccel({ accel: "どちらでも" }), null);
+  assert.equal(pickedAccel(undefined), null);
+  assert.deepEqual(setupArgs({ gpu: true }), ["--gpu"]);
+  assert.deepEqual(setupArgs({ gpu: false }), ["--cpu"]);
+  assert.deepEqual(setupArgs({ gpu: null }), []);
+  assert.deepEqual(setupArgs(null), []);   // 尋ねられなかった: 前の setup の選び方を引き継ぐ
+});
+
+test("モデルの段: 今のフォルダを初めの値にし、そのままなら今のまま、空なら入れない、別のフォルダなら確かめて覚える", () => {
+  assert.equal(currentModelFolder(READY), "D:\\models\\e5");
+  assert.equal(currentModelFolder(FRESH), "");
+  assert.equal(modelFolderSchema(currentModelFolder(READY)).properties.folder.default, "D:\\models\\e5");
+  assert.equal("default" in modelFolderSchema("").properties.folder, false);
+  assert.match(modelStepPrompt(2, 3, READY), /^context-foundation の用意\(2\/3\): 埋め込みモデル\(intfloat\/multilingual-e5-small\)は入っています/);
+  assert.match(modelStepPrompt(2, 3, FRESH), /空のまま送ると、keyword だけの検索で続けます/);
+  const missing = { ...FRESH, model: { state: "missing", name: "m", license: "MIT", size_mb: 487 } };
+  assert.match(modelStepPrompt(2, 3, missing), /埋め込みモデル\(m、ライセンス MIT、約 487 MB\)のフォルダ/);
+  assert.deepEqual(modelChoice("D:\\models\\e5\\", READY), { kind: "keep" });   // 末尾の区切りと大文字小文字は見ない
+  assert.deepEqual(modelChoice("", READY), { kind: "keep" });
+  assert.deepEqual(modelChoice("E:\\other", READY), { kind: "use", folder: "E:\\other" });
+  assert.deepEqual(modelChoice("", FRESH), { kind: "none" });
+  assert.deepEqual(modelChoice("E:\\m", FRESH), { kind: "use", folder: "E:\\m" });
+  // 入っているモデルを替えるときの、尋ね直しの文(missing が無い)
+  assert.match(modelFolderPrompt(null, "E:\\x は使えませんでした: だめ"), /^context-foundation: E:\\x は使えませんでした: だめ\n使う埋め込みモデルのフォルダを.*今のモデルのまま続けます$/s);
+});
+
+test("はい・いいえは日本語の選択肢で尋ね、選んだ yes だけを yes とみなす", () => {
+  const s = choiceSchema(SETUP_YES, SETUP_NO).properties.answer;
+  assert.deepEqual([s.enum, s.default], [[SETUP_YES, SETUP_NO], SETUP_YES]);
+  assert.equal(pickedYes({ answer: SETUP_YES }, SETUP_YES), true);
+  assert.equal(pickedYes({ answer: ` ${SETUP_YES} ` }, SETUP_YES), true);
+  assert.equal(pickedYes({ answer: SETUP_NO }, SETUP_YES), false);
+  assert.equal(pickedYes({ answer: "はい" }, SETUP_YES), false);   // Other に書き込まれたものは yes にしない
+  assert.equal(pickedYes(undefined, SETUP_YES), false);
+});
+
+test("確かめの段: 入れるもの・置き場・計算・モデルをまとめる", () => {
+  const first = setupConfirmText(3, 3, { gpu: true, model: { kind: "use", folder: "E:\\m" } }, FRESH, "H");
+  assert.match(first, /^context-foundation の用意\(3\/3\): 次の内容で用意します/);
+  assert.match(first, /入れるもの: Python のパッケージ\(PyPI から約 200 MB/);
+  assert.match(first, /置き場: H\n/);
+  assert.match(first, /埋め込みの計算: GPU\(DirectML\)/);
+  assert.match(first, /埋め込みモデル: E:\\m\(用意のあとで/);
+  assert.match(setupConfirmText(3, 3, { gpu: true, model: { kind: "keep" } }, READY, "H"), /確かめるだけです[\s\S]*今のまま\(D:\\models\\e5\)/);
+  assert.match(setupConfirmText(3, 3, { gpu: false, model: { kind: "keep" } }, READY, "H"), /CPU 用に入れ直します/);
+  assert.match(setupConfirmText(2, 2, { gpu: null, model: null }, null, "H"), /済んでいれば確かめるだけです/);   // 状態を読めなかった
+  assert.match(setupConfirmText(2, 2, { gpu: null, model: { kind: "none" } }, { ...FRESH, gpu_supported: false }, ""),
+    /埋め込みの計算: CPU\n- 埋め込みモデル: 使いません/);
+  const byConfig = { ...READY, model: { ...READY.model, dir_source: "config" } };
+  assert.match(setupConfirmText(2, 2, { gpu: true, model: null }, byConfig, "H"), /設定の model_dir のフォルダ\(D:\\models\\e5\)/);
+});
 test("dataHome は ctxf.py の data_home と同じ順で置き場を決める", () => {
   assert.equal(dataHome({ CF_HOME: "C:\\cf", LOCALAPPDATA: "C:\\L" }, "win32"), "C:\\cf");
   assert.equal(dataHome({ LOCALAPPDATA: "C:\\L" }, "win32"), join("C:\\L", "context-foundation"));

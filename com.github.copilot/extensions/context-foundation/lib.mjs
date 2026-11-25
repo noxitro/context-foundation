@@ -5,7 +5,6 @@ import { homedir } from "node:os";
 import { basename, dirname, join, resolve, win32 } from "node:path";
 
 export const USAGE = "使い方: /context-index [full] [<フォルダ> ...]";
-export const SETUP_USAGE = "使い方: /context-setup [no-model] [gpu | cpu]";
 
 // プラグインのルート(plugin.json と ctxf.py のあるフォルダ)。start から親へさかのぼる
 export function pluginRoot(start) {
@@ -260,8 +259,8 @@ export function modelMissing(out) {
 
 // ---- /context-setup の、手元に置いた埋め込みモデルのフォルダを尋ねるダイアログ(取得はしない)
 
-// フォルダを書き込む欄の形。空のまま送るか、取り消すと飛ばす
-export function modelFolderSchema() {
+// フォルダを書き込む欄の形。now は初めの値(今のモデルのフォルダ。無ければ空)
+export function modelFolderSchema(now = "") {
   return {
     type: "object",
     properties: {
@@ -269,18 +268,23 @@ export function modelFolderSchema() {
         type: "string",
         title: "モデルのフォルダ",
         description: "onnx\\model.onnx(か model.onnx)と tokenizer.json の入ったフォルダ。Hugging Face のキャッシュのフォルダ" +
-          "(models--<org>--<name>)や、使う .onnx のファイルのパスでも構いません。空のままで飛ばします",
+          "(models--<org>--<name>)や、使う .onnx のファイルのパスでも構いません。" +
+          (now ? "そのまま送ると、今のモデルを使います" : "空のままで飛ばします"),
+        ...(now ? { default: now } : {}),
       },
     },
   };
 }
 
-// ダイアログの文。missing は modelMissing の戻り値、retry は前の答えがだめだったわけ(初めは "")
+// ダイアログの文。missing は modelMissing の戻り値(モデルが入っていて、別のフォルダに替えるときは null)、
+// retry は前の答えがだめだったわけ(初めは "")
 export function modelFolderPrompt(missing, retry = "") {
   return "context-foundation: " + (retry ? `${retry}\n` : "") +
-    `埋め込みモデル(${missing.about})がありません。意味での検索(日本語や言葉での質問で、英語のコードを探すなど)に要ります。` +
+    (missing ? `埋め込みモデル(${missing.about})がありません。` : "使う埋め込みモデルのフォルダを、もう一度入れてください。") +
+    "意味での検索(日本語や言葉での質問で、英語のコードを探すなど)に要ります。" +
     "この PC に置いてあれば、そのフォルダを入れてください。1 回読み込んで確かめてから、この PC のすべての作業フォルダで使うように" +
-    "覚えます(写しも取得もしません)。無ければ空のまま送るか取り消すと、keyword だけの検索で続けます";
+    "覚えます(写しも取得もしません)。" +
+    (missing ? "無ければ空のまま送るか取り消すと、keyword だけの検索で続けます" : "空のまま送るか取り消すと、今のモデルのまま続けます");
 }
 
 // ダイアログの答えから、フォルダのパス(前後の空白と囲みの引用符を外す)。無ければ ""
@@ -388,31 +392,143 @@ export function failureMessage(code, out, log, setup, index = ".cf\\index.db") {
 // 直すコマンドが、隣の .venv(リポジトリを取得した人)向けか(ctxf.py の repair_command の形)
 const usesLocalVenv = (cmd) => /setup\.bat|-m venv --clear \.venv/.test(cmd ?? "");
 
-// ---- /context-setup(この PC の用意。ctxf.py setup を裏で動かす)
+// ---- /context-setup(この PC の用意。引数は取らず、ダイアログで順に尋ねてから ctxf.py setup を動かす)
 
-export const SETUP_HELP = `${SETUP_USAGE}
-検索に要る Python のパッケージ(PyPI から約 200 MB)を、利用者ごとの置き場に入れます。` +
-  `1 回だけで済みます(済んでいれば、確かめるだけで終わります)。モデルは呼びません(Copilot CLI では裏で動かします。GitHub Copilot app では、結果のダイアログを閉じるまでコマンドが終わりません)。
-埋め込みモデル(Hugging Face の OSS)は取得しません。無ければ、この PC に置いたモデルのフォルダをダイアログで尋ね、` +
-  `1 回読み込んで確かめてから覚えます(空のままで飛ばせます。無ければ検索は keyword だけ)。` +
-  `取得するときは、使ってよいかを確かめたうえで、ターミナルで ctxf.py model download を実行します。
-- no-model: 埋め込みモデルの有無を知らせず、フォルダも尋ねない
-- gpu: (Windows)索引づくりの埋め込みを GPU で計算する onnxruntime-directml を入れる。cpu で戻す。選び方は次の用意に引き継ぐ`;
+// 埋め込みの計算の選択肢(ダイアログの答えは、この文がそのまま返る)
+export const GPU_CHOICE = "GPU(DirectML。DirectX 12 に対応した GPU)";
+export const CPU_CHOICE = "CPU";
 
-const SETUP_WORDS = { "no-model": "--no-model", gpu: "--gpu", cpu: "--cpu" };
-
-// /context-setup の引数。{ args: ctxf.py setup に渡す指定 } か { help: true } か { error }。
-// no-model・gpu・cpu は、-- を付けても付けなくてもよい
-export function parseSetupArgs(arg) {
-  const words = splitArgs(arg).map((w) => w.toLowerCase().replace(/^--?/, ""));
-  if (words.some((w) => w === "help" || w === "h")) return { help: true };
-  const unknown = words.filter((w) => !Object.hasOwn(SETUP_WORDS, w));
-  if (unknown.length) return { error: `知らない指定です: ${unknown.join(" ")}\n${SETUP_USAGE}` };
-  const args = [...new Set(words.map((w) => SETUP_WORDS[w]))];
-  if (args.includes("--gpu") && args.includes("--cpu")) return { error: `gpu と cpu は一緒に指定できません\n${SETUP_USAGE}` };
-  return { args };
+// ctxf.py setup --status の出力(1 行の JSON)を読む。読めなければ null
+export function setupStatus(out) {
+  const line = (out ?? "").trim().split(/\r?\n/).pop() ?? "";
+  try {
+    const v = JSON.parse(line);
+    return v && typeof v === "object" && typeof v.ready === "boolean" ? v : null;
+  } catch {
+    return null;
+  }
 }
 
+// モデルのフォルダを尋ねてよいか。作業フォルダの設定の [embedding] model_dir が置き場を決めているとき
+// (覚えても、そちらが先に使われる)と、設定で埋め込みを切っているときは尋ねない
+export const modelAskable = (m) => !m || (m.state !== "off" && !(m.own_folder && m.dir_source !== "user"));
+
+// 入れたモデルのフォルダを使わなかったわけ(設定が置き場を決めている・埋め込みを切っている)。使えるなら ""
+export function modelNotUsedReason(m) {
+  if (modelAskable(m)) return "";
+  return m.state === "off" ? "作業フォルダの設定で、埋め込みを切っているため"
+    : `作業フォルダの設定の [embedding] model_dir${m.folder ? `(${m.folder})` : " "}が置き場を決めていて、そちらが先に使われるため`;
+}
+
+// 尋ねる段の並び: accel(GPU か CPU か。Windows だけ)、model(モデルのフォルダ)、confirm(まとめて確かめる)。
+// 状態を読めなかったとき(null)は、GPU を選べるかを、この OS で決める
+export function setupSteps(status, platform = process.platform) {
+  const gpu = status ? status.gpu_supported : platform === "win32";
+  return [...(gpu ? ["accel"] : []), ...(modelAskable(status?.model) ? ["model"] : []), "confirm"];
+}
+
+const stepHead = (n, total) => `context-foundation の用意(${n}/${total}): `;
+
+export function accelPrompt(n, total, status) {
+  return stepHead(n, total) + "索引づくりで、埋め込み(意味での検索に使う数値)をどこで計算するかを選んでください。" +
+    "GPU を選ぶと、onnxruntime の代わりに onnxruntime-directml を入れます。DirectML を使えない PC では、入れても CPU で" +
+    "計算します。" + (status?.ready ? `今は ${status.gpu ? "GPU" : "CPU"} です(変えると、onnxruntime を入れ直します)。` : "") +
+    "取り消すと、用意をやめます";
+}
+
+export function accelSchema(status) {
+  return {
+    type: "object",
+    properties: {
+      accel: {
+        type: "string",
+        title: "埋め込みの計算",
+        enum: [GPU_CHOICE, CPU_CHOICE],
+        default: status?.gpu ? GPU_CHOICE : CPU_CHOICE,
+      },
+    },
+    required: ["accel"],
+  };
+}
+
+// ダイアログの答えから、GPU を使うか。選択肢に無い答え(Other に書き込まれたもの)は、GPU・CPU の言葉で読む。
+// 読めなければ null(前の選び方を引き継ぐ)
+export function pickedAccel(content) {
+  const v = typeof content?.accel === "string" ? content.accel.trim() : "";
+  if (v === GPU_CHOICE) return true;
+  if (v === CPU_CHOICE) return false;
+  if (/gpu|directml/i.test(v)) return true;
+  if (/cpu/i.test(v)) return false;
+  return null;
+}
+
+// 今のモデルのフォルダ(入っているときだけ)。モデルのフォルダの欄の初めの値にする
+export const currentModelFolder = (status) => (status?.model?.state === "installed" ? status.model.folder ?? "" : "");
+
+export function modelStepPrompt(n, total, status) {
+  const m = status?.model;
+  if (m?.state === "installed") {
+    return stepHead(n, total) + `埋め込みモデル(${m.name})は入っています(${m.folder})。このまま使うなら、そのまま送って` +
+      "ください。別のフォルダのモデルを使うなら、そのフォルダを入れてください(用意のあとで 1 回読み込んで確かめてから" +
+      "覚えます)。取り消すと、用意をやめます";
+  }
+  const about = m?.name ? `${m.name}、ライセンス ${m.license || "不明"}${m.size_mb ? `、約 ${m.size_mb} MB` : ""}` : "";
+  return stepHead(n, total) + `埋め込みモデル${about ? `(${about})` : ""}のフォルダを入れてください。意味での検索` +
+    "(日本語や言葉での質問で、英語のコードを探すなど)に要ります。この PC に置いてあれば、そのフォルダを入れると、" +
+    "用意のあとで 1 回読み込んで確かめてから、この PC のすべての作業フォルダで使うように覚えます(写しも取得も" +
+    "しません)。無ければ空のまま送ると、keyword だけの検索で続けます。取り消すと、用意をやめます";
+}
+
+// モデルの段の答え: { kind: "keep" }(今のまま)、{ kind: "none" }(入れない)、{ kind: "use", folder }
+export function modelChoice(folder, status) {
+  const now = currentModelFolder(status);
+  if (now && (!folder || pathKey(folder) === pathKey(now))) return { kind: "keep" };
+  return folder ? { kind: "use", folder } : { kind: "none" };
+}
+
+// はい・いいえを、日本語の選択肢で尋ねる形(session.ui.confirm は、ホストが英語の Yes・No を出す)。
+// 初めは yes を選んである
+export function choiceSchema(yes, no) {
+  return {
+    type: "object",
+    properties: { answer: { type: "string", title: "答え", enum: [yes, no], default: yes } },
+    required: ["answer"],
+  };
+}
+
+// 答えが yes か。選択肢に無い答え(Other に書き込まれたもの)は、yes とみなさない
+export const pickedYes = (content, yes) => typeof content?.answer === "string" && content.answer.trim() === yes;
+
+export const SETUP_YES = "はい、この内容で用意する";
+export const SETUP_NO = "やめる";
+
+// ctxf.py setup に渡す指定。gpu が null(尋ねていない)なら、前の setup の選び方を引き継ぐ
+export const setupArgs = (plan) => (plan?.gpu === true ? ["--gpu"] : plan?.gpu === false ? ["--cpu"] : []);
+
+// 最後に、まとめて確かめる文
+export function setupConfirmText(n, total, plan, status, home) {
+  const gpu = plan.gpu ?? Boolean(status?.gpu);
+  const changed = Boolean(status?.ready) && plan.gpu !== null && plan.gpu !== Boolean(status?.gpu);
+  const what = !status ? "Python のパッケージ(初めは PyPI から約 200 MB。済んでいれば確かめるだけです)"
+    : !status.ready ? "Python のパッケージ(PyPI から約 200 MB。初めは数分かかります)"
+    : changed ? `onnxruntime を${gpu ? " GPU 用(onnxruntime-directml)" : " CPU 用"}に入れ直します(PyPI から取得します)`
+      : "済んでいるので、確かめるだけです";
+  const m = plan.model;
+  const s = status?.model;
+  const model = !m
+    ? (s?.state === "off" ? "使いません(作業フォルダの設定で、埋め込みを切っています)"
+      : s?.own_folder ? `作業フォルダの設定の model_dir のフォルダ(${s.folder})`
+        : s?.state === "installed" ? `今のまま(${s.folder})` : "用意のあとで、有無を知らせます")
+    : m.kind === "keep" ? `今のまま(${status?.model?.folder ?? ""})`
+      : m.kind === "use" ? `${m.folder}(用意のあとで、読み込んで確かめてから覚えます)`
+        : "使いません(keyword だけの検索。後から /context-setup で入れられます)";
+  return stepHead(n, total) + "次の内容で用意します。よければ「" + SETUP_YES + "」を選んでください。\n" +
+    `- 入れるもの: ${what}\n` +
+    (home ? `- 置き場: ${home}\n` : "") +
+    `- 埋め込みの計算: ${gpu ? "GPU(DirectML)" : "CPU"}\n` +
+    `- 埋め込みモデル: ${model}\n` +
+    "埋め込みモデルは取得しません。モデル(LLM)は呼びません";
+}
 // ctxf.py の data_home と同じ、利用者ごとの置き場(CF_HOME。無ければ %LOCALAPPDATA%\context-foundation など)
 export function dataHome(env, platform = process.platform, home = homedir()) {
   if (env.CF_HOME) return env.CF_HOME;
