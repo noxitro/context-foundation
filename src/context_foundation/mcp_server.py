@@ -70,7 +70,7 @@ TOOLS = [
                 "top_k": {"type": "integer", "minimum": 1, "maximum": 20,
                           "description": "Passages to return (workspace default, usually 8)."},
                 "mode": {"type": "string", "enum": list(MODES),
-                         "description": "Workspace default, usually hybrid. keyword: exact names; semantic: ideas."},
+                         "description": "Workspace default, usually hybrid."},
                 "source_id": {"type": "string", "description": "Limit to one source (see status)."},
             },
             "required": ["query"],

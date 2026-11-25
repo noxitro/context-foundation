@@ -22,7 +22,7 @@
       "keyword",
       "semantic"
      ],
-     "description": "Workspace default, usually hybrid. keyword: exact names; semantic: ideas."
+     "description": "Workspace default, usually hybrid."
     },
     "source_id": {
      "type": "string",
