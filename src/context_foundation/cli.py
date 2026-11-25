@@ -197,11 +197,18 @@ def _sources_state(cfg, workspace: str) -> dict:
             "embedding": {"enabled": ecfg.enabled, "device": ecfg.device, "provider": provider, "model": model}}
 
 
+def _real_key(p) -> str:
+    """リンク・ジャンクションを解決した形(同じ場所を、別の書き方で指していないかを見る)。"""
+    return os.path.normcase(os.path.realpath(p))
+
+
 def _sources_plan(cfg, folders: list[str]) -> tuple[list, list[tuple[str, str]], list] | str:
     """検索するフォルダを folders に替えるときの、(残す source, 足す (id, root), 外す source)。
     フォルダが無ければ、そのわけの文。
 
-    - 選んだフォルダと同じ root の source は、中身(exclude など)ごと残す
+    - 選んだフォルダと同じ root の source は、中身(exclude など)ごと残す。同じかは、書かれたパスと、リンク・
+      ジャンクションを解決したパスの両方で見る(ジャンクションを root にした source を、その先の絶対パスで
+      選んでも、外して足し直さない)
     - 選んだフォルダの中にある source(ジャンクションを root にしたもの、手で分けたもの)も残す
     - 新しく選んだフォルダは足す。その中のフォルダのリンク・ジャンクションも、init と同じく source として足す
     - ほかは外す"""
@@ -220,31 +227,54 @@ def _sources_plan(cfg, folders: list[str]) -> tuple[list, list[tuple[str, str]],
         if _path_key(p) not in {_path_key(q) for q in picked}:
             picked.append(p)
     picked_keys = [_path_key(p) for p in picked]
+    picked_real = {_real_key(p) for p in picked}
     keep = [s for s in cfg.sources
-            if _path_key(s.root) in picked_keys or any(_is_inside(_path_key(s.root), k) for k in picked_keys)]
+            if _path_key(s.root) in picked_keys or _real_key(s.root) in picked_real
+            or any(_is_inside(_path_key(s.root), k) for k in picked_keys)]
     remove = [s for s in cfg.sources if s not in keep]
-    have = {_path_key(s.root) for s in keep}
+    have = {_path_key(s.root) for s in keep} | {_real_key(s.root) for s in keep}
     used = {s.id for s in keep}
-    new = [p for p in picked if _path_key(p) not in have]
+    new = [p for p in picked if _path_key(p) not in have and _real_key(p) not in have]
     add: list[tuple[str, str]] = []
-    for p in new + [link for link in linked_folders(new) if _path_key(link) not in have]:
-        if _path_key(p) in have:
+    for p in new + linked_folders(new):
+        if _path_key(p) in have or _real_key(p) in have:
             continue
-        have.add(_path_key(p))
+        have.update((_path_key(p), _real_key(p)))
         sid = source_id_for(p, used)
         used.add(sid)
         add.append((sid, source_root(p, ws)))
     return keep, add, remove
 
 
+def _rewritten_config(path, old_text: str, keep: list, add: list[tuple[str, str]]) -> str:
+    """[[source]] を替えた設定の中身。行で区切って書き換えたものが、意図どおりか(残す source とほかの表は
+    元のまま、足した source だけが増えている)を tomllib で読んで確かめ、違えば ConfigError(書かずに止まる)。"""
+    import tomllib
+
+    from .config import rewrite_sources
+
+    try:
+        new_text = rewrite_sources(old_text, {s.id for s in keep}, add)
+        before, after = tomllib.loads(old_text), tomllib.loads(new_text)
+        kept = [s for s in before.get("source", []) if s.get("id") in {k.id for k in keep}]
+        want = kept + [{"id": sid, "root": root} for sid, root in add]
+        rest = lambda d: {k: v for k, v in d.items() if k != "source"}     # noqa: E731
+        by_id = lambda items: sorted(items, key=lambda s: str(s.get("id")))  # noqa: E731
+        ok = by_id(after.get("source", [])) == by_id(want) and rest(before) == rest(after)
+    except (ConfigError, tomllib.TOMLDecodeError):
+        ok = False
+    if not ok:
+        raise ConfigError(f"設定を自動で書き換えられませんでした。{path} の [[source]] を手で直してください")
+    return new_text
+
+
 def cmd_sources(args) -> int:
     """検索するフォルダ(設定の [[source]])を見る・替える。/context-index のダイアログが、--json で使う。
 
-    --set <フォルダ> ...: [[source]] だけを替える(ほかの表と、残す source の中身は変えない。前の設定は
-    config.toml.bak に残す)。--dry-run を付けると、書かずに、何が変わるかだけを出す。"""
-    import tomllib
-
-    from .config import CONFIG_FILE_NAME, rewrite_sources, source_root
+    --set <フォルダ> ...: [[source]] だけを替える(ほかの表と、残す source の中身は変えない。前の設定は、
+    設定ファイルの名前に .bak を付けて残す)。--dry-run を付けると、書かずに、何が変わるかだけを出す
+    (書き換えられる設定かも、ここで確かめる)。"""
+    from .config import source_root
 
     as_json = args.json
     if args.dry_run and not args.set:
@@ -276,38 +306,25 @@ def cmd_sources(args) -> int:
         return EXIT_USAGE
     keep, add, remove = plan
     changed = bool(add or remove)
+    # 前の設定の控え(設定ファイルの名前に .bak。CF_CONFIG で別の名前の設定を使っていても、隣の別の控えを上書きしない)
+    backup = path.with_name(path.name + ".bak")
     result = {"result": ("unchanged" if not changed else "would change" if args.dry_run else "changed"),
               "config": str(path),
               "keep": [{"id": s.id, "root": source_root(s.root, cfg.workspace)} for s in keep],
               "add": [{"id": sid, "root": root} for sid, root in add],
               "remove": [{"id": s.id, "root": source_root(s.root, cfg.workspace)} for s in remove],
-              "backup": ""}
-    if changed and not args.dry_run:
+              "backup": str(backup) if changed else ""}
+    if changed:
         old_bytes = path.read_bytes()
-        old_text = old_bytes.decode("utf-8")
-        # 行で区切って書き換えたものが、意図どおりか(残す source とほかの表は元のまま、足した source だけが
-        # 増えている)を、書く前に確かめる。違えば、書かずに止まる
-        try:
-            new_text = rewrite_sources(old_text, {s.id for s in keep}, add)
-            before, after = tomllib.loads(old_text), tomllib.loads(new_text)
-            kept = [s for s in before.get("source", []) if s.get("id") in {k.id for k in keep}]
-            want = kept + [{"id": sid, "root": root} for sid, root in add]
-            rest = lambda d: {k: v for k, v in d.items() if k != "source"}     # noqa: E731
-            by_id = lambda items: sorted(items, key=lambda s: str(s.get("id")))  # noqa: E731
-            ok = by_id(after.get("source", [])) == by_id(want) and rest(before) == rest(after)
-        except (ConfigError, tomllib.TOMLDecodeError):
-            ok = False
-        if not ok:
-            raise ConfigError(f"設定を自動で書き換えられませんでした。{path} の [[source]] を手で直してください")
-        backup = path.with_name(CONFIG_FILE_NAME + ".bak")
-        backup.write_bytes(old_bytes)
-        path.write_bytes(new_text.encode("utf-8"))
-        try:
-            load_config(path)                # 書いたものが読めることを確かめる
-        except ConfigError:
-            path.write_bytes(old_bytes)      # 読めなければ、元に戻す
-            raise
-        result["backup"] = str(backup)
+        new_text = _rewritten_config(path, old_bytes.decode("utf-8"), keep, add)     # --dry-run でも確かめる
+        if not args.dry_run:
+            backup.write_bytes(old_bytes)
+            path.write_bytes(new_text.encode("utf-8"))
+            try:
+                load_config(path)                # 書いたものが読めることを確かめる
+            except ConfigError:
+                path.write_bytes(old_bytes)      # 読めなければ、元に戻す
+                raise
     if as_json:
         sys.stdout.write(json.dumps(result, ensure_ascii=False) + "\n")
         return 0
@@ -318,8 +335,8 @@ def cmd_sources(args) -> int:
                         ("外した source" if not args.dry_run else "外す source", "remove")):
         for s in result[key_]:
             print(f"  {label} {s['id']}: {s['root']}")
-    if result["backup"]:
-        print(f"前の設定を残しました: {result['backup']}")
+    if changed and not args.dry_run:
+        print(f"前の設定を残しました: {backup}")
         print(f"次は `{command_hint('index')}` で索引を作り直します(変わっていないファイルの埋め込みは使い回します)。")
     print("result: " + result["result"])
     return 0

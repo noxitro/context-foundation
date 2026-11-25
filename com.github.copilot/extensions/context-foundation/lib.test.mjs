@@ -358,6 +358,9 @@ test("今の状態の文: フォルダ・索引・検索の種類・計算先を
   // 索引の埋め込みが今のモデルと違う・無いときは、更新で埋め込み直すことを言う
   assert.match(indexMenuText({ ...STATE, index: { ...STATE.index, model: "old/model" } }), /今のモデルは org\/model なので、更新すると、すべて埋め込み直します/);
   assert.match(indexMenuText({ ...STATE, index: { ...STATE.index, model: "" } }), /keyword だけ。更新すると、意味での検索のための埋め込みを計算します/);
+  // モデルが無くなったのに、索引には埋め込みがあるとき: 更新は止まる(keyword だけの索引に置き換えない)と言う
+  const lost = { ...STATE, embedding: { ...STATE.embedding, model: { state: "missing", name: "org/model" } } };
+  assert.match(indexMenuText(lost), /埋め込みモデル org\/model。埋め込みモデルが無いので、更新は止まります\(.*\/context-setup/);
   assert.equal(sourcesLine([{ id: "w", root: ".", exists: true, inside: "" }, { id: "gone", root: "gone", exists: false, inside: "" }]),
     "作業フォルダ全体、gone(フォルダがありません)");
 });
@@ -399,11 +402,22 @@ test("することの選択肢: 選んだものだけを読み、書き込まれ
 test("フォルダを変えるとき: 今の source にチェックを付け、直下に無い source は候補に足す", () => {
   const names = ["Docs", "Engine", "Tools"];
   // 直下の名前は、大文字小文字と区切りの違いを見ない。ほかの source の中にあるものは出さない
-  assert.deepEqual(folderDefaults(names, STATE.sources), { extra: ["D:\\shared\\docs"], checked: ["Engine", "D:\\shared\\docs"] });
-  assert.deepEqual(folderDefaults(names, [{ id: "e", root: "engine/", inside: "" }]), { extra: [], checked: ["Engine"] });
-  // 作業フォルダ全体が source なら、それだけを選んでおく
-  assert.deepEqual(folderDefaults(names, [{ id: "w", root: ".", inside: "" }, { id: "Docs", root: "Docs", inside: "w" }]),
-    { extra: [], checked: [WHOLE_WORKSPACE] });
+  assert.deepEqual(folderDefaults(names, STATE.sources), { extra: ["D:\\shared\\docs"], checked: ["Engine", "D:\\shared\\docs"], missing: [] });
+  assert.deepEqual(folderDefaults(names, [{ id: "e", root: "engine/", inside: "" }]), { extra: [], checked: ["Engine"], missing: [] });
+  // 作業フォルダ全体が source なら、それを選んでおく(中の source は出さない)。その外の source は、候補に足して選んでおく
+  // (そのまま送ると、外の source が外れてしまわないように)
+  const whole = [{ id: "w", root: ".", inside: "" }, { id: "Docs", root: "Docs", inside: "w" }, { id: "docs", root: "D:\\shared\\docs", inside: "" }];
+  assert.deepEqual(folderDefaults(names, whole), { extra: ["D:\\shared\\docs"], checked: [WHOLE_WORKSPACE, "D:\\shared\\docs"], missing: [] });
+  const wholeAll = [...names, "D:\\shared\\docs"];
+  assert.deepEqual(pickedFolders({ folders: folderSchema(wholeAll, 0, folderDefaults(names, whole).checked, names.length).properties.folders.default }, wholeAll),
+    [".", "D:\\shared\\docs"]);
+  // 作業フォルダ全体と一緒に選んだ中のフォルダは要らない。Other に書いた外のパスは残す
+  assert.deepEqual(pickedFolders({ folders: [WHOLE_WORKSPACE, "Engine", "E:\\ref", "..\\sibling", "e:\\REF"] }, names), [".", "E:\\ref", "..\\sibling"]);
+  // フォルダが無くなった source は、選ばない(選ぶと、書き直しが止まる)。質問に、そのことを書く
+  const gone = [{ id: "Engine", root: "Engine", exists: true, inside: "" }, { id: "app", root: "app", exists: false, inside: "" }];
+  assert.deepEqual(folderDefaults(names, gone), { extra: [], checked: ["Engine"], missing: ["app"] });
+  assert.match(folderPrompt(1, 2, "C:\\w", true, ["app"]), /無くなったフォルダ\(app\)は、選んでいません\(このまま進むと、設定から外します\)。/);
+  assert.doesNotMatch(folderPrompt(1, 2, "C:\\w", true, []), /無くなった/);
   const { extra, checked } = folderDefaults(names, STATE.sources);
   const f = folderSchema([...names, ...extra], 5, checked, names.length).properties.folders;
   assert.deepEqual(f.items.enum, ["Docs", "Engine", "Tools", "D:\\shared\\docs", WHOLE_WORKSPACE]);
@@ -428,7 +442,10 @@ test("確かめの文: 初めての索引は入れるフォルダ・置き場・
   const change = changeConfirmText(2, 2, plan);
   assert.ok(change.includes(`よければ「${CHANGE_YES}」を選んでください。\n- 足す: Tools\n- 外す: D:\\shared\\docs\n- そのまま: Engine\n`));
   assert.match(change, /\[\[source\]\] だけを書き直し、前の設定は config\.toml\.bak に残します/);
+  // 控えの名前は、設定ファイルの名前に .bak(CF_CONFIG で別の名前の設定を使っているとき)
+  assert.match(changeConfirmText(2, 2, { ...plan, backup: "D:\\cfg\\my.toml.bak" }), /前の設定は my\.toml\.bak に残します/);
   assert.doesNotMatch(changeConfirmText(2, 2, { ...plan, remove: [] }), /- 外す/);
+  assert.equal(changedText({ ...plan, add: [], remove: [] }), "");
   assert.equal(changedText({ ...plan, result: "changed", backup: "C:\\w\\.cf\\config.toml.bak" }),
     "検索するフォルダを替えました(足した: Tools、外した: D:\\shared\\docs。前の設定: C:\\w\\.cf\\config.toml.bak)。\n");
 });
@@ -442,6 +459,8 @@ test("embedNote は、索引づくりのログから、埋め込みをどこで�
   assert.match(embedNote("注意: GPU(DmlExecutionProvider)で埋め込みを始められないので、CPU で計算します(RuntimeError: x)\n" + cpu),
     /CPU で計算しました.*GPU では始められなかったので、CPU に替えました\(わけはログ\)。$/);
   assert.equal(embedNote(gpu.replace("1,234 passage を計算", "0 passage を計算")), "埋め込みは、すべて前の索引から使い回しました。");
+  // 計算も使い回しも 0(埋め込む passage が無い)なら、何も言わない
+  assert.equal(embedNote(cpu.replace("50 passage を計算", "0 passage を計算")), "");
   assert.equal(embedNote("keyword(BM25)だけの索引を作ります\n"), "");
 });
 

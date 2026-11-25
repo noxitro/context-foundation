@@ -274,8 +274,8 @@ async function askFirstIndex(ws, state, lead) {
   return ok ? { action: "init", folders } : null;
 }
 
-// 設定があるとき: 今の状態を見せて、することを選ばせる。{ action: "index", full, note } か
-// { action: "change", folders } か、{ error } か、やめたら null。始めのダイアログを出せなければ、投げる
+// 設定があるとき: 今の状態を見せて、することを選ばせる。{ action: "index", full } か { action: "change", folders } か、
+// { done }(何もせずに終わるときの知らせ)か、{ error } か、やめたら null。始めのダイアログを出せなければ、投げる
 async function askExistingIndex(ctxf, config, ws, state, lead) {
   const choices = indexMenuChoices(state);
   const action = await askOneOf((retry) => exclusive(() => session.ui.elicitation({
@@ -287,10 +287,10 @@ async function askExistingIndex(ctxf, config, ws, state, lead) {
   // 検索するフォルダを変える: 今のフォルダを選んだ一覧を出し、何が変わるかを確かめてから書き直す
   try {
     const { names, omitted } = folderChoices(ws);
-    const { extra, checked } = folderDefaults(names, state.sources);
+    const { extra, checked, missing } = folderDefaults(names, state.sources);
     const all = [...names, ...extra];
     const r = await exclusive(() => session.ui.elicitation({
-      message: folderPrompt(1, 2, ws, true), requestedSchema: folderSchema(all, omitted, checked, names.length),
+      message: folderPrompt(1, 2, ws, true, missing), requestedSchema: folderSchema(all, omitted, checked, names.length),
     }));
     if (r.action !== "accept") return null;
     const folders = pickedFolders(r.content, all);
@@ -299,11 +299,19 @@ async function askExistingIndex(ctxf, config, ws, state, lead) {
     if (dry.error) return { error: cannotStart(dry) };
     const plan = sourcesPlan(dry.out);
     if (!plan) return { error: `検索するフォルダを替えられません: ${logTail(dry.out, 2) || `終了コード ${dry.code}`}` };
-    if (plan.result === "unchanged") return { action: "index", full: false, note: "検索するフォルダは、変えていません。" };
+    // 選び直しても同じなら、何もしない(確かめを出さずに、索引づくりを始めない)
+    if (plan.result === "unchanged") {
+      return { done: "検索するフォルダは、今と同じです。設定も索引も変えていません(索引を更新するなら、もう一度 /context-index を打って「更新する」を選びます)" };
+    }
     if (!(await askYesNo(changeConfirmText(2, 2, plan), CHANGE_YES, INDEX_NO))) return null;
     return { action: "change", folders };
-  } catch {
-    return null;             // 途中の段でダイアログを出せなくなった: 答えの一部だけで書き直さない
+  } catch (err) {
+    // 途中の段でダイアログを出せなくなった(複数選ぶダイアログを描けないホストなど): 答えの一部だけで書き直さず、
+    // ほかの変え方を知らせる
+    return {
+      error: `フォルダを選ぶダイアログを出せませんでした(${err?.message ?? err})。設定は変えていません。検索するフォルダを変えるには、` +
+        `ターミナルで次を実行するか、${config} の [[source]] を直してください: python -I "${ctxf}" sources --config "${config}" --set <フォルダ> ...`,
+    };
   }
 }
 
@@ -357,7 +365,11 @@ async function indexFlow(args) {
     await tell(`context-foundation: ${plan.error}`, "error");
     return;
   }
-  let made = plan.note ?? "";
+  if (plan.done) {
+    await tell(`context-foundation: ${plan.done}`);
+    return;
+  }
+  let made = "";
   if (plan.action === "init") {
     made = await makeConfig(ctxf, setup, ws, plan.folders);
     if (made === null) return;

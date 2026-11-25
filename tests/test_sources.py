@@ -2,7 +2,10 @@
 from __future__ import annotations
 
 import json
+import os
+import sys
 import tomllib
+from pathlib import Path
 
 import pytest
 
@@ -63,7 +66,8 @@ def test_set_replaces_only_the_source_tables(ws, capsys):
     before = cfg.read_bytes()
 
     code, plan = _json(capsys, ["sources", "--set", "docs", "app", "--dry-run", "--json"])
-    assert code == 0 and plan["result"] == "would change" and plan["backup"] == ""
+    assert code == 0 and plan["result"] == "would change"
+    assert plan["backup"] == str(ws / ".cf" / "config.toml.bak")      # 控えを置く場所(まだ書いていない)
     assert [s["id"] for s in plan["keep"]] == ["docs"] and [s["id"] for s in plan["remove"]] == ["engine"]
     assert plan["add"] == [{"id": "app", "root": "app"}]
     assert cfg.read_bytes() == before                       # 書いていない
@@ -111,10 +115,76 @@ def test_set_stops_when_the_file_cannot_be_split_by_lines(ws, capsys):
     cfg.write_text(odd, encoding="utf-8")
     tomllib.loads(odd)                                      # TOML としては読める
     before = cfg.read_bytes()
+    for argv in (["sources", "--set", "docs", "engine", "--dry-run"], ["sources", "--set", "docs", "engine"]):
+        capsys.readouterr()
+        assert cli_main(argv) == 2                          # 書く前の確かめ(--dry-run)でも止まる
+        assert "手で直してください" in capsys.readouterr().err
+        assert cfg.read_bytes() == before and not (ws / ".cf" / "config.toml.bak").exists()
+
+
+def test_set_checks_the_result_before_writing(ws, capsys):
+    """行で区切った結果が意図と違えば(見出しを引用符で書いた source は、区切りに掛からない)、書かずに止まる。"""
+    assert cli_main(["init", "docs", "app"]) == 0
+    cfg = ws / ".cf" / "config.toml"
+    cfg.write_text(cfg.read_text(encoding="utf-8") + "\n[['source']]\nid = 'engine'\nroot = 'engine'\n", encoding="utf-8")
+    assert [s.id for s in load_config(cfg).sources] == ["docs", "app", "engine"]
+    before = cfg.read_bytes()
     capsys.readouterr()
-    assert cli_main(["sources", "--set", "docs", "engine"]) == 2
+    assert cli_main(["sources", "--set", "docs", "app"]) == 2          # engine を外せない
     assert "手で直してください" in capsys.readouterr().err
     assert cfg.read_bytes() == before and not (ws / ".cf" / "config.toml.bak").exists()
+
+
+def test_set_restores_the_config_when_the_written_one_cannot_be_loaded(ws, capsys, monkeypatch):
+    import context_foundation.cli as cli
+
+    assert cli_main(["init", "docs", "app"]) == 0
+    cfg = ws / ".cf" / "config.toml"
+    before = cfg.read_bytes()
+    real, calls = cli.load_config, []
+
+    def flaky(path):
+        calls.append(path)
+        if len(calls) == 2:                                 # 書いた後の読み直しだけ、読めないことにする
+            raise ConfigError("読めません")
+        return real(path)
+
+    monkeypatch.setattr(cli, "load_config", flaky)
+    assert cli_main(["sources", "--set", "docs"]) == 2
+    assert cfg.read_bytes() == before                       # 元に戻している
+    assert (ws / ".cf" / "config.toml.bak").read_bytes() == before
+
+
+def test_set_names_the_backup_after_the_config_file(ws, capsys):
+    """CF_CONFIG や --config で、別の名前の設定を使っているとき: 控えは、その名前に .bak(隣の別の控えを上書きしない)。"""
+    assert cli_main(["init", "docs", "app"]) == 0
+    mine = ws / ".cf" / "mine.toml"
+    mine.write_bytes((ws / ".cf" / "config.toml").read_bytes())
+    other = ws / ".cf" / "config.toml.bak"
+    other.write_text("# 別の控え\n", encoding="utf-8")
+    code, done = _json(capsys, ["sources", "--config", str(mine), "--set", "docs", "--json"])
+    assert code == 0 and done["result"] == "changed" and done["backup"] == str(ws / ".cf" / "mine.toml.bak")
+    assert (ws / ".cf" / "mine.toml.bak").is_file() and other.read_text(encoding="utf-8") == "# 別の控え\n"
+
+
+def test_set_keeps_a_source_rooted_at_a_link_when_its_target_is_chosen(ws, tmp_path, capsys):
+    """ジャンクションを root にした source を、その先の絶対パスで選んでも、外して足し直さない(exclude を失わない)。"""
+    target = tmp_path / "elsewhere" / "Engine"
+    target.mkdir(parents=True)
+    (ws / "external").mkdir()
+    link = ws / "external" / "Engine"
+    try:
+        if sys.platform == "win32":
+            import _winapi
+            _winapi.CreateJunction(str(target), str(link))
+        else:
+            link.symlink_to(target, target_is_directory=True)
+    except (OSError, NotImplementedError) as e:
+        pytest.skip(f"ここではフォルダのリンクを作れない: {e}")
+    assert cli_main(["init", "docs", str(Path("external") / "Engine")]) == 0
+    code, plan = _json(capsys, ["sources", "--set", "docs", str(target), "--dry-run", "--json"])
+    assert code == 0 and plan["result"] == "unchanged", plan
+    assert [s["root"] for s in plan["keep"]] == ["docs", os.path.join("external", "Engine")]
 
 
 def test_rewrite_sources_keeps_comments_of_the_next_table_and_line_endings():
@@ -133,3 +203,26 @@ def test_rewrite_sources_keeps_comments_of_the_next_table_and_line_endings():
     assert [s["id"] for s in tomllib.loads(crlf)["source"]] == ["b", "c"]
     with pytest.raises(ConfigError):
         rewrite_sources("[embedding]\nenabled = true\n", set(), [("c", "c")])
+
+
+def test_rewrite_sources_decides_which_comments_go_with_a_removed_source():
+    def src(sid):
+        return f"[[source]]\nid = '{sid}'\nroot = '{sid}'\n"
+
+    # 空行の後ろのコメント(その後ろに空行があっても)は、次の表のもの。source を外しても残る
+    text = src("a") + "\n" + src("b") + "\n# ---- 埋め込みの設定 ----\n\n[embedding]\nenabled = true\n"
+    out = rewrite_sources(text, {"a"}, [])
+    assert "id = 'b'" not in out and "# ---- 埋め込みの設定 ----\n\n[embedding]" in out
+    # ファイルの終わりの、空行の後ろのコメントも残る
+    out = rewrite_sources(src("a") + "\n" + src("b") + "\n# メモ\n", {"a"}, [])
+    assert "id = 'b'" not in out and out.endswith("# メモ\n")
+    # 外す source の見出しのすぐ上のコメントは、一緒に外す。残す source のものは、そのまま
+    text = "# 始めのコメント\n" + src("a") + "\n# b について\n" + src("b") + "\n# c について\n" + src("c")
+    out = rewrite_sources(text, {"a", "c"}, [])
+    assert "# b について" not in out and "# c について\n[[source]]\nid = 'c'" in out
+    assert out.startswith("# 始めのコメント\n")
+    # ファイルの始めのコメントは、すぐ下の source を外しても残す
+    assert rewrite_sources(text, {"b", "c"}, []).startswith("# 始めのコメント\n")
+    # 空行を挟まずに続くコメントは、その source のもの(外すと一緒に消える)
+    out = rewrite_sources(src("a") + "\n" + src("b") + "# exclude = ['x']\n\n[search]\ntop_k = 5\n", {"a"}, [])
+    assert "# exclude" not in out and "[search]\ntop_k = 5" in out

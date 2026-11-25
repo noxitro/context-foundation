@@ -194,9 +194,16 @@ export function folderSchema(names, omitted = 0, checked = null, listed = names.
 export function pickedFolders(content, names) {
   const v = content?.folders;
   const got = (Array.isArray(v) ? v : typeof v === "string" ? [v] : []).filter((s) => typeof s === "string");
-  if (got.includes(WHOLE_WORKSPACE)) return ["."];
-  const clean = got.map((s) => s.trim().replace(/^"(.*)"$/, "$1").trim().replace(/(?<=[^:\\/])[\\/]+$/, "")).filter(Boolean);
+  const whole = got.includes(WHOLE_WORKSPACE);
+  const clean = got.filter((s) => s !== WHOLE_WORKSPACE)
+    .map((s) => s.trim().replace(/^"(.*)"$/, "$1").trim().replace(/(?<=[^:\\/])[\\/]+$/, "")).filter(Boolean);
   const key = (s) => s.toLowerCase();
+  if (whole) {
+    // 作業フォルダ全体を選んだら、中のフォルダは要らない。絶対パスか .. で始まるもの(作業フォルダの外を指しうる)は残す
+    const seen = new Set();
+    const outside = clean.filter((s) => /^([A-Za-z]:[\\/]|[\\/]|\.\.([\\/]|$))/.test(s) && !seen.has(key(s)) && seen.add(key(s)));
+    return [".", ...outside];
+  }
   const chosen = new Set(clean.map(key));
   const picked = names.filter((n) => chosen.has(key(n)));
   const seen = new Set(picked.map(key));
@@ -512,7 +519,10 @@ export function indexMenuText(state, retry = "", platform = process.platform) {
   // 索引の埋め込みが今のモデルと違うとき(keyword だけのときも)は、更新で、すべての passage を埋め込み直す
   const reembed = ix && !ix.error && usable && ix.model !== now.name
     ? (ix.model ? `。今のモデルは ${now.name} なので、更新すると、すべて埋め込み直します` : "。更新すると、意味での検索のための埋め込みを計算します")
-    : "";
+    // モデルが無く、前の索引に埋め込みがあるとき: 索引づくりは、keyword だけの索引に置き換えずに止まる
+    : ix && !ix.error && ix.model && now?.state === "missing"
+      ? "。埋め込みモデルが無いので、更新は止まります(前の索引の埋め込みを捨てないため。先に /context-setup でモデルのフォルダを入れてください)"
+      : "";
   const lines = [
     indexHead(1, 1) + (retry ? `${retry}\n` : "") +
       (!ix ? `設定はありますが、索引がまだありません(${state.workspace})。`
@@ -529,25 +539,36 @@ export function indexMenuText(state, retry = "", platform = process.platform) {
   return lines.join("\n");
 }
 
-// フォルダを選ぶ段の文。change は、今の選び方を変えるとき
-export function folderPrompt(n, total, ws, change = false) {
+// フォルダを選ぶ段の文。change は、今の選び方を変えるとき。missing は、無くなっていて選んでいない今のフォルダ
+export function folderPrompt(n, total, ws, change = false, missing = []) {
   return indexHead(n, total) + (change
-    ? `検索するフォルダを選び直してください(${ws})。今のフォルダに、チェックが付いています。`
+    ? `検索するフォルダを選び直してください(${ws})。今のフォルダに、チェックが付いています。` +
+      (missing.length ? `無くなったフォルダ(${missing.map(showRoot).join("、")})は、選んでいません(このまま進むと、設定から外します)。` : "")
     : `まだ索引がありません。索引に入れるフォルダを選んでください(${ws})。`) +
     "一覧に無いフォルダは、Other にパスを書くと足せます(作業フォルダの外も可)。取り消すと、何もしません";
 }
 
 // フォルダを変えるときの、一覧に足す候補(直下に無い今の source)と、初めに選んでおくもの。
-// names は直下のフォルダ(folderChoices)、sources は今の source(indexState の sources)。ほかの source の中にある
-// source は出さない(親を選べば残り、選ばなければ外れる)。{ extra, checked }
+// names は直下のフォルダ(folderChoices)、sources は今の source(indexState の sources)。{ extra, checked, missing }
+// - ほかの source の中にある source は出さない(親を選べば残り、選ばなければ外れる)
+// - 作業フォルダ全体(.)が source なら、「作業フォルダ全体」を選んでおく。その外の source は、候補に足して選んでおく
+// - フォルダが無くなった source は、選ばない(選ぶと、書き直しが「フォルダがありません」で止まる)。missing に返す
 export function folderDefaults(names, sources) {
   const key = (s) => String(s).replace(/\//g, "\\").replace(/\\+$/, "").toLowerCase();
   const byKey = new Map(names.map((n) => [key(n), n]));
   const extra = [];
   const checked = [];
+  const missing = [];
   for (const s of sources) {
     if (s.inside) continue;
-    if (s.root === ".") return { extra: [], checked: [WHOLE_WORKSPACE] };
+    if (s.exists === false) {
+      missing.push(s.root);
+      continue;
+    }
+    if (s.root === ".") {
+      checked.push(WHOLE_WORKSPACE);
+      continue;
+    }
     const name = byKey.get(key(s.root));
     if (name) checked.push(name);
     else {
@@ -555,7 +576,7 @@ export function folderDefaults(names, sources) {
       checked.push(s.root);
     }
   }
-  return { extra, checked };
+  return { extra, checked, missing };
 }
 
 export const INDEX_YES = "はい、索引を作る";
@@ -579,12 +600,16 @@ export function changeConfirmText(n, total, plan) {
     (plan.add.length ? `- 足す: ${listRoots(plan.add)}\n` : "") +
     (plan.remove.length ? `- 外す: ${listRoots(plan.remove)}\n` : "") +
     (plan.keep.length ? `- そのまま: ${listRoots(plan.keep)}\n` : "") +
-    `設定(${plan.config})の [[source]] だけを書き直し、前の設定は config.toml.bak に残します(除外などの、ほかの設定は` +
+    `設定(${plan.config})の [[source]] だけを書き直し、前の設定は ${backupName(plan)} に残します(除外などの、ほかの設定は` +
     "変えません)。続けて索引を作り直します(変わっていないファイルの埋め込みは使い回します)";
 }
 
-// フォルダを替えた後の知らせ。plan は sourcesPlan の戻り値(書いた後のもの)
+// 前の設定の控えの名前(設定ファイルの名前に .bak。パスの区切りは、Windows の形も読む)
+const backupName = (plan) => String(plan.backup || "config.toml.bak").split(/[\\/]/).pop();
+
+// フォルダを替えた後の知らせ。plan は sourcesPlan の戻り値(書いた後のもの)。何も変わっていなければ ""
 export function changedText(plan) {
+  if (!plan.add.length && !plan.remove.length) return "";
   return "検索するフォルダを替えました(" +
     [plan.add.length ? `足した: ${listRoots(plan.add)}` : "", plan.remove.length ? `外した: ${listRoots(plan.remove)}` : ""]
       .filter(Boolean).join("、") + (plan.backup ? `。前の設定: ${plan.backup}` : "") + ")。\n";
@@ -595,7 +620,7 @@ export function embedNote(out) {
   const text = out ?? "";
   const m = text.match(/^埋め込み: ([\d,]+) passage を計算、([\d,]+) passage を使い回し.*、(?:GPU\(([^)]+)\)|CPU、\d+ プロセス)\)\s*$/m);
   if (!m) return "";
-  if (m[1] === "0") return "埋め込みは、すべて前の索引から使い回しました。";
+  if (m[1] === "0") return m[2] === "0" ? "" : "埋め込みは、すべて前の索引から使い回しました。";
   // GPU を選んでいても、始められなければ CPU に替えて続ける(indexer の注意の行)
   const fellBack = /^注意: GPU\(.*\)で埋め込みを始められないので、CPU で計算します/m.test(text);
   return `埋め込みは ${computeName(m[3] ?? "")} で計算しました(${m[1]} passage。${m[2]} passage は使い回し)。` +

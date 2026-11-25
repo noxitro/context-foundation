@@ -383,10 +383,16 @@ def rewrite_sources(text: str, keep: set[str], add: list[tuple[str, str]]) -> st
 
     TOML を全部は読まず、行の頭の表の見出しで区切る。複数行の文字列の中に見出しの形の行があるような設定は
     区切りを誤るので、呼ぶ側が、書く前に結果を tomllib で読んで確かめる(cli の cmd_sources)。source の 1 つ分を
-    読めなければ ConfigError。"""
+    読めなければ ConfigError。
+
+    コメントの分け方: source の終わりで、空行の後ろにコメントだけが続いて次の表(かファイルの終わり)になるなら、
+    そのコメントは次の表のもの(source を外しても残す)。空行を挟まずに続くコメントは、その source のもの
+    (外すと一緒に消える)。外す source の見出しのすぐ上のコメント(上が空行か、前の source の終わり)も、
+    一緒に外す。改行の形が混ざった設定は、CRLF にそろう。"""
     crlf = "\r\n" in text
     lines = text.replace("\r\n", "\n").split("\n")
     heads = [i for i, line in enumerate(lines) if _TABLE_RE.match(line)]
+    comment = lambda i: lines[i].lstrip().startswith("#")     # noqa: E731
     out: list[str] = []
     insert_at: int | None = None
     pos = 0
@@ -394,17 +400,26 @@ def rewrite_sources(text: str, keep: set[str], add: list[tuple[str, str]]) -> st
         if not _SOURCE_TABLE_RE.match(lines[start]):
             continue
         end = heads[n + 1] if n + 1 < len(heads) else len(lines)
-        # 空行の後ろにコメントだけが続いて次の表になるなら、そのコメントは次の表のもの(source と一緒に消さない)
-        j = end
-        while j > start + 1 and lines[j - 1].lstrip().startswith("#"):
+        # 次の表の前のコメント: 終わりの空行を飛ばし、その上のコメントの塊の前が空行なら、塊から後ろは次の表のもの
+        k = end
+        while k > start + 1 and not lines[k - 1].strip():
+            k -= 1
+        j = k
+        while j > start + 1 and comment(j - 1):
             j -= 1
-        if start + 1 < j < end and not lines[j - 1].strip():
+        if start + 1 < j < k and not lines[j - 1].strip():
             end = j
         try:
             sid = tomllib.loads("\n".join(lines[start:end]))["source"][0]["id"]
         except (tomllib.TOMLDecodeError, KeyError, IndexError, TypeError):
             raise ConfigError(f"{start + 1} 行目からの [[source]] を読めません") from None
-        out += lines[pos:start]
+        # この source の見出しのすぐ上のコメント(外すときは、一緒に外す。ファイルの始めのコメントは残す)
+        lead = start
+        while lead > pos and comment(lead - 1):
+            lead -= 1
+        if lead == 0 or not (lead == pos or not lines[lead - 1].strip()):
+            lead = start
+        out += lines[pos:(start if sid in keep else lead)]
         if insert_at is None:
             insert_at = len(out)
         if sid in keep:
