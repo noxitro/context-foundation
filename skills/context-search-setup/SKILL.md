@@ -168,9 +168,9 @@ The search needs an index of the workspace, built once per workspace.
   search, or what to do with an existing index): it runs in the background
   without the model. Or they run `ctxf.py index` in their own terminal
   (show them the whole command line). Run `ctxf.py index` here only if
-  they ask you to, with a timeout of at least an hour, or in the background. It ends with
-  exit code 0; then run `ctxf.py where` and check that the `index:` line
-  names the new index
+  they ask you to, with a timeout of at least an hour, or in the
+  background. It ends with exit code 0; then run `ctxf.py where` and check
+  that the `index:` line names the new index
 - If `model use` said the model changed (`--model`), indexes built before
   with the other model are searched keyword-only until they are built
   again: say so, and offer to update this workspace's index
