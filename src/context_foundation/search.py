@@ -24,13 +24,24 @@ from .store import IndexError_, fetch_passages, load_vectors, open_readonly, rea
 from .textproc import MAX_QUERY_TOKENS, fts_query, query_tokens, query_tokens_cut
 
 
+def short_repr(value, limit: int = 60) -> str:
+    """誤りの文に入れる、渡された値(長いものは切る。改行などは repr で 1 行になる)。"""
+    text = repr(value)
+    return text if len(text) <= limit else text[:limit] + "..."
+
+
 class UnknownSourceError(ValueError):
-    """索引に無い source_id を渡された。文は人が読む形(CLI が、そのまま出す)。エージェントに返す英語の文は、
-    MCP サーバーが unknown と known から作る。"""
+    """索引に無い source_id を渡された。str() は人が読む文(日本語)。エージェントに返すときは agent_text()
+    (MCP の道具と、`search --format agent`)。"""
 
     def __init__(self, unknown: list[str], known: list[str]):
         super().__init__(f"知らない source_id です: {', '.join(unknown)}(索引にあるのは {', '.join(known)})")
         self.unknown, self.known = list(unknown), list(known)
+
+    def agent_text(self) -> str:
+        return (f"Unknown source_id: {', '.join(short_repr(s) for s in self.unknown)}. This index has: "
+                f"{', '.join(self.known) or '(none)'}. Names are case-sensitive; `status` lists them. "
+                "Omit it to search every source.")
 
 
 @dataclass

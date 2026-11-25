@@ -735,17 +735,29 @@ def test_argument_errors_reach_the_agent_in_english(mcp, indexed_workspace):
     assert is_error and "\n" not in text and len(text) < 300
     # 空の mode は、これまでどおり既定の方法
     assert mcp.tool("search", {"query": "job scheduler", "mode": ""})[0] is False
-    r = run_cli("search", "x", "--source", "Engine", cwd=indexed_workspace)
+    # 文字列でない source_id を黙って捨てない(絞れたつもりで、全部の source の結果を読むことになる)
+    is_error, text = mcp.tool("search", {"query": "job scheduler", "source_id": ["engine"]})
+    assert is_error and text.isascii() and "`source_id` must be a string naming one source (got ['engine'])" in text
+    assert mcp.tool("search", {"query": "job scheduler", "source_id": ""})[0] is False     # 空は、絞らない
+    # CLI: エージェントが読む形(控えの skill の経路)は同じ英語の文、人が読む形は日本語
+    r = run_cli("search", "x", "--source", "Engine", "--format", "agent", cwd=indexed_workspace)
+    assert r.returncode == 2 and r.stderr.isascii()
+    assert "Unknown source_id: 'Engine'. This index has: engine, app, docs." in r.stderr
+    r = run_cli("search", "x", "--source", "Engine", "--format", "human", cwd=indexed_workspace)
     assert r.returncode == 2 and "知らない source_id です: Engine(索引にあるのは engine, app, docs)" in r.stderr
 
 
 def test_zero_hit_and_status_say_that_added_files_are_not_searched(mcp, indexed_workspace):
-    """索引の後に足されたファイルは、変更の印を付ける先の passage が無い。0 件のときの文と status で知らせる。"""
+    """索引の後に足されたファイルは、変更の印を付ける先の passage が無い。0 件のときの文と status で知らせる。
+    0 件になるのは keyword のときだけ: 埋め込みのある索引の hybrid と semantic は、近い順に必ず passage を返す
+    ので、既定の方法では、この文は出ない。"""
     from context_foundation.render import INDEX_TIME_NOTE, NO_MATCH
     mcp.call("initialize", {"protocolVersion": "2025-06-18"})
     is_error, text = mcp.tool("search", {"query": "zzzqqq nothingmatches", "mode": "keyword"})
     assert not is_error and text.endswith(NO_MATCH + "\n")
     assert "Files added after the index was built are not searched; grep for those." in NO_MATCH
+    is_error, text = mcp.tool("search", {"query": "zzzqqq nothingmatches"})
+    assert not is_error and "[1] " in text and "No passage matched" not in text
     is_error, text = mcp.tool("status")
     assert not is_error and text.endswith(INDEX_TIME_NOTE + "\n")
     assert "files added after it are not searched (grep for those)" in INDEX_TIME_NOTE
