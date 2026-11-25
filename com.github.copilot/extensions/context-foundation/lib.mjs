@@ -463,6 +463,30 @@ export function pickedAccel(content) {
   return null;
 }
 
+export const ACCEL_RETRY = "前の答えを読めませんでした。GPU か CPU を選んでください。";
+
+// GPU か CPU かを尋ねる。ask(retry) はダイアログを出して、その答え({ action, content })を返す。読めない答え
+// (選択肢に無い、書き込まれた文)は、黙って前の選び方にせず、わけを添えて尋ね直す(tries 回まで)。
+// 返すのは true(GPU)・false(CPU)か、null(取り消した・尋ね直しても読めなかった・尋ね直しのダイアログを
+// 出せなくなった)。始めのダイアログを出せなければ投げる(呼ぶ側が、尋ねずに用意する)
+export async function askAccel(ask, tries = 3) {
+  let retry = "";
+  for (let i = 0; i < tries; i++) {
+    let r;
+    try {
+      r = await ask(retry);
+    } catch (err) {
+      if (i === 0) throw err;
+      return null;
+    }
+    if (r?.action !== "accept") return null;
+    const gpu = pickedAccel(r.content);
+    if (gpu !== null) return gpu;
+    retry = ACCEL_RETRY;
+  }
+  return null;
+}
+
 // 今のモデルのフォルダ(入っているときだけ)。モデルのフォルダの欄の初めの値にする
 export const currentModelFolder = (status) => (status?.model?.state === "installed" ? status.model.folder ?? "" : "");
 
@@ -471,8 +495,10 @@ export function modelStepPrompt(n, total, status) {
   if (m?.state === "installed") {
     return stepHead(n, total) + `埋め込みモデル(${m.name})は入っています(${m.folder})。このまま使うなら、そのまま送って` +
       "ください。別のフォルダのモデルを使うなら、そのフォルダを入れてください(用意のあとで 1 回読み込んで確かめてから" +
-      "覚えます)。欄を空にして送っても、今のモデルのままです(モデルを外すときは、ターミナルで ctxf.py model forget を" +
-      "実行します)。取り消すと、用意をやめます";
+      "覚えます)。欄を空にして送っても、今のモデルのままです" +
+      // model forget が外すのは、model use で覚えたフォルダだけ(取得して既定の置き場にあるモデルには効かない)
+      (m.dir_source === "user" ? "(覚えたフォルダを外すときは、ターミナルで ctxf.py model forget を実行します)" : "") +
+      "。取り消すと、用意をやめます";
   }
   // 仮想環境が無いうちは、モデルの状態を読めない(model が無い)。そのときは、既定のモデルの名前を出す
   const about = m?.name ? `${m.name}、ライセンス ${m.license || "不明"}${m.size_mb ? `、約 ${m.size_mb} MB` : ""}`
@@ -525,9 +551,12 @@ export function setupStartText(plan, status, home) {
 }
 
 // 用意の後、モデルのフォルダを覚えたときに、今の索引について添える文。索引づくりは、索引の埋め込みが今のモデルと
-// 違うとき(keyword だけのときも)だけ、すべて埋め込み直す(indexer の _previous_vectors)。full は要らない
+// 違うとき(keyword だけのときも)だけ、すべて埋め込み直す(indexer の _previous_vectors)。ふつうは full は要らない。
+// 違いは、モデルの名前・版・ONNX の大きさなどで見分ける(中身は比べない)ので、名前も大きさも同じ別の重みに
+// 替えたときだけ、full が要る
 export const REINDEX_AFTER_MODEL = "今の索引が keyword だけか、別のモデルの埋め込みなら、/context-index を打つと、このモデルで" +
-  "埋め込み直します(同じモデルの索引なら、変わった分だけです)。\n";
+  "埋め込み直します(同じモデルの索引なら、変わった分だけです。名前も大きさも同じ別の重みに替えたときだけ、" +
+  "/context-index full が要ります)。\n";
 
 // 最後に、まとめて確かめる文
 export function setupConfirmText(n, total, plan, status, home) {

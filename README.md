@@ -52,8 +52,9 @@ The plugin adds a read-only **MCP server** with two tools, `search` and
 grepping, only in workspaces that have an index. A **skill**
 (`context-search`) that runs the same search through the command line stays
 as a fallback for when the MCP tools are not available. A Copilot CLI
-**extension** adds two slash commands that the user types and that run in
-the background without calling the model: `/context-setup` takes no
+**extension** adds two slash commands that the user types and that run
+without calling the model (in the background in Copilot CLI; the GitHub
+Copilot app waits until they finish): `/context-setup` takes no
 arguments and asks in dialogs, in order, whether to compute embeddings on the
 GPU or the CPU (Windows only) and for the folder of an embedding model already
 on the PC, then installs the Python dependencies and registers that model (it

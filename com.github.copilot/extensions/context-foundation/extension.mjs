@@ -32,7 +32,7 @@ import { fileURLToPath } from "node:url";
 import {
   chooseFallback, commandHandler, dataHome, failureMessage, findConfig, folderChoices, folderSchema, hasLocalVenv, indexFile, initSources, joinOptions,
   keywordOnly, lastCwd, loadSdk, makeNotifier, modelFolderPrompt, modelFolderSchema, modelMissing, modelUseResult, parseProgress,
-  accelPrompt, accelSchema, choiceSchema, currentModelFolder, pickedYes, SETUP_NO, SETUP_YES, modelChoice, modelStepPrompt, parseSetupProgress, pickedAccel, pickedFolders, pickedModelFolder,
+  accelPrompt, accelSchema, askAccel, choiceSchema, currentModelFolder, pickedYes, SETUP_NO, SETUP_YES, modelChoice, modelStepPrompt, parseSetupProgress, pickedFolders, pickedModelFolder,
   planIndex, pluginRoot, progressNote, setupArgs, setupConfirmText, setupFailureMessage, setupProgressNote, setupRuntimeFolder, setupStatus,
   modelNotUsedReason, REINDEX_AFTER_MODEL, setupStartText, setupSteps, splitArgs, workspaceOf,
 } from "./lib.mjs";
@@ -293,15 +293,12 @@ async function askSetupPlan(status, home, lead = "") {
     const head = i === 0 ? lead : "";
     try {
       if (step === "accel") {
-        // 選択肢に無い答え(書き込む欄)を読めなければ、黙って前の選び方にせず、尋ね直す
-        for (let retry = ""; plan.gpu === null;) {
-          const r = await exclusive(() => session.ui.elicitation({
-            message: head + accelPrompt(n, steps.length, status, retry), requestedSchema: accelSchema(status),
-          }));
-          if (r.action !== "accept") return null;
-          plan.gpu = pickedAccel(r.content);
-          retry = "前の答えを読めませんでした。GPU か CPU を選んでください。";
-        }
+        // 選択肢に無い答え(書き込む欄)を読めなければ、尋ね直す(lib.mjs の askAccel。3 回読めなければ、やめる)
+        const gpu = await askAccel((retry) => exclusive(() => session.ui.elicitation({
+          message: head + accelPrompt(n, steps.length, status, retry), requestedSchema: accelSchema(status),
+        })));
+        if (gpu === null) return null;
+        plan.gpu = gpu;
       } else if (step === "model") {
         const r = await exclusive(() => session.ui.elicitation({
           message: head + modelStepPrompt(n, steps.length, status), requestedSchema: modelFolderSchema(currentModelFolder(status)),

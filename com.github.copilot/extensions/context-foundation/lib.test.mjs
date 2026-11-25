@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import {
   chooseFallback, commandHandler, dataHome, escapeMarkdown, failureMessage, findConfig, folderChoices, folderSchema, hasLocalVenv, indexFile, MAX_FOLDER_CHOICES, pickedFolders, WHOLE_WORKSPACE, initSources, joinOptions, keywordOnly, lastCwd, loadSdk, logTail,
   makeNotifier, modelFolderPrompt, modelFolderSchema, modelMissing, modelUseResult, parseIndexArgs, pickedModelFolder, parseProgress, parseSetupProgress, planIndex, pluginRoot, progressNote, repairCommand,
-  accelPrompt, accelSchema, choiceSchema, modelNotUsedReason, REINDEX_AFTER_MODEL, setupStartText, setupWhat, CPU_CHOICE, pickedYes, SETUP_NO, SETUP_YES, currentModelFolder, GPU_CHOICE, modelChoice, modelStepPrompt, pickedAccel, setupArgs, setupConfirmText,
+  ACCEL_RETRY, accelPrompt, accelSchema, askAccel, choiceSchema, modelNotUsedReason, REINDEX_AFTER_MODEL, setupStartText, setupWhat, CPU_CHOICE, pickedYes, SETUP_NO, SETUP_YES, currentModelFolder, GPU_CHOICE, modelChoice, modelStepPrompt, pickedAccel, setupArgs, setupConfirmText,
   setupStatus, setupSteps, SDK_NAMES, setupFailureMessage, setupProgressNote, setupRuntimeFolder, splitArgs, wantDialog, workspaceOf,
 } from "./lib.mjs";
 
@@ -268,7 +268,11 @@ test("モデルの段: 今のフォルダを初めの値にし、そのままな
   assert.match(modelStepPrompt(2, 3, READY), /^context-foundation の用意\(2\/3\): 埋め込みモデル\(intfloat\/multilingual-e5-small\)は入っています/);
   assert.match(modelStepPrompt(2, 3, FRESH), /空のまま送ると、keyword だけの検索で続けます/);
   // 入っているモデルは、欄を空にしても外れない(そう書く)
-  assert.match(modelStepPrompt(2, 3, READY), /欄を空にして送っても、今のモデルのままです.*model forget/);
+  assert.match(modelStepPrompt(2, 3, READY), /欄を空にして送っても、今のモデルのままです\(覚えたフォルダを外すときは.*model forget/);
+  // model forget は、model use で覚えたフォルダにだけ効く。取得して既定の置き場にあるモデルには勧めない
+  const downloaded = { ...READY, model: { ...READY.model, own_folder: false, dir_source: "" } };
+  assert.match(modelStepPrompt(2, 3, downloaded), /今のモデルのままです。取り消すと/);
+  assert.doesNotMatch(modelStepPrompt(2, 3, downloaded), /model forget/);
   assert.match(modelFolderSchema("D:\\m").properties.folder.description, /空にして送っても、今のモデルを使います/);
   // 仮想環境が無いうち(model が無い)は、既定のモデルの名前と入手先を出す
   assert.match(modelStepPrompt(2, 3, { ...FRESH, default_model: "org/name" }),
@@ -302,8 +306,32 @@ test("始めの知らせは、確かめの段と同じ「入れるもの」を�
   assert.match(setupStartText(null, null, "H"), /済んでいれば確かめるだけです/);   // 尋ねられなかった(ダイアログを出せないホスト)
   assert.equal(setupWhat(null, READY), "済んでいるので、確かめるだけです");
   // 索引づくりは、モデルが違うときだけ自分ですべて埋め込み直す。full を勧めると、同じモデルでも埋め込み直してしまう
-  assert.doesNotMatch(REINDEX_AFTER_MODEL, /full/);
-  assert.match(REINDEX_AFTER_MODEL, /\/context-index を打つと/);
+  assert.match(REINDEX_AFTER_MODEL, /\/context-index を打つと、このモデルで埋め込み直します/);
+  // full は、見分けられない入れ替え(名前も大きさも同じ別の重み)のときだけ
+  assert.match(REINDEX_AFTER_MODEL, /名前も大きさも同じ別の重みに替えたときだけ、\/context-index full/);
+});
+
+test("askAccel: 読めない答えは尋ね直し、3 回読めなければやめる。尋ね直しで出せなくなっても、答えの一部では進めない", async () => {
+  const run = async (answers) => {
+    const seen = [];
+    const got = await askAccel(async (retry) => {
+      seen.push(retry);
+      const a = answers[seen.length - 1];
+      if (a instanceof Error) throw a;
+      return a;
+    });
+    return { got, seen };
+  };
+  const ok = (accel) => ({ action: "accept", content: { accel } });
+  assert.deepEqual(await run([ok(GPU_CHOICE)]), { got: true, seen: [""] });
+  assert.deepEqual(await run([ok("どちらでも"), ok(CPU_CHOICE)]), { got: false, seen: ["", ACCEL_RETRY] });
+  assert.deepEqual(await run([{ action: "cancel" }]), { got: null, seen: [""] });
+  assert.deepEqual(await run([ok("?"), { action: "decline" }]), { got: null, seen: ["", ACCEL_RETRY] });
+  // 3 回とも読めない(accel を返さないホストも含む): 終わらない輪にせず、やめる
+  assert.deepEqual(await run([ok("?"), ok("?"), { action: "accept" }]), { got: null, seen: ["", ACCEL_RETRY, ACCEL_RETRY] });
+  // 始めのダイアログを出せないときは投げる(呼ぶ側が、尋ねずに用意する)。尋ね直しで出せなくなったら、やめる
+  await assert.rejects(run([new Error("no dialog")]), /no dialog/);
+  assert.deepEqual(await run([ok("?"), new Error("gone")]), { got: null, seen: ["", ACCEL_RETRY] });
 });
 
 test("確かめの段: 入れるもの・置き場・計算・モデルをまとめる", () => {
